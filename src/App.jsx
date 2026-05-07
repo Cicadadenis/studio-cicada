@@ -2483,8 +2483,10 @@ function DSLPane({ flow, stacks, isMobile, onApplyCorrectedCode }) {
   );
   const hasErrors = visibleErrors.length > 0;
   const hasWarnings = (validationResult?.warnings?.length ?? 0) > 0;
-  const isValid = validationResult && !hasErrors && !hasWarnings;
+  const hasIssues = hasErrors || hasWarnings;
+  const isValid = validationResult && !hasIssues;
   const hasFixes = (computedFixes?.fixes?.length ?? 0) > 0;
+  const showFixButtonAfterCheck = Boolean(validationResult && (hasIssues || hasFixes));
 
   const displayCode = previewCorrected ?? dsl;
   const displayLines = displayCode.split('\n');
@@ -2528,24 +2530,26 @@ function DSLPane({ flow, stacks, isMobile, onApplyCorrectedCode }) {
             onMouseEnter={e => e.target.style.background = 'var(--accent2)'}
             onMouseLeave={e => e.target.style.background = 'var(--accent)'}
           >↓ .ccd</button>
-          <button
-            type="button"
-            onClick={applySuggestedFixes}
-            disabled={!hasFixes || !!previewCorrected}
-            style={{
-              background: (!hasFixes || previewCorrected) ? 'var(--bg3)' : '#0ea5e9',
-              color: (!hasFixes || previewCorrected) ? 'var(--text3)' : '#fff',
-              padding: '2px 7px',
-              borderRadius: 4,
-              fontSize: 9,
-              border: 'none',
-              cursor: (!hasFixes || previewCorrected) ? 'default' : 'pointer',
-              opacity: (!hasFixes || previewCorrected) ? 0.7 : 1,
-            }}
-            title={!validationResult ? 'Сначала нажми «проверить»' : (!hasFixes ? 'Нет доступных автоисправлений' : 'Применить автоисправления')}
-          >
-            Исправить{hasFixes ? ` (${computedFixes?.fixes?.length || 0})` : ''}
-          </button>
+          {showFixButtonAfterCheck && (
+            <button
+              type="button"
+              onClick={applySuggestedFixes}
+              disabled={!hasFixes || !!previewCorrected}
+              style={{
+                background: (!hasFixes || previewCorrected) ? 'var(--bg3)' : '#0ea5e9',
+                color: (!hasFixes || previewCorrected) ? 'var(--text3)' : '#fff',
+                padding: '2px 7px',
+                borderRadius: 4,
+                fontSize: 9,
+                border: 'none',
+                cursor: (!hasFixes || previewCorrected) ? 'default' : 'pointer',
+                opacity: (!hasFixes || previewCorrected) ? 0.7 : 1,
+              }}
+              title={!hasFixes ? 'Нет доступных автоисправлений' : 'Применить автоисправления'}
+            >
+              Исправить{hasFixes ? ` (${computedFixes?.fixes?.length || 0})` : ''}
+            </button>
+          )}
         </div>
       </div>
 
@@ -2608,6 +2612,39 @@ function DSLPane({ flow, stacks, isMobile, onApplyCorrectedCode }) {
               {validationResult.warnings.map((warn, i) => (
                 <div key={`warn-${i}`} style={{ fontSize: 9, color: '#f59e0b' }}>{warn}</div>
               ))}
+              {showFixButtonAfterCheck && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4 }}>
+                  <button
+                    type="button"
+                    onClick={applySuggestedFixes}
+                    disabled={!hasFixes || !!previewCorrected}
+                    style={{
+                      alignSelf: 'flex-start',
+                      background: (!hasFixes || previewCorrected)
+                        ? 'rgba(148,163,184,0.12)'
+                        : 'linear-gradient(135deg,#0ea5e9,#2563eb)',
+                      color: (!hasFixes || previewCorrected) ? 'var(--text3)' : '#fff',
+                      border: (!hasFixes || previewCorrected) ? '1px solid var(--border2)' : 'none',
+                      borderRadius: 6,
+                      fontSize: 10,
+                      fontWeight: 700,
+                      padding: '5px 10px',
+                      cursor: (!hasFixes || previewCorrected) ? 'default' : 'pointer',
+                      boxShadow: hasFixes && !previewCorrected ? '0 4px 14px rgba(14,165,233,0.28)' : 'none',
+                    }}
+                    title={!hasFixes ? 'Для найденных ошибок нет безопасного автоисправления' : 'Исправить найденные проблемы автоматически'}
+                  >
+                    🔧 {hasFixes
+                      ? `Исправить автоматически (${computedFixes?.fixes?.length || 0})`
+                      : 'Нет автоисправлений'}
+                  </button>
+                  {!hasFixes && (
+                    <div style={{ fontSize: 8, color: 'var(--text3)' }}>
+                      Исправьте эти ошибки вручную: для них нет безопасного автоматического патча.
+                    </div>
+                  )}
+                </div>
+              )}
               {(computedFixes?.fixes || []).slice(0, 5).map((fx, i) => {
                 const beforeT = String(fx.before || '').trim();
                 const hideEmptyBotBefore = /^бот\s+""\s*$/i.test(beforeT);
