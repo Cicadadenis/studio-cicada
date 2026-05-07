@@ -19,7 +19,7 @@ import { sendPreviewRequest } from './services/cicadaPreviewWorker.mjs';
 import { normalizeAdminTotpSecret, verifyTotp } from './services/adminTotp.mjs';
 import { generateDSL } from './core/stacksToDsl.js';
 import { lintDSLSchema, formatDSLDiagnostic } from './core/validator/schema.js';
-import { normalizeAiGeneratedStacks } from './core/validator/fixes.js';
+import { normalizeAiGeneratedStacks, repairCollapsedCicadaCode } from './core/validator/fixes.js';
 import { isPlaceholderBotToken } from './core/botTokenPlaceholders.mjs';
 
 const { Pool } = pg;
@@ -2334,8 +2334,8 @@ function stripThinkingFromAiRaw(raw) {
 function extractCicadaCodeFromLlm(raw) {
   const cleaned = stripThinkingFromAiRaw(String(raw ?? ''));
   const m = cleaned.match(/```(?:ccd|txt|dsl|text)?\s*([\s\S]*?)```/i);
-  if (m) return m[1].trim();
-  return cleaned.trim();
+  const code = m ? m[1].trim() : cleaned.trim();
+  return repairCollapsedCicadaCode(code);
 }
 
 const PYTHON_CONVERT_MAX_CHARS = 200_000;

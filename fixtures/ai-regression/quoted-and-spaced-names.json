@@ -1,0 +1,40 @@
+[
+  {
+    "id": "s0",
+    "x": 40,
+    "y": 40,
+    "blocks": [{ "id": "b0", "type": "bot", "props": { "token": "YOUR_BOT_TOKEN" } }]
+  },
+  {
+    "id": "s1",
+    "x": 400,
+    "y": 40,
+    "blocks": [
+      { "id": "b1", "type": "start", "props": {} },
+      { "id": "b2", "type": "message", "props": { "text": "Нажми \"Оформить заказ\"" } },
+      { "id": "b3", "type": "buttons", "props": { "rows": "Оформить заказ|Помощь" } },
+      { "id": "b4", "type": "stop", "props": {} }
+    ]
+  },
+  {
+    "id": "s2",
+    "x": 760,
+    "y": 40,
+    "blocks": [
+      { "id": "b5", "type": "callback", "props": { "label": "Оформить заказ" } },
+      { "id": "b6", "type": "run", "props": { "name": "оформление заказа" } }
+    ]
+  },
+  {
+    "id": "s3",
+    "x": 400,
+    "y": 380,
+    "blocks": [
+      { "id": "b7", "type": "scenario", "props": { "name": "оформление заказа" } },
+      { "id": "b8", "type": "step", "props": { "name": "имя клиента" } },
+      { "id": "b9", "type": "ask", "props": { "question": "Как вас зовут?", "varname": "имя клиента" } },
+      { "id": "b10", "type": "message", "props": { "text": "Заказ для {имя клиента} создан" } },
+      { "id": "b11", "type": "stop", "props": {} }
+    ]
+  }
+]
