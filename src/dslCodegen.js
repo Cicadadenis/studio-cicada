@@ -18,6 +18,22 @@ export {
   buildProjectGraphDocumentFromFlowAsync,
   buildProjectGraphDocumentFromStacksAsync,
   normalizeFlowNode,
+  validateProjectIr,
+  validateProjectIrStrict,
+  assertCompilableFlow,
+  IR_BUILD_COMPILE_STRICT,
+  IR_BUILD_DEFAULTS,
+  irBuildOptionsFromValidateMode,
+  migrateFlowToIrV2,
+  CompilationError,
+  buildProjectIrV2,
+  irNodeDslEmitName,
+  validateIrV2,
+  getCompilerId,
+  IR_SCHEMA_VERSION_V1,
+  IR_SCHEMA_VERSION_V2,
+  IR_SCHEMA_VERSION_DEFAULT,
+  IR_NODE_REGISTRY,
 } from '../core/dslCodegen.js';
 
 export { buildMinimalProjectManifest } from '../core/manifests/minimalManifest.js';

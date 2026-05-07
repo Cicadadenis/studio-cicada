@@ -17,9 +17,29 @@ import {
 import { normalizeChunkDependencyGraphV0 } from './manifests/chunkDependencyGraph.js';
 import { computeGraphHashes } from './manifests/hashes.js';
 import { negotiateCapabilities } from './manifests/capabilities.js';
+import { normalizeFlowNode } from './ir/normalizeFlowNode.js';
+import { validateProjectIr, validateProjectIrStrict } from './ir/validateProjectIr.js';
+import {
+  assertCompilableFlow,
+  IR_BUILD_COMPILE_STRICT,
+  IR_BUILD_DEFAULTS,
+  irBuildOptionsFromValidateMode,
+} from './ir/compileGate.js';
+import { irNodeDslEmitName } from './ir/buildProjectIrV2.js';
+
+export { normalizeFlowNode };
+export { validateProjectIr, validateProjectIrStrict };
+export { assertCompilableFlow, IR_BUILD_COMPILE_STRICT, IR_BUILD_DEFAULTS, irBuildOptionsFromValidateMode };
+export { migrateFlowToIrV2 } from './ir/migrateFlowToIrV2.js';
+export { CompilationError } from './ir/CompilationError.js';
+export { buildProjectIrV2, irNodeDslEmitName } from './ir/buildProjectIrV2.js';
+export { validateIrV2 } from './ir/validateIrV2.js';
+export { getCompilerId } from './ir/buildProjectIrV2.js';
+export { IR_SCHEMA_VERSION_V1, IR_SCHEMA_VERSION_V2, IR_SCHEMA_VERSION_DEFAULT } from './ir/irSchema.js';
+export { IR_NODE_REGISTRY } from './ir/nodeTypeRegistry.js';
 
 export const SCHEMA_VERSIONS_FOR_UI = Object.freeze({
-  irSchemaVersion: 1,
+  irSchemaVersion: 2,
   astSchemaVersion: 1,
   buildGraphFormatVersion: 1,
   dslSnapshotManifestVersion: 1,
@@ -129,27 +149,6 @@ function topoSortNodes(nodes, edges) {
     out.push(...list.filter((x) => !seen.has(x.id)).sort(byPosition));
   }
   return out;
-}
-
-/** Нормализует узел React Flow к { id, type, props [, semanticId] }. */
-export function normalizeFlowNode(node) {
-  if (!node) return { id: 'unknown', type: 'message', props: {} };
-  const id = node.id || 'n';
-  const data = node.data || {};
-  if (data.type) {
-    return {
-      id,
-      type: data.type,
-      props: { ...(data.props || {}) },
-      semanticId: data.semanticId || data.id || id,
-    };
-  }
-  return {
-    id,
-    type: typeof node.type === 'string' && node.type !== 'cicada' ? node.type : 'message',
-    props: {},
-    semanticId: id,
-  };
 }
 
 function emitButtons(p) {
@@ -510,14 +509,37 @@ export const nodeDSL = (node, token) => {
   return emitBlockText(b);
 };
 
+function trimStr(v) {
+  return typeof v === 'string' ? v.trim() : '';
+}
+
 export function generateDSLFromFlow(flow, token) {
+  const { doc, warnings: compileWarnings } = assertCompilableFlow(flow);
+  void compileWarnings;
+  const gotoEmitByFlowId = new Map(
+    (doc.nodes || [])
+      .filter((x) => x.type === 'goto' && x.emitTargetName)
+      .map((x) => [x.flowNodeId, x.emitTargetName]),
+  );
   const nodes = flow?.nodes || [];
   const edges = flow?.edges || [];
   const ordered = topoSortNodes(nodes, edges);
   const blocks = ordered.map((n) => {
     const b = normalizeFlowNode(n);
-    if (b.type === 'bot' && token) return { type: b.type, props: { ...b.props, token } };
-    return { type: b.type, props: b.props };
+    let props = { ...b.props };
+    if (b.type === 'goto') {
+      const emit = gotoEmitByFlowId.get(n.id);
+      if (emit != null && emit !== '') props = { ...props, target: emit };
+    }
+    if (b.type === 'use') {
+      const ref = trimStr(props.blockRef ?? props.blockRefId ?? '');
+      if (ref) {
+        const blk = doc.nodes.find((x) => x.type === 'block' && x.id === ref);
+        if (blk) props = { ...props, blockname: trimStr(props.blockname) || irNodeDslEmitName(blk) };
+      }
+    }
+    if (b.type === 'bot' && token) props = { ...props, token };
+    return { type: b.type, props };
   });
   const chunks = [];
   let i = 0;
@@ -539,8 +561,9 @@ function portFor(blockType, dir) {
 }
 
 export function validateFlow(flow) {
-  const errors = [];
-  const warnings = [];
+  const ir = validateProjectIr(flow);
+  const errors = [...ir.errors];
+  const warnings = [...ir.warnings];
   const nodes = flow?.nodes || [];
   const edges = flow?.edges || [];
   const idset = new Set(nodes.map((n) => n.id));
@@ -549,12 +572,6 @@ export function validateFlow(flow) {
   const blockProps = (n) => n?.data?.props || n.props || {};
   const blockLabel = (n) => n?.data?.label || n?.label || blockType(n);
   const standaloneTypes = new Set(['version', 'bot', 'commands', 'global']);
-
-  const dupCheck = new Set();
-  for (const n of nodes) {
-    if (dupCheck.has(n.id)) errors.push(`Дублируется id узла ${n.id}`);
-    dupCheck.add(n.id);
-  }
 
   for (const e of edges) {
     if (!idset.has(e.source) || !idset.has(e.target)) {
@@ -609,12 +626,6 @@ export function validateFlow(flow) {
         break;
       case 'global':
         if (!p.varname?.trim()) errors.push(`Блок «Глобальная» [${n.id}]: нет имени переменной`);
-        break;
-      case 'block':
-        if (!p.name?.trim()) errors.push(`Блок «Блок» [${n.id}]: нет имени блока`);
-        break;
-      case 'use':
-        if (!p.blockname?.trim()) errors.push(`Блок «Использовать» [${n.id}]: не указано имя блока`);
         break;
       case 'middleware':
         if (!p.type?.trim() || !['before', 'after'].includes(p.type))
@@ -693,10 +704,6 @@ export function validateFlow(flow) {
       case 'http':
         if (!p.url?.trim()) errors.push(`Блок «HTTP» [${n.id}]: не указан URL`);
         if (!p.varname?.trim()) warnings.push(`Блок «HTTP» [${n.id}]: не указана переменная для ответа`);
-        break;
-      case 'goto':
-        if (!(p.target || p.label || '').toString().trim())
-          errors.push(`Блок «Переход» [${n.id}]: не указан сценарий`);
         break;
       case 'random':
         if (!p.variants?.trim()) errors.push(`Блок «Рандом» [${n.id}]: нет вариантов`);
