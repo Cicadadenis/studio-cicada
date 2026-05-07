@@ -220,7 +220,9 @@ async function updateUser(userId, updates, currentUser = null) {
   };
 
   if (Object.prototype.hasOwnProperty.call(updates || {}, 'photo_url')) {
-    normalized.photo_url = updates.photo_url ?? null;
+    normalized.photo_url = Object.prototype.hasOwnProperty.call(rawUser, 'photo_url')
+      ? (rawUser.photo_url ?? null)
+      : (updates.photo_url ?? null);
   }
 
   if (Object.prototype.hasOwnProperty.call(updates || {}, 'ui_language')) {
@@ -7948,6 +7950,7 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onLoadP
   });
 
   const handleAvatarPick = async (file) => {
+    if (avatarInputRef.current) avatarInputRef.current.value = '';
     if (!file) return;
     if (!file.type.startsWith('image/')) {
       showToast('Выберите изображение (jpg/png/webp)', 'error');
@@ -7964,7 +7967,8 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onLoadP
       setSaveSuccess(false);
       setAvatarSaving(true);
       try {
-        await onUpdateUser({ photo_url: optimized || null, _silent: true });
+        const updated = await onUpdateUser({ photo_url: optimized || null, _silent: true });
+        setNewAvatar(updated?.photo_url || optimized || '');
         setSaveSuccess(true);
         setTimeout(() => setSaveSuccess(false), 2500);
         showToast('✅ Аватар сохранён', 'success');
