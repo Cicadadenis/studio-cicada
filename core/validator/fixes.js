@@ -49,6 +49,234 @@ export function repairTemplatePlaceholders(value) {
 
 const AI_TEMPLATE_PROP_KEYS = new Set(['key', 'value', 'text', 'url', 'body']);
 
+const CICADA_IDENTIFIER_RE = /^[A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё0-9_]*$/;
+const AI_QUOTED_STRING_PROP_KEYS = new Set([
+  'text', 'question', 'label', 'rows', 'buttons', 'key', 'value',
+  'url', 'body', 'caption', 'filename', 'title', 'cmd', 'phone',
+  'first_name', 'last_name', 'file_id',
+]);
+
+function normalizeCicadaIdentifier(value, fallback = 'значение') {
+  const raw = String(value ?? '').trim();
+  if (!raw) return fallback;
+  const normalized = raw
+    .replace(/[\s\-–—]+/g, '_')
+    .replace(/[^A-Za-zА-Яа-яЁё0-9_]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  const withPrefix = /^[0-9]/.test(normalized) ? `v_${normalized}` : normalized;
+  return CICADA_IDENTIFIER_RE.test(withPrefix) ? withPrefix : fallback;
+}
+
+function normalizeCicadaQuotedString(value) {
+  if (typeof value !== 'string') return value;
+  return value
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/"([^"\n]{1,120})"/g, '«$1»')
+    .replace(/"/g, '″');
+}
+
+function replaceTemplateVarRefs(value, varNameMap) {
+  if (typeof value !== 'string' || !value.includes('{') || varNameMap.size === 0) {
+    return value;
+  }
+  let out = value;
+  for (const [from, to] of varNameMap.entries()) {
+    if (!from || from === to) continue;
+    out = out.split(`{${from}}`).join(`{${to}}`);
+  }
+  return out;
+}
+
+function buildAiNameMaps(stacks) {
+  const scenarioNameMap = new Map();
+  const stepNameMap = new Map();
+  const varNameMap = new Map();
+
+  (stacks || []).forEach((stack) => {
+    (stack?.blocks || []).forEach((block) => {
+      const props = block?.props || {};
+      if (block?.type === 'scenario' && props.name) {
+        scenarioNameMap.set(
+          String(props.name),
+          normalizeCicadaIdentifier(props.name, 'scenario'),
+        );
+      }
+      if (block?.type === 'step' && props.name) {
+        stepNameMap.set(
+          String(props.name),
+          normalizeCicadaIdentifier(props.name, 'step'),
+        );
+      }
+      if (['ask', 'get', 'remember', 'http'].includes(block?.type) && props.varname) {
+        varNameMap.set(
+          String(props.varname),
+          normalizeCicadaIdentifier(props.varname, 'var'),
+        );
+      }
+    });
+  });
+
+  return { scenarioNameMap, stepNameMap, varNameMap };
+}
+
+const CONFLICT_MARKER_LENGTH = 7;
+const MERGE_CONFLICT_MARKERS = ['<', '=', '>'].map((ch) => ch.repeat(CONFLICT_MARKER_LENGTH));
+
+function findUnquotedMergeConflictMarker(line) {
+  let inQuote = false;
+  let escaped = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inQuote = !inQuote;
+      continue;
+    }
+    if (inQuote) continue;
+    const marker = MERGE_CONFLICT_MARKERS.find((item) => line.startsWith(item, i));
+    if (marker) return i;
+  }
+  return -1;
+}
+
+function stripMergeConflictMarkers(text) {
+  return String(text || '')
+    .split('\n')
+    .map((line) => {
+      const trimmed = line.trimStart();
+      if (MERGE_CONFLICT_MARKERS.some((marker) => trimmed.startsWith(marker))) return '';
+      const markerAt = findUnquotedMergeConflictMarker(line);
+      return markerAt === -1 ? line : line.slice(0, markerAt).trimEnd();
+    })
+    .filter((line) => line.trim())
+    .join('\n');
+}
+
+const COLLAPSED_CICADA_STARTERS = [
+  'inline-кнопки:', 'при геолокации:', 'при документе:', 'при голосовом:',
+  'при контакте:', 'при стикере:', 'при старте:', 'при фото:',
+  'при нажатии ', 'при команде ', 'сценарий ', 'сохранить_глобально ',
+  'проверить подписку ', 'переслать сообщение ', 'запустить ', 'спросить ',
+  'получить ', 'сохранить ', 'ответ_md ', 'кнопки:', 'кнопки ', 'команда ',
+  'ответ ', 'шаг ', 'бот ', 'стоп', 'пауза ', 'печатает ', 'лог',
+];
+
+function isCollapsedStarterBoundary(text, index, starter) {
+  if (index <= 0) return true;
+  if (/^(?:при|сценарий\s|бот\s)/i.test(starter)) return true;
+  const prev = text[index - 1];
+  return /[\s"':]/.test(prev);
+}
+
+function findCollapsedCicadaStatementStarts(text) {
+  const starts = [];
+  let inQuote = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inQuote = !inQuote;
+      continue;
+    }
+    if (inQuote) continue;
+    const rest = text.slice(i).toLowerCase();
+    const starter = COLLAPSED_CICADA_STARTERS.find((item) => rest.startsWith(item));
+    if (starter && isCollapsedStarterBoundary(text, i, starter)) {
+      starts.push(i);
+    }
+  }
+  return [...new Set(starts)].sort((a, b) => a - b);
+}
+
+function splitCollapsedCicadaStatements(text) {
+  const starts = findCollapsedCicadaStatementStarts(text);
+  if (starts.length <= 1) return null;
+  return starts
+    .map((start, idx) => text.slice(start, starts[idx + 1] ?? text.length).trim())
+    .filter(Boolean);
+}
+
+function normalizeCicadaBotLine(statement) {
+  const trimmed = statement.trim();
+  if (/^бот\s*""\s*$/i.test(trimmed)) return 'бот "YOUR_BOT_TOKEN"';
+  return trimmed;
+}
+
+function cicadaStatementIndent(statement, scope) {
+  if (/^(?:бот\s+|версия\s+|при\s+|команда\s+|сценарий\s+)/i.test(statement)) {
+    return 0;
+  }
+  if (/^шаг\s+/i.test(statement)) return scope === 'scenario' || scope === 'step' ? 1 : 0;
+  if (scope === 'step') return 2;
+  if (scope === 'handler' || scope === 'scenario') return 1;
+  return 0;
+}
+
+function nextCicadaScope(statement, scope) {
+  if (/^сценарий\s+/i.test(statement)) return 'scenario';
+  if (/^(?:при\s+|команда\s+)/i.test(statement)) return 'handler';
+  if (/^шаг\s+/i.test(statement)) return 'step';
+  if (/^(?:бот\s+|версия\s+)/i.test(statement)) return 'root';
+  return scope;
+}
+
+/**
+ * Repairs common LLM-converted Cicada DSL where newlines were collapsed into one line.
+ * Example: `бот ""при старте:    ответ "..."    стоп`.
+ * @param {string} code
+ * @returns {string}
+ */
+export function repairCollapsedCicadaCode(code) {
+  const src = stripMergeConflictMarkers(code)
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .trim();
+  if (!src) return src;
+
+  const hasCollapsedSignals =
+    /бот\s*""\s*при\s+/i.test(src) ||
+    /стоп\s*при\s+/i.test(src) ||
+    /запустить\s+\S+\s*при\s+/i.test(src) ||
+    /:\s{2,}\S/.test(src) ||
+    (src.split('\n').length <= 2 && findCollapsedCicadaStatementStarts(src).length > 2);
+
+  if (!hasCollapsedSignals) {
+    return src
+      .split('\n')
+      .map((line) => normalizeCicadaBotLine(line))
+      .join('\n');
+  }
+
+  const statements = splitCollapsedCicadaStatements(src);
+  if (!statements) return normalizeCicadaBotLine(src);
+
+  let scope = 'root';
+  const lines = statements.map((raw) => {
+    const statement = normalizeCicadaBotLine(raw);
+    const indent = cicadaStatementIndent(statement, scope);
+    scope = nextCicadaScope(statement, scope);
+    return `${'    '.repeat(indent)}${statement}`;
+  });
+  return lines.join('\n');
+}
+
 /** «Стоп» сразу после «запустить …» в том же обработчике ломает FSM ядра Cicada (EndScenario попадает в общую очередь с отложенными шагами «спросить»). */
 const STOP_AFTER_RUN_FIX_MSG =
   'Удалён «стоп» после «запустить»: в одном обработчике так нельзя — завершится сценарий до шагов «спросить». Добавляйте «стоп» только внутри сценария или после полного прохождения цепочки.';
@@ -93,26 +321,72 @@ export function stripStopAfterRunScenario(lines) {
  */
 export function normalizeAiGeneratedStacks(stacks) {
   if (!Array.isArray(stacks)) return stacks;
+  const { scenarioNameMap, stepNameMap, varNameMap } = buildAiNameMaps(stacks);
+
   return stacks.map((stack) => ({
     ...stack,
     blocks: (stack?.blocks || []).map((block) => {
       const props = block?.props || {};
       let nextProps = props;
+      const setProp = (key, value) => {
+        if (nextProps === props) nextProps = { ...props };
+        nextProps[key] = value;
+      };
 
       if (block?.type === 'buttons' && typeof props.rows === 'string') {
-        nextProps = {
-          ...nextProps,
-          rows: normalizeReplyKeyboardRowsProp(props.rows),
-        };
+        const rows = normalizeReplyKeyboardRowsProp(props.rows);
+        if (rows !== props.rows) setProp('rows', rows);
+      }
+
+      for (const key of AI_QUOTED_STRING_PROP_KEYS) {
+        if (typeof nextProps[key] !== 'string') continue;
+        const fixed = normalizeCicadaQuotedString(nextProps[key]);
+        if (fixed !== nextProps[key]) setProp(key, fixed);
+      }
+
+      if (block?.type === 'command' && typeof nextProps.cmd === 'string') {
+        const fixed = nextProps.cmd.replace(/^\/+/, '').trim().split(/\s+/)[0] || 'start';
+        if (fixed !== nextProps.cmd) setProp('cmd', fixed);
+      }
+
+      if (
+        (block?.type === 'scenario' || block?.type === 'run') &&
+        typeof nextProps.name === 'string'
+      ) {
+        const fixed =
+          scenarioNameMap.get(nextProps.name) ||
+          normalizeCicadaIdentifier(nextProps.name, 'scenario');
+        if (fixed !== nextProps.name) setProp('name', fixed);
+      }
+
+      if (block?.type === 'step' && typeof nextProps.name === 'string') {
+        const fixed =
+          stepNameMap.get(nextProps.name) ||
+          normalizeCicadaIdentifier(nextProps.name, 'step');
+        if (fixed !== nextProps.name) setProp('name', fixed);
+      }
+
+      if (block?.type === 'goto') {
+        const raw = typeof nextProps.label === 'string' ? nextProps.label : nextProps.target;
+        if (typeof raw === 'string') {
+          const fixed = stepNameMap.get(raw) || normalizeCicadaIdentifier(raw, 'step');
+          if (fixed !== nextProps.label) setProp('label', fixed);
+          if (nextProps.target != null && fixed !== nextProps.target) setProp('target', fixed);
+        }
+      }
+
+      if (typeof nextProps.varname === 'string') {
+        const fixed =
+          varNameMap.get(nextProps.varname) ||
+          normalizeCicadaIdentifier(nextProps.varname, 'var');
+        if (fixed !== nextProps.varname) setProp('varname', fixed);
       }
 
       for (const key of AI_TEMPLATE_PROP_KEYS) {
         if (typeof nextProps[key] !== 'string') continue;
-        const fixed = repairTemplatePlaceholders(nextProps[key]);
-        if (fixed !== nextProps[key]) {
-          if (nextProps === props) nextProps = { ...props };
-          nextProps[key] = fixed;
-        }
+        let fixed = replaceTemplateVarRefs(nextProps[key], varNameMap);
+        fixed = repairTemplatePlaceholders(fixed);
+        if (fixed !== nextProps[key]) setProp(key, fixed);
       }
 
       return nextProps === props ? block : { ...block, props: nextProps };
