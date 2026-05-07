@@ -121,6 +121,162 @@ function buildAiNameMaps(stacks) {
   return { scenarioNameMap, stepNameMap, varNameMap };
 }
 
+const CONFLICT_MARKER_LENGTH = 7;
+const MERGE_CONFLICT_MARKERS = ['<', '=', '>'].map((ch) => ch.repeat(CONFLICT_MARKER_LENGTH));
+
+function findUnquotedMergeConflictMarker(line) {
+  let inQuote = false;
+  let escaped = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inQuote = !inQuote;
+      continue;
+    }
+    if (inQuote) continue;
+    const marker = MERGE_CONFLICT_MARKERS.find((item) => line.startsWith(item, i));
+    if (marker) return i;
+  }
+  return -1;
+}
+
+function stripMergeConflictMarkers(text) {
+  return String(text || '')
+    .split('\n')
+    .map((line) => {
+      const trimmed = line.trimStart();
+      if (MERGE_CONFLICT_MARKERS.some((marker) => trimmed.startsWith(marker))) return null;
+      const markerAt = findUnquotedMergeConflictMarker(line);
+      return markerAt === -1 ? line : line.slice(0, markerAt).trimEnd();
+    })
+    .filter((line) => line !== null)
+    .join('\n');
+}
+
+const COLLAPSED_CICADA_STARTERS = [
+  'inline-кнопки:', 'при геолокации:', 'при документе:', 'при голосовом:',
+  'при контакте:', 'при стикере:', 'при старте:', 'при фото:',
+  'при нажатии ', 'при команде ', 'сценарий ', 'сохранить_глобально ',
+  'проверить подписку ', 'переслать сообщение ', 'запустить ', 'спросить ',
+  'получить ', 'сохранить ', 'ответ_md ', 'кнопки:', 'кнопки ', 'команда ',
+  'ответ ', 'шаг ', 'бот ', 'стоп', 'пауза ', 'печатает ', 'лог',
+];
+
+function isCollapsedStarterBoundary(text, index, starter) {
+  if (index <= 0) return true;
+  if (/^(?:при|сценарий\s|бот\s)/i.test(starter)) return true;
+  const prev = text[index - 1];
+  return /[\s"':]/.test(prev);
+}
+
+function findCollapsedCicadaStatementStarts(text) {
+  const starts = [];
+  let inQuote = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inQuote = !inQuote;
+      continue;
+    }
+    if (inQuote) continue;
+    const rest = text.slice(i).toLowerCase();
+    const starter = COLLAPSED_CICADA_STARTERS.find((item) => rest.startsWith(item));
+    if (starter && isCollapsedStarterBoundary(text, i, starter)) {
+      starts.push(i);
+    }
+  }
+  return [...new Set(starts)].sort((a, b) => a - b);
+}
+
+function splitCollapsedCicadaStatements(text) {
+  const starts = findCollapsedCicadaStatementStarts(text);
+  if (starts.length <= 1) return null;
+  return starts
+    .map((start, idx) => text.slice(start, starts[idx + 1] ?? text.length).trim())
+    .filter(Boolean);
+}
+
+function normalizeCicadaBotLine(statement) {
+  const trimmed = statement.trim();
+  if (/^бот\s*""\s*$/i.test(trimmed)) return 'бот "YOUR_BOT_TOKEN"';
+  return trimmed;
+}
+
+function cicadaStatementIndent(statement, scope) {
+  if (/^(?:бот\s+|версия\s+|при\s+|команда\s+|сценарий\s+)/i.test(statement)) {
+    return 0;
+  }
+  if (/^шаг\s+/i.test(statement)) return scope === 'scenario' || scope === 'step' ? 1 : 0;
+  if (scope === 'step') return 2;
+  if (scope === 'handler' || scope === 'scenario') return 1;
+  return 0;
+}
+
+function nextCicadaScope(statement, scope) {
+  if (/^сценарий\s+/i.test(statement)) return 'scenario';
+  if (/^(?:при\s+|команда\s+)/i.test(statement)) return 'handler';
+  if (/^шаг\s+/i.test(statement)) return 'step';
+  if (/^(?:бот\s+|версия\s+)/i.test(statement)) return 'root';
+  return scope;
+}
+
+/**
+ * Repairs common LLM-converted Cicada DSL where newlines were collapsed into one line.
+ * Example: `бот ""при старте:    ответ "..."    стоп`.
+ * @param {string} code
+ * @returns {string}
+ */
+export function repairCollapsedCicadaCode(code) {
+  const src = stripMergeConflictMarkers(code)
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .trim();
+  if (!src) return src;
+
+  const hasCollapsedSignals =
+    /бот\s*""\s*при\s+/i.test(src) ||
+    /стоп\s*при\s+/i.test(src) ||
+    /запустить\s+\S+\s*при\s+/i.test(src) ||
+    /:\s{2,}\S/.test(src) ||
+    (src.split('\n').length <= 2 && findCollapsedCicadaStatementStarts(src).length > 2);
+
+  if (!hasCollapsedSignals) {
+    return src
+      .split('\n')
+      .map((line) => normalizeCicadaBotLine(line))
+      .join('\n');
+  }
+
+  const statements = splitCollapsedCicadaStatements(src);
+  if (!statements) return normalizeCicadaBotLine(src);
+
+  let scope = 'root';
+  const lines = statements.map((raw) => {
+    const statement = normalizeCicadaBotLine(raw);
+    const indent = cicadaStatementIndent(statement, scope);
+    scope = nextCicadaScope(statement, scope);
+    return `${'    '.repeat(indent)}${statement}`;
+  });
+  return lines.join('\n');
+}
+
 /** «Стоп» сразу после «запустить …» в том же обработчике ломает FSM ядра Cicada (EndScenario попадает в общую очередь с отложенными шагами «спросить»). */
 const STOP_AFTER_RUN_FIX_MSG =
   'Удалён «стоп» после «запустить»: в одном обработчике так нельзя — завершится сценарий до шагов «спросить». Добавляйте «стоп» только внутри сценария или после полного прохождения цепочки.';
