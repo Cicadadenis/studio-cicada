@@ -1,0 +1,18 @@
+[
+  {
+    "id": "s0",
+    "x": 40,
+    "y": 40,
+    "blocks": [{ "id": "b0", "type": "bot", "props": { "token": "YOUR_BOT_TOKEN" } }]
+  },
+  {
+    "id": "s1",
+    "x": 400,
+    "y": 40,
+    "blocks": [
+      { "id": "b1", "type": "start", "props": {} },
+      { "id": "b2", "type": "message", "props": { "text": "Привет из регрессии" } },
+      { "id": "b3", "type": "stop", "props": {} }
+    ]
+  }
+]

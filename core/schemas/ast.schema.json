@@ -1,0 +1,324 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cicada.local/schemas/ast.schema.json",
+  "title": "Cicada parser AST (JSON)",
+  "$comment": "Полная проверка дерева (jsonschema): Program.handlers — массив; Reply/SwitchStmt/If — обязательные поля; SwitchStmt.cases — массив пар [строка, тело]. Сериализация: tests/tools/dsl_to_ast_json.py.",
+  "$defs": {
+    "AstNodeType": {
+      "type": "string",
+      "enum": [
+        "Program",
+        "Handler",
+        "Scenario",
+        "Reply",
+        "Ask",
+        "RandomReply",
+        "SwitchStmt",
+        "Remember",
+        "If",
+        "Condition",
+        "ComplexCondition",
+        "Buttons",
+        "InlineButton",
+        "InlineKeyboard",
+        "Photo",
+        "PhotoVar",
+        "Sticker",
+        "StartScenario",
+        "Step",
+        "ReturnFromScenario",
+        "RepeatStep",
+        "GotoStep",
+        "EndScenario",
+        "SaveToDB",
+        "LoadFromDB",
+        "ForwardPhoto",
+        "SaveFile",
+        "SendDocument",
+        "SendAudio",
+        "SendVideo",
+        "SendVoice",
+        "SendLocation",
+        "SendContact",
+        "SendPoll",
+        "SendInvoice",
+        "SendGame",
+        "SendMarkdown",
+        "DownloadFile",
+        "HttpGet",
+        "HttpPost",
+        "Log",
+        "Sleep",
+        "TelegramAPI",
+        "GlobalVar",
+        "BeforeEach",
+        "AfterEach",
+        "Block",
+        "UseBlock",
+        "VarRef",
+        "Expr",
+        "FunctionCall",
+        "ListLiteral",
+        "DictLiteral",
+        "Index",
+        "Attr",
+        "ForEach",
+        "WhileLoop",
+        "BreakLoop",
+        "ContinueLoop",
+        "Timeout",
+        "Notify",
+        "Broadcast",
+        "CheckSubscription",
+        "GetChatMemberRole",
+        "ForwardMsg",
+        "LoadJson",
+        "SaveJson",
+        "DeleteFile",
+        "DeleteDictKey",
+        "SetDictKey",
+        "HttpPatch",
+        "HttpPut",
+        "HttpDelete",
+        "SetHttpHeaders",
+        "DeleteFromDB",
+        "GetAllDBKeys",
+        "SaveGlobalDB",
+        "LoadFromUserDB",
+        "ReturnValue",
+        "CallBlock",
+        "Literal",
+        "Variable",
+        "BinaryOp",
+        "UnaryOp",
+        "Call"
+      ]
+    },
+    "HandlerKind": {
+      "type": "string",
+      "enum": [
+        "start",
+        "command",
+        "text",
+        "callback",
+        "else",
+        "reply",
+        "before_each",
+        "after_each",
+        "photo_received",
+        "document_received",
+        "voice_received",
+        "sticker_received",
+        "location_received",
+        "contact_received",
+        "any"
+      ]
+    },
+    "FallbackStatement": {
+      "type": "object",
+      "required": ["__type__"],
+      "properties": {
+        "__type__": {
+          "type": "string",
+          "not": { "enum": ["Reply", "If", "SwitchStmt"] }
+        }
+      },
+      "additionalProperties": true
+    },
+    "FallbackExpr": {
+      "type": "object",
+      "required": ["__type__"],
+      "properties": {
+        "__type__": {
+          "type": "string",
+          "not": { "enum": ["Literal", "Variable", "BinaryOp", "UnaryOp", "Condition"] }
+        }
+      },
+      "additionalProperties": true
+    },
+    "LiteralShape": {
+      "type": "object",
+      "required": ["__type__", "value"],
+      "properties": {
+        "__type__": { "const": "Literal" },
+        "value": true
+      },
+      "additionalProperties": true
+    },
+    "VariableShape": {
+      "type": "object",
+      "required": ["__type__", "name"],
+      "properties": {
+        "__type__": { "const": "Variable" },
+        "name": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "BinaryOpShape": {
+      "type": "object",
+      "required": ["__type__", "left", "op", "right"],
+      "properties": {
+        "__type__": { "const": "BinaryOp" },
+        "left": { "$ref": "#/$defs/ExprNode" },
+        "op": { "type": "string" },
+        "right": { "$ref": "#/$defs/ExprNode" }
+      },
+      "additionalProperties": true
+    },
+    "UnaryOpShape": {
+      "type": "object",
+      "required": ["__type__", "op", "operand"],
+      "properties": {
+        "__type__": { "const": "UnaryOp" },
+        "op": { "type": "string" },
+        "operand": { "$ref": "#/$defs/ExprNode" }
+      },
+      "additionalProperties": true
+    },
+    "ConditionShape": {
+      "type": "object",
+      "required": ["__type__", "left", "op", "right"],
+      "properties": {
+        "__type__": { "const": "Condition" },
+        "left": { "$ref": "#/$defs/ExprNode" },
+        "op": { "type": "string" },
+        "right": { "$ref": "#/$defs/ExprNode" },
+        "negate": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "ExprNode": {
+      "oneOf": [
+        { "$ref": "#/$defs/LiteralShape" },
+        { "$ref": "#/$defs/VariableShape" },
+        { "$ref": "#/$defs/BinaryOpShape" },
+        { "$ref": "#/$defs/UnaryOpShape" },
+        { "$ref": "#/$defs/ConditionShape" },
+        { "$ref": "#/$defs/FallbackExpr" }
+      ]
+    },
+    "ReplyShape": {
+      "type": "object",
+      "required": ["__type__", "parts"],
+      "properties": {
+        "__type__": { "const": "Reply" },
+        "parts": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              { "type": "string" },
+              { "$ref": "#/$defs/ExprNode" },
+              { "$ref": "#/$defs/FallbackStatement" }
+            ]
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "SwitchCaseTuple": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "prefixItems": [
+        { "type": "string" },
+        {
+          "type": "array",
+          "items": {
+            "anyOf": [{ "type": "string" }, { "$ref": "#/$defs/Statement" }]
+          }
+        }
+      ]
+    },
+    "SwitchStmtShape": {
+      "type": "object",
+      "required": ["__type__", "variable", "cases"],
+      "properties": {
+        "__type__": { "const": "SwitchStmt" },
+        "variable": { "type": "string" },
+        "cases": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/SwitchCaseTuple" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "IfShape": {
+      "type": "object",
+      "required": ["__type__", "condition", "then_body", "else_body"],
+      "properties": {
+        "__type__": { "const": "If" },
+        "condition": { "$ref": "#/$defs/ExprNode" },
+        "then_body": {
+          "type": "array",
+          "items": {
+            "anyOf": [{ "type": "string" }, { "$ref": "#/$defs/Statement" }]
+          }
+        },
+        "else_body": {
+          "type": "array",
+          "items": {
+            "anyOf": [{ "type": "string" }, { "$ref": "#/$defs/Statement" }]
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "Statement": {
+      "oneOf": [
+        { "$ref": "#/$defs/ReplyShape" },
+        { "$ref": "#/$defs/SwitchStmtShape" },
+        { "$ref": "#/$defs/IfShape" },
+        { "$ref": "#/$defs/FallbackStatement" }
+      ]
+    },
+    "Program": {
+      "type": "object",
+      "required": ["__type__", "config", "handlers", "scenarios", "blocks", "globals"],
+      "properties": {
+        "__type__": { "const": "Program" },
+        "schemaVersion": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Версия контракта сериализованного AST (schemas/schema-versions.json → astSchemaVersion)."
+        },
+        "config": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "handlers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["__type__", "kind", "trigger", "body"],
+            "properties": {
+              "__type__": { "const": "Handler" },
+              "kind": { "$ref": "#/$defs/HandlerKind" },
+              "trigger": true,
+              "body": {
+                "type": "array",
+                "items": {
+                  "anyOf": [{ "type": "string" }, { "$ref": "#/$defs/Statement" }]
+                }
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "scenarios": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "blocks": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "globals": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "$ref": "#/$defs/Program"
+}

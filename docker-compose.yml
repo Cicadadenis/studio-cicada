@@ -1,0 +1,53 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    shm_size: 256mb
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-cicada}
+      POSTGRES_USER: ${DB_USER:-cicada_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-cicada_password}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-cicada_user} -d ${DB_NAME:-cicada}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${API_PORT:-3001}:3001"
+    environment:
+      API_HOST: ${API_HOST:-localhost}
+      API_PORT: 3001
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-cicada}
+      DB_USER: ${DB_USER:-cicada_user}
+      DB_PASSWORD: ${DB_PASSWORD:-cicada_password}
+      ADMIN_KEY: ${ADMIN_KEY}
+      CICADA_BIN: ${CICADA_BIN:-/usr/local/bin/cicada}
+      CRYPTOBOT_TOKEN: ${CRYPTOBOT_TOKEN:-}
+      TG_BOT_TOKEN: ${TG_BOT_TOKEN:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      OLLAMA_URL: ${OLLAMA_URL:-https://api.groq.com/openai}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama-3.3-70b-versatile}
+      GROQ_TOKEN: ${GROQ_TOKEN:-}
+      GROQ_TOKEN_2: ${GROQ_TOKEN_2:-}
+      GROQ_TOKEN_3: ${GROQ_TOKEN_3:-}
+      DSL_MAX_RUNTIME_MS: ${DSL_MAX_RUNTIME_MS:-300000}
+      DSL_MAX_CODE_BYTES: ${DSL_MAX_CODE_BYTES:-100000}
+    volumes:
+      - ./bots:/app/bots
+
+volumes:
+  pgdata:

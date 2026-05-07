@@ -1,0 +1,56 @@
+nano /etc/nginx/sites-enabled/cicada
+
+server {
+    server_name xn--80aaa5crh.site;
+
+    root /var/www/cicada/dist;
+    index index.html;
+
+    location = /satana {
+        proxy_pass http://localhost:3001;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+    }
+
+    location = /satana.html {
+        return 301 /satana;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location /api/ {
+        proxy_pass http://localhost:3001;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+    }
+
+    location /run {
+        proxy_pass http://localhost:3001;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+    }
+
+    listen 443 ssl;
+    ssl_certificate /etc/letsencrypt/live/xn--80aaa5crh.site/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/xn--80aaa5crh.site/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+}
+
+server {
+    if ($host = xn--80aaa5crh.site) {
+        return 301 https://$host$request_uri;
+    }
+
+    listen 80;
+    server_name xn--80aaa5crh.site;
+    return 404;
+}

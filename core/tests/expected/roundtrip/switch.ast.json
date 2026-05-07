@@ -1,0 +1,48 @@
+{
+  "__type__": "Program",
+  "blocks": {},
+  "config": {
+    "token": "0:dummy",
+    "version": "1.0"
+  },
+  "globals": {},
+  "handlers": [
+    {
+      "__type__": "Handler",
+      "body": [
+        {
+          "__type__": "SwitchStmt",
+          "cases": [
+            [
+              "да",
+              [
+                {
+                  "__type__": "Reply",
+                  "parts": [
+                    "..."
+                  ]
+                }
+              ]
+            ],
+            [
+              "нет",
+              [
+                {
+                  "__type__": "Reply",
+                  "parts": [
+                    "..."
+                  ]
+                }
+              ]
+            ]
+          ],
+          "variable": "режим"
+        }
+      ],
+      "kind": "command",
+      "trigger": "/t"
+    }
+  ],
+  "scenarios": {},
+  "schemaVersion": 1
+}

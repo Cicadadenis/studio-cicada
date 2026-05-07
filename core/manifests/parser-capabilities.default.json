@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "parserMinAstSchemaVersion": 1,
+  "notes": "Статический эталон возможностей (расширяется CI или introspection parser.py).",
+  "features": [
+    "switch",
+    "inline_buttons",
+    "inline_keyboard",
+    "reply",
+    "if_else",
+    "handler_start",
+    "handler_command",
+    "handler_text",
+    "handler_callback",
+    "handler_photo_received",
+    "handler_document_received",
+    "handler_voice_received",
+    "handler_sticker_received",
+    "handler_location_received",
+    "handler_contact_received",
+    "middleware_before_each",
+    "middleware_after_each"
+  ]
+}

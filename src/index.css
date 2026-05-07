@@ -1,0 +1,149 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #0e0f11;
+  --bg2: #16181c;
+  --bg3: #1e2026;
+  --border: #2a2d35;
+  --border2: #363a45;
+  --text: #e8eaf0;
+  --text2: #8b90a0;
+  --text3: #555a6a;
+  --accent: #5b7cf6;
+  --accent2: #3d5bd4;
+  --green: #3ecf8e;
+  --red: #f87171;
+  --amber: #fbbf24;
+  --mono: 'JetBrains Mono', monospace;
+  --sans: 'Syne', sans-serif;
+}
+
+html, body {
+  height: 100%;
+  overscroll-behavior: none;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow: hidden;
+  -webkit-text-size-adjust: 100%;
+  touch-action: manipulation;
+}
+
+/* ReactFlow overrides */
+.react-flow__background { background: var(--bg2) !important; }
+.react-flow__edge-path { stroke: var(--accent) !important; stroke-width: 1.5 !important; }
+.react-flow__arrowhead path { fill: var(--accent) !important; }
+.react-flow__edges { display: none !important; }
+.react-flow__connection-path { stroke: transparent !important; }
+.react-flow__handle {
+  width: 10px !important; height: 10px !important;
+  background: var(--accent) !important;
+  border: 2px solid var(--bg2) !important;
+}
+.react-flow__handle:hover { background: var(--green) !important; }
+.react-flow__controls { background: var(--bg3) !important; border: 1px solid var(--border) !important; border-radius: 8px !important; }
+.react-flow__controls-button { background: transparent !important; border: none !important; color: var(--text2) !important; fill: var(--text2) !important; }
+.react-flow__controls-button:hover { background: var(--bg2) !important; color: var(--text) !important; fill: var(--text) !important; }
+.react-flow__minimap { background: var(--bg3) !important; border: 1px solid var(--border) !important; border-radius: 8px !important; }
+
+/* Bigger touch targets on mobile for ReactFlow handles */
+@media (max-width: 767px) {
+  .react-flow__handle {
+    width: 16px !important;
+    height: 16px !important;
+  }
+  .react-flow__controls {
+    bottom: 80px !important;
+  }
+}
+
+input, textarea, select {
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 6px 8px;
+  outline: none;
+  transition: border-color .15s;
+  width: 100%;
+  /* Prevent zoom on input focus on iOS */
+  font-size: max(16px, 12px);
+}
+
+@media (min-width: 768px) {
+  input, textarea, select { font-size: 12px; }
+}
+
+input:focus, textarea:focus, select:focus { border-color: var(--accent); }
+
+button {
+  font-family: var(--mono);
+  font-size: 12px;
+  cursor: pointer;
+  border: none;
+  border-radius: 6px;
+  transition: all .15s;
+  /* No tap flash on mobile */
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+/* Better tap targets for mobile */
+@media (max-width: 767px) {
+  button { min-height: 36px; }
+  textarea { font-size: 16px; }
+}
+
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
+
+/* ReactFlow overrides */
+.react-flow__background { background: var(--bg2) !important; }
+.react-flow__edge-path { stroke: var(--accent) !important; stroke-width: 1.5 !important; }
+.react-flow__arrowhead path { fill: var(--accent) !important; }
+.react-flow__handle {
+  width: 10px !important; height: 10px !important;
+  background: var(--accent) !important;
+  border: 2px solid var(--bg2) !important;
+}
+.react-flow__handle:hover { background: var(--green) !important; }
+.react-flow__controls { background: var(--bg3) !important; border: 1px solid var(--border) !important; border-radius: 8px !important; }
+.react-flow__controls-button { background: transparent !important; border: none !important; color: var(--text2) !important; fill: var(--text2) !important; }
+.react-flow__controls-button:hover { background: var(--bg2) !important; color: var(--text) !important; fill: var(--text) !important; }
+.react-flow__minimap { background: var(--bg3) !important; border: 1px solid var(--border) !important; border-radius: 8px !important; }
+
+input, textarea, select {
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 6px 8px;
+  outline: none;
+  transition: border-color .15s;
+  width: 100%;
+}
+input:focus, textarea:focus, select:focus { border-color: var(--accent); }
+
+button {
+  font-family: var(--mono);
+  font-size: 12px;
+  cursor: pointer;
+  border: none;
+  border-radius: 6px;
+  transition: all .15s;
+}
+
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
+

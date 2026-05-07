@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cicada.local/schemas/build-graph.schema.json",
+  "title": "AST incremental build graph (Merkle + edges)",
+  "$comment": "Выход tests/tools/ast_build_graph.py v2+. rollupHash = Merkle(contentDigest || concat child rollup digest). edges — явный граф. programSubtreeFingerprint — полный SHA256 канонического Program (кеш точного совпадения).",
+  "type": "object",
+  "required": [
+    "buildGraphFormatVersion",
+    "merkleRootHash",
+    "programShellHash",
+    "programFullHash",
+    "programSubtreeFingerprint",
+    "nodes",
+    "edges"
+  ],
+  "properties": {
+    "buildGraphFormatVersion": {
+      "type": "integer",
+      "minimum": 2
+    },
+    "sourceAstSchemaVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "merkleRootHash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Обычно rollup узла program:full"
+    },
+    "programShellHash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "programFullHash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "programSubtreeFingerprint": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "SHA-256 всего AST Program (канонический JSON)"
+    },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "contentHash", "rollupHash", "subtreeHash", "children"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "semanticId": { "type": "string" },
+          "kind": {
+            "type": "string",
+            "minLength": 1
+          },
+          "stmtType": { "type": "string" },
+          "contentHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "rollupHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "subtreeHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "children": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "meta": { "type": "object", "additionalProperties": true }
+        },
+        "additionalProperties": true
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["from", "to", "type"],
+        "properties": {
+          "from": { "type": "string", "minLength": 1 },
+          "to": { "type": "string", "minLength": 1 },
+          "type": {
+            "type": "string",
+            "minLength": 1,
+            "description": "contains | control_flow_then | control_flow_else | switch_variant | расширения"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": true
+}

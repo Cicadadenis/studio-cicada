@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "description": "Пример раскладки persistent artifact cache (не коммитить .cache/ в git).",
+  "layout": {
+    "ast": ".cache/ast/{rollupHash|subtreeHash prefix}/{id}.json",
+    "codegen": ".cache/codegen/{handler rollupHash}/output.bin",
+    "bundles": ".cache/bundles/{programSubtreeFingerprint or merkleRootHash}/bundle.zip"
+  },
+  "lookupKeys": {
+    "exactProgramMatch": "programSubtreeFingerprint",
+    "incrementalRoot": "merkleRootHash",
+    "handlerUnit": "nodes[].rollupHash где kind==handler",
+    "statementUnit": "nodes[].rollupHash где kind==stmt"
+  },
+  "notes": "Хиты кеша по rollupHash; полная пересборка при смене buildGraphFormatVersion или канонического сериализатора."
+}

@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "kind": "emitBlock",
+  "indent": 0,
+  "block": {
+    "type": "message",
+    "props": {
+      "text": "line1\nline2"
+    }
+  }
+}

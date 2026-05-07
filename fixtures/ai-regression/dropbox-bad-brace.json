@@ -1,0 +1,19 @@
+[
+  {
+    "id": "s0",
+    "x": 40,
+    "y": 40,
+    "blocks": [{ "id": "b0", "type": "bot", "props": { "token": "YOUR_BOT_TOKEN" } }]
+  },
+  {
+    "id": "s1",
+    "x": 400,
+    "y": 40,
+    "blocks": [
+      { "id": "b1", "type": "document_received", "props": {} },
+      { "id": "b2", "type": "save", "props": { "key": "dropbox_{chat_id)", "value": "{файл_id}" } },
+      { "id": "b3", "type": "message", "props": { "text": "Файл сохранён в Dropbox для чата {chat_id)" } },
+      { "id": "b4", "type": "stop", "props": {} }
+    ]
+  }
+]
