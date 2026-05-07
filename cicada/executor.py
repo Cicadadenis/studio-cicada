@@ -12,7 +12,7 @@ import os as _os
 import requests
 
 from cicada.parser import (
-    Program, Handler, Reply, RandomReply, Ask, Remember, If,
+    Program, Handler, Reply, RandomReply, SwitchStmt, Ask, Remember, If,
     Buttons, InlineButton, InlineKeyboard, Photo, PhotoVar, Sticker,
     GlobalVar,
     StartScenario, Step,
@@ -709,6 +709,7 @@ class Executor:
             Ask:                self._exec_ask,
             Remember:           self._exec_remember,
             If:                 self._exec_if,
+            SwitchStmt:         self._exec_switch,
             Buttons:            self._exec_buttons,
             InlineButton:       self._exec_inline_button,
             InlineKeyboard:     self._exec_inline_keyboard,
@@ -1179,6 +1180,14 @@ class Executor:
             self._exec_body(stmt.else_body, ctx)
             return True
         return False
+
+    def _exec_switch(self, stmt: SwitchStmt, ctx):
+        raw = ctx.get(stmt.variable)
+        val = "" if raw is None else str(raw)
+        for lit, body in stmt.cases:
+            if val == lit:
+                self._exec_body(body, ctx)
+                break
 
     def _exec_global_var(self, stmt: GlobalVar, ctx):
         """Установить глобальную переменную (доступна всем пользователям)"""
