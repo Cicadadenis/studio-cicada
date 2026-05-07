@@ -22,6 +22,9 @@ export const SCHEMA_VERSIONS_FOR_UI = Object.freeze({
   irSchemaVersion: 1,
   astSchemaVersion: 1,
   buildGraphFormatVersion: 1,
+  dslSnapshotManifestVersion: 1,
+  capabilitiesManifestVersion: 1,
+  projectManifestFormatVersion: 1,
 });
 
 const ARROW = '→';
@@ -542,6 +545,11 @@ export function validateFlow(flow) {
   const edges = flow?.edges || [];
   const idset = new Set(nodes.map((n) => n.id));
 
+  const blockType = (n) => n?.data?.type || n?.type;
+  const blockProps = (n) => n?.data?.props || n.props || {};
+  const blockLabel = (n) => n?.data?.label || n?.label || blockType(n);
+  const standaloneTypes = new Set(['version', 'bot', 'commands', 'global']);
+
   const dupCheck = new Set();
   for (const n of nodes) {
     if (dupCheck.has(n.id)) errors.push(`Дублируется id узла ${n.id}`);
@@ -574,6 +582,189 @@ export function validateFlow(flow) {
       warnings.push(`Ребро ${e.source}→${e.target}: терминальный/несовместимый порт`);
     }
   }
+
+  if (nodes.length === 0) {
+    warnings.push('Холст пуст — добавь блоки');
+    return { errors, warnings };
+  }
+
+  const startNodes = nodes.filter((n) => blockType(n) === 'start');
+  if (startNodes.length === 0) warnings.push('Нет блока «Старт» — бот не знает с чего начать');
+  if (startNodes.length > 1) warnings.push(`Несколько блоков «Старт» (${startNodes.length} шт.)`);
+
+  nodes.forEach((n) => {
+    const p = blockProps(n);
+    const t = blockType(n);
+    const outgoing = edges.filter((e) => e.source === n.id).length;
+
+    switch (t) {
+      case 'version':
+        if (!p.version?.trim()) errors.push(`Блок «Версия» [${n.id}]: не указана версия`);
+        break;
+      case 'bot':
+        if (!p.token?.trim()) warnings.push(`Блок «Бот» [${n.id}]: не указан токен`);
+        break;
+      case 'commands':
+        if (!p.commands?.trim()) warnings.push(`Блок «Команды меню» [${n.id}]: нет команд`);
+        break;
+      case 'global':
+        if (!p.varname?.trim()) errors.push(`Блок «Глобальная» [${n.id}]: нет имени переменной`);
+        break;
+      case 'block':
+        if (!p.name?.trim()) errors.push(`Блок «Блок» [${n.id}]: нет имени блока`);
+        break;
+      case 'use':
+        if (!p.blockname?.trim()) errors.push(`Блок «Использовать» [${n.id}]: не указано имя блока`);
+        break;
+      case 'middleware':
+        if (!p.type?.trim() || !['before', 'after'].includes(p.type))
+          errors.push(`Блок «Middleware» [${n.id}]: неверный тип (before/after)`);
+        break;
+      case 'message':
+        if (!p.text?.trim()) errors.push(`Блок «Ответ» [${n.id}]: пустой текст`);
+        break;
+      case 'buttons':
+        if (!p.rows?.trim()) errors.push(`Блок «Кнопки» [${n.id}]: нет кнопок`);
+        break;
+      case 'inline': {
+        if (!p.buttons?.trim()) {
+          errors.push(`Блок «Inline-кнопки» [${n.id}]: нет кнопок`);
+          break;
+        }
+        const inlineRows = p.buttons.trim().split('\n');
+        inlineRows.forEach((row, ri) => {
+          row.split(',').forEach((btn, bi) => {
+            const parts = btn.trim().split('|');
+            if (parts.length < 2 || !parts[0].trim() || !parts[1].trim()) {
+              errors.push(
+                `Блок «Inline-кнопки» [${n.id}]: кнопка ${ri + 1}.${bi + 1} — неверный формат, нужно "Текст|callback"`,
+              );
+            }
+          });
+        });
+        const inlineParents = edges.filter((e) => e.target === n.id).map((e) => e.source);
+        if (inlineParents.length === 0) {
+          warnings.push(`Блок «Inline-кнопки» [${n.id}]: не подключён к родительскому блоку`);
+        } else {
+          const hasSiblingMessage = inlineParents.some((parentId) =>
+            edges
+              .filter((e) => e.source === parentId)
+              .map((e) => e.target)
+              .some((sibId) => {
+                const sib = nodes.find((nd) => nd.id === sibId);
+                return sib && blockType(sib) === 'message';
+              }),
+          );
+          if (!hasSiblingMessage) {
+            warnings.push(
+              `Блок «Inline-кнопки» [${n.id}]: нет блока «Ответ» в том же родителе — кнопки отправятся без текста`,
+            );
+          }
+        }
+        break;
+      }
+      case 'command':
+        if (!p.cmd?.trim()) errors.push(`Блок «Команда» [${n.id}]: не указана команда`);
+        if (outgoing === 0) warnings.push(`Команда /${p.cmd || '?'} не имеет дочерних блоков`);
+        break;
+      case 'condition':
+        if (!p.cond?.trim()) errors.push(`Блок «Условие» [${n.id}]: пустое условие`);
+        break;
+      case 'else':
+        break;
+      case 'switch':
+        if (!p.varname?.trim()) errors.push(`Блок «Переключатель» [${n.id}]: не указана переменная`);
+        if (!p.cases?.trim()) errors.push(`Блок «Переключатель» [${n.id}]: нет вариантов`);
+        break;
+      case 'ask':
+        if (!p.question?.trim()) errors.push(`Блок «Спросить» [${n.id}]: нет вопроса`);
+        if (!p.varname?.trim()) errors.push(`Блок «Спросить» [${n.id}]: нет переменной`);
+        break;
+      case 'remember':
+        if (!p.varname?.trim()) errors.push(`Блок «Запомнить» [${n.id}]: нет переменной`);
+        break;
+      case 'get':
+        if (!p.key?.trim()) errors.push(`Блок «Получить» [${n.id}]: нет ключа`);
+        if (!p.varname?.trim()) errors.push(`Блок «Получить» [${n.id}]: нет переменной`);
+        break;
+      case 'save':
+        if (!p.key?.trim()) errors.push(`Блок «Сохранить» [${n.id}]: нет ключа`);
+        break;
+      case 'http':
+        if (!p.url?.trim()) errors.push(`Блок «HTTP» [${n.id}]: не указан URL`);
+        if (!p.varname?.trim()) warnings.push(`Блок «HTTP» [${n.id}]: не указана переменная для ответа`);
+        break;
+      case 'goto':
+        if (!(p.target || p.label || '').toString().trim())
+          errors.push(`Блок «Переход» [${n.id}]: не указан сценарий`);
+        break;
+      case 'random':
+        if (!p.variants?.trim()) errors.push(`Блок «Рандом» [${n.id}]: нет вариантов`);
+        break;
+      case 'photo':
+      case 'video':
+      case 'audio':
+      case 'document':
+        if (!p.url?.trim()) warnings.push(`Блок «${t}» [${n.id}]: не указан URL`);
+        break;
+      case 'delay':
+      case 'typing':
+        if (!p.seconds || isNaN(Number(p.seconds)))
+          errors.push(`Блок «${t}» [${n.id}]: некорректное число секунд`);
+        break;
+      case 'loop':
+        if (p.mode === 'while' && !p.cond?.trim())
+          errors.push(`Блок «Цикл» [${n.id}]: не указано условие`);
+        if (p.mode !== 'while' && (!p.count || isNaN(Number(p.count))))
+          errors.push(`Блок «Цикл» [${n.id}]: некорректное число повторений`);
+        break;
+      case 'database':
+        if (!p.query?.trim()) errors.push(`Блок «БД» [${n.id}]: не указан SQL-запрос`);
+        if (!p.varname?.trim()) warnings.push(`Блок «БД» [${n.id}]: не указана переменная для результата`);
+        break;
+      case 'classify':
+        if (!p.intents?.trim()) errors.push(`Блок «Классификация» [${n.id}]: не указаны намерения`);
+        if (!p.varname?.trim()) errors.push(`Блок «Классификация» [${n.id}]: не указана переменная`);
+        break;
+      case 'log':
+        if (!p.message?.trim()) warnings.push(`Блок «Лог» [${n.id}]: пустое сообщение`);
+        break;
+      case 'role':
+        if (!p.roles?.trim()) errors.push(`Блок «Роль» [${n.id}]: не указаны роли`);
+        break;
+      case 'payment':
+        if (!p.amount?.trim() || isNaN(Number(p.amount)))
+          errors.push(`Блок «Оплата» [${n.id}]: некорректная сумма`);
+        if (!p.provider?.trim()) errors.push(`Блок «Оплата» [${n.id}]: не указан провайдер`);
+        break;
+      case 'notify':
+        if (!p.text?.trim()) errors.push(`Блок «Уведомление» [${n.id}]: пустой текст`);
+        break;
+      default:
+        break;
+    }
+  });
+
+  const rootTypes = [
+    'start',
+    'command',
+    'scenario',
+    'callback',
+    'on_text',
+    'on_photo',
+    'on_voice',
+    'on_document',
+    'on_sticker',
+    'on_location',
+    'on_contact',
+  ];
+  nodes.forEach((n) => {
+    const t = blockType(n);
+    if (!rootTypes.includes(t) && !standaloneTypes.has(t)) {
+      const hasParent = edges.some((e) => e.target === n.id);
+      if (!hasParent) warnings.push(`«${blockLabel(n)}» [${n.id}] не подключён ни к одному блоку`);
+    }
+  });
 
   return { errors, warnings };
 }

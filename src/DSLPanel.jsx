@@ -121,7 +121,7 @@ export default function DSLPanel({ flow, token, schemaVersions }) {
           gap: 8,
           alignItems: 'center',
         }}
-        title={`Манифест: format v${manifestDraft.projectFormatVersion} · фичи: ${manifestDraft.requiredFeatures.join(', ') || '—'}\nПолный документ: ${graphDocDraft.documentType} schema ${graphDocDraft.schemaVersion}`}
+        title={`Манифест: format v${manifestDraft.projectFormatVersion} · фичи: ${manifestDraft.requiredFeatures.join(', ') || '—'}\nПолный документ: ${graphDocDraft.documentType} schema ${graphDocDraft.schemaVersion}\nКонтракт UI: IR·${sv.irSchemaVersion} AST·${sv.astSchemaVersion} graph·${sv.buildGraphFormatVersion}`}
       >
         <span>
           manifest·v{manifestDraft.projectFormatVersion} · graph·v{graphDocDraft.schemaVersion}
@@ -169,7 +169,7 @@ export default function DSLPanel({ flow, token, schemaVersions }) {
             e.currentTarget.style.color = 'var(--text3)';
           }}
         >
-          manifest
+          project manifest
         </button>
       </div>
 

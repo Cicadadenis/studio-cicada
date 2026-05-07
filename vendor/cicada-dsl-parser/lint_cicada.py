@@ -73,6 +73,7 @@ def main() -> None:
             "column": None,
             "offset": None,
             "message": str(e),
+            "sourceLine": None,
             "help": str(e),
             "suggestions": [],
         }
