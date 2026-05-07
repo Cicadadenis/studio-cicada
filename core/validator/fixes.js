@@ -47,6 +47,190 @@ export function repairTemplatePlaceholders(value) {
     .replace(TEMPLATE_MISSING_CLOSER_RE, '{$1}');
 }
 
+
+
+/** Убирает служебные размышления LLM, чтобы JSON-извлечение не цеплялось за массивы внутри reasoning. */
+export function stripThinkingFromAiRaw(raw) {
+  const reThink = /\u003c\u0074\u0068\u0069\u006E\u006B\u003e[\s\S]*?\u003c\/\u0074\u0068\u0069\u006E\u006B\u003e/gi;
+  const reThinkBr = /\u003c\u005B\u0074\u0068\u0069\u006E\u006B\u005D\u003e[\s\S]*?\u003c\/\u005B\u0074\u0068\u0069\u006E\u006B\u005D\u003e/gi;
+  return String(raw || '')
+    .replace(reThink, '')
+    .replace(reThinkBr, '')
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/<\[think\]>[\s\S]*?<\/\[think\]>/gi, '')
+    .replace(/<redacted_reasoning>[\s\S]*?<\/redacted_reasoning>/gi, '')
+    .trim();
+}
+
+function stripJsonCommentsPreservingStrings(text) {
+  let out = '';
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    const next = text[i + 1];
+    if (escaped) {
+      out += ch;
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\') {
+      out += ch;
+      escaped = inString;
+      continue;
+    }
+    if (ch === '"') {
+      out += ch;
+      inString = !inString;
+      continue;
+    }
+    if (!inString && ch === '/' && next === '/') {
+      while (i < text.length && text[i] !== '\n') i += 1;
+      out += '\n';
+      continue;
+    }
+    if (!inString && ch === '/' && next === '*') {
+      i += 2;
+      while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i += 1;
+      i += 1;
+      continue;
+    }
+    out += ch;
+  }
+  return out;
+}
+
+function stripJsonTrailingCommas(text) {
+  let out = '';
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (escaped) {
+      out += ch;
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\') {
+      out += ch;
+      escaped = inString;
+      continue;
+    }
+    if (ch === '"') {
+      out += ch;
+      inString = !inString;
+      continue;
+    }
+    if (!inString && ch === ',') {
+      let j = i + 1;
+      while (/\s/.test(text[j] || '')) j += 1;
+      if (text[j] === ']' || text[j] === '}') continue;
+    }
+    out += ch;
+  }
+  return out;
+}
+
+function parseJsonMaybeLenient(text) {
+  const source = String(text ?? '').trim().replace(/^\uFEFF/, '');
+  if (!source) return null;
+  const variants = [source];
+  const noComments = stripJsonCommentsPreservingStrings(source);
+  variants.push(noComments, stripJsonTrailingCommas(noComments));
+  for (const candidate of variants) {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // Try next normalization variant.
+    }
+  }
+  return null;
+}
+
+function normalizeFencedJsonText(raw) {
+  return String(raw ?? '')
+    .replace(/```(?:json|javascript|js)?\s*/gi, '')
+    .replace(/```/g, '')
+    .trim();
+}
+
+function findBalancedJsonCandidates(text) {
+  const src = String(text ?? '');
+  const candidates = [];
+  for (let start = 0; start < src.length; start += 1) {
+    const opener = src[start];
+    if (opener !== '[' && opener !== '{') continue;
+    const closer = opener === '[' ? ']' : '}';
+    let squareDepth = 0;
+    let curlyDepth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = start; i < src.length; i += 1) {
+      const ch = src[i];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === '\\') {
+        escaped = inString;
+        continue;
+      }
+      if (ch === '"') {
+        inString = !inString;
+        continue;
+      }
+      if (inString) continue;
+      if (ch === '[') squareDepth += 1;
+      if (ch === ']') squareDepth -= 1;
+      if (ch === '{') curlyDepth += 1;
+      if (ch === '}') curlyDepth -= 1;
+      if (squareDepth < 0 || curlyDepth < 0) break;
+      if (ch === closer && squareDepth === 0 && curlyDepth === 0) {
+        candidates.push(src.slice(start, i + 1));
+        break;
+      }
+    }
+  }
+  return candidates;
+}
+
+function unwrapAiStacksPayload(value) {
+  if (typeof value === 'string') {
+    return unwrapAiStacksPayload(parseJsonMaybeLenient(value));
+  }
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== 'object') return null;
+  if (Array.isArray(value.stacks)) return value.stacks;
+  if (Array.isArray(value.schema)) return value.schema;
+  if (Array.isArray(value.flow)) return value.flow;
+  if (value.result) return unwrapAiStacksPayload(value.result);
+  if (value.data) return unwrapAiStacksPayload(value.data);
+  return null;
+}
+
+function looksLikeAiStackArray(value) {
+  if (!Array.isArray(value) || value.length === 0) return false;
+  return value.some((item) => item && typeof item === 'object' && Array.isArray(item.blocks));
+}
+
+/**
+ * Extracts editor stacks from messy LLM output. Handles prose around JSON,
+ * fenced blocks, object wrappers like {"stacks":[...]}, comments and trailing commas.
+ * @param {string} raw
+ * @returns {{ stacks: Array, jsonText: string } | null}
+ */
+export function extractAiGeneratedStacksFromRaw(raw) {
+  const cleaned = normalizeFencedJsonText(stripThinkingFromAiRaw(raw));
+  const direct = unwrapAiStacksPayload(parseJsonMaybeLenient(cleaned));
+  if (looksLikeAiStackArray(direct)) return { stacks: direct, jsonText: cleaned };
+
+  for (const candidate of findBalancedJsonCandidates(cleaned)) {
+    const stacks = unwrapAiStacksPayload(parseJsonMaybeLenient(candidate));
+    if (looksLikeAiStackArray(stacks)) return { stacks, jsonText: candidate };
+  }
+  return null;
+}
+
 const AI_TEMPLATE_PROP_KEYS = new Set(['key', 'value', 'text', 'url', 'body']);
 
 const CICADA_IDENTIFIER_RE = /^[A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё0-9_]*$/;
@@ -314,6 +498,78 @@ export function stripStopAfterRunScenario(lines) {
   return { lines: out, fixes };
 }
 
+
+
+const AI_BLOCK_TYPE_ALIASES = new Map([
+  ['send_message', 'message'], ['reply', 'message'], ['text', 'message'], ['answer', 'message'],
+  ['keyboard', 'buttons'], ['reply_keyboard', 'buttons'], ['button', 'buttons'],
+  ['inline_keyboard', 'inline'], ['inline_buttons', 'inline'],
+  ['question', 'ask'], ['input', 'ask'], ['set', 'remember'], ['variable', 'remember'],
+  ['if', 'condition'], ['elseif', 'condition'], ['end', 'stop'], ['finish', 'stop'],
+  ['on_start', 'start'], ['on_command', 'command'], ['on_callback', 'callback'],
+  ['call', 'run'], ['scenario_call', 'run'], ['transition', 'goto'], ['delay', 'pause'],
+]);
+
+function normalizeAiBlockType(type) {
+  const raw = String(type ?? '').trim();
+  const key = raw.toLowerCase().replace(/[\s-]+/g, '_');
+  return AI_BLOCK_TYPE_ALIASES.get(key) || raw;
+}
+
+function firstString(...values) {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value;
+  }
+  return undefined;
+}
+
+function normalizeAiBlockProps(type, props) {
+  const p = props && typeof props === 'object' && !Array.isArray(props) ? { ...props } : {};
+  if (type === 'message') p.text = firstString(p.text, p.message, p.content, p.reply, p.answer) ?? p.text;
+  if (type === 'buttons') {
+    if (Array.isArray(p.rows)) p.rows = p.rows.map((row) => Array.isArray(row) ? row.join(', ') : String(row)).join('\n');
+    p.rows = firstString(p.rows, p.labels, p.buttons, p.keyboard, p.text) ?? p.rows;
+  }
+  if (type === 'inline') {
+    if (Array.isArray(p.buttons)) p.buttons = p.buttons.map((row) => Array.isArray(row) ? row.join(', ') : String(row)).join('\n');
+    p.buttons = firstString(p.buttons, p.rows, p.inline, p.keyboard) ?? p.buttons;
+  }
+  if (type === 'ask') {
+    p.question = firstString(p.question, p.text, p.message, p.prompt) ?? p.question;
+    p.varname = firstString(p.varname, p.variable, p.var, p.name, p.save_to) ?? p.varname;
+  }
+  if (type === 'callback') p.label = firstString(p.label, p.text, p.button, p.data) ?? p.label;
+  if (type === 'command') p.cmd = firstString(p.cmd, p.command, p.name) ?? p.cmd;
+  if (type === 'run' || type === 'scenario') p.name = firstString(p.name, p.scenario, p.label, p.target) ?? p.name;
+  if (type === 'goto') p.label = firstString(p.label, p.target, p.step, p.name) ?? p.label;
+  if (type === 'condition') p.cond = firstString(p.cond, p.condition, p.expr, p.expression, p.if) ?? p.cond;
+  if (type === 'remember') {
+    p.varname = firstString(p.varname, p.variable, p.var, p.name) ?? p.varname;
+    if (p.value == null && p.text != null) p.value = p.text;
+  }
+  return p;
+}
+
+function removeStopImmediatelyAfterRun(blocks) {
+  const out = [];
+  for (let i = 0; i < blocks.length; i += 1) {
+    const current = blocks[i];
+    const prev = out[out.length - 1];
+    if (current?.type === 'stop' && prev?.type === 'run') continue;
+    out.push(current);
+  }
+  return out;
+}
+
+function ensureAiBotStack(stacks) {
+  if (!Array.isArray(stacks) || stacks.length === 0) return stacks;
+  const hasBot = stacks.some((stack) => (stack?.blocks || []).some((block) => block?.type === 'bot'));
+  if (hasBot) return stacks;
+  return [
+    { id: 's0', x: 40, y: 40, blocks: [{ id: 'b0', type: 'bot', props: { token: 'YOUR_BOT_TOKEN' } }] },
+    ...stacks,
+  ];
+}
 /**
  * Нормализует JSON-стеки от AI до generateDSL/парсера.
  * @param {Array} stacks
@@ -321,9 +577,27 @@ export function stripStopAfterRunScenario(lines) {
  */
 export function normalizeAiGeneratedStacks(stacks) {
   if (!Array.isArray(stacks)) return stacks;
-  const { scenarioNameMap, stepNameMap, varNameMap } = buildAiNameMaps(stacks);
+  const shapedStacks = ensureAiBotStack(stacks).map((stack, stackIdx) => {
+    const blocks = (stack?.blocks || []).map((block, blockIdx) => {
+      const type = normalizeAiBlockType(block?.type);
+      return {
+        ...block,
+        id: block?.id || `b${stackIdx}_${blockIdx}`,
+        type,
+        props: normalizeAiBlockProps(type, block?.props),
+      };
+    });
+    return {
+      ...stack,
+      id: stack?.id || `s${stackIdx}`,
+      x: Number.isFinite(Number(stack?.x)) ? Number(stack.x) : 40 + (stackIdx % 5) * 360,
+      y: Number.isFinite(Number(stack?.y)) ? Number(stack.y) : 40 + Math.floor(stackIdx / 5) * 320,
+      blocks: removeStopImmediatelyAfterRun(blocks),
+    };
+  });
+  const { scenarioNameMap, stepNameMap, varNameMap } = buildAiNameMaps(shapedStacks);
 
-  return stacks.map((stack) => ({
+  return shapedStacks.map((stack) => ({
     ...stack,
     blocks: (stack?.blocks || []).map((block) => {
       const props = block?.props || {};
