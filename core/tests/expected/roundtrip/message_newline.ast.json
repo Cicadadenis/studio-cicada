@@ -1,0 +1,26 @@
+{
+  "__type__": "Program",
+  "blocks": {},
+  "config": {
+    "token": "0:dummy",
+    "version": "1.0"
+  },
+  "globals": {},
+  "handlers": [
+    {
+      "__type__": "Handler",
+      "body": [
+        {
+          "__type__": "Reply",
+          "parts": [
+            "line1\nline2"
+          ]
+        }
+      ],
+      "kind": "command",
+      "trigger": "/t"
+    }
+  ],
+  "scenarios": {},
+  "schemaVersion": 1
+}

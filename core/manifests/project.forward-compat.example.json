@@ -1,0 +1,6 @@
+{
+  "projectFormatVersion": 1,
+  "requiredFeatures": ["switch", "inline_keyboard"],
+  "requiredAstSchemaVersion": 2,
+  "notes": "Иллюстрация forward-compat: когда AST schema перейдёт на v2, такой проект отклонится на старых runtime до обновления или миграции."
+}

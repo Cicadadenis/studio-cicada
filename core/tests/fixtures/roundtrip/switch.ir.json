@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "kind": "emitBlock",
+  "indent": 0,
+  "wrap": {
+    "version": "1.0",
+    "bot": "0:dummy",
+    "command": "/t"
+  },
+  "block": {
+    "type": "switch",
+    "props": {
+      "varname": "режим",
+      "cases": "да\nнет"
+    }
+  }
+}

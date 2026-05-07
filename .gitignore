@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment
+.env
+*.env.local
+
+# Runtime data
+bots/
+users.json
+users.json.migrated
+cicada_data.json
+
+# Uploads / temp
+uploads/
+tmp/
+*.tmp
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Archives
+*.zip
+*.tar.gz
+
+# Nested clone / duplicate tree (canonical root is /var/www/den)
+cicada-studio/
+
+# Local deploy notes (may contain passwords)
+setup.txt
+
+# Broken / non-portable symlink (duplicate of root cicada/)
+core/cicada

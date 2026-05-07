@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "kind": "emitBlock",
+  "indent": 0,
+  "block": {
+    "type": "condition",
+    "props": {}
+  }
+}

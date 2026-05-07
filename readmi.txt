@@ -1,0 +1,159 @@
+# ✦ Cicada Studio — READMI (расширенный operational guide)
+
+> Практичный мини-гайд для быстрого запуска, деплоя и диагностики проекта.
+> Основная продуктовая документация — в `README.md`, этот файл сфокусирован на **операционке**.
+
+---
+
+## 1) Быстрый старт (локально)
+
+```bash
+npm install
+cp env.example .env
+npm run dev
+```
+
+Backend отдельно:
+
+```bash
+npm run server
+```
+
+Проверка backend-синтаксиса:
+
+```bash
+npm run check:server
+```
+
+---
+
+## 2) Обязательные зависимости
+
+### Node / npm
+```bash
+node -v
+npm -v
+```
+
+### PM2 (для production-процессов)
+```bash
+npm install -g pm2
+```
+
+### PostgreSQL
+```bash
+sudo apt update
+sudo apt install -y postgresql postgresql-contrib
+sudo systemctl enable postgresql
+sudo systemctl start postgresql
+```
+
+### Resend SDK (если нужны почтовые фичи)
+```bash
+npm install resend
+```
+
+---
+
+## 3) Настройка БД PostgreSQL
+
+```bash
+sudo -u postgres psql << 'SQL'
+CREATE DATABASE cicada;
+CREATE USER cicada_user WITH PASSWORD 'change_me_strong_password';
+GRANT ALL PRIVILEGES ON DATABASE cicada TO cicada_user;
+\c cicada
+GRANT ALL ON SCHEMA public TO cicada_user;
+SQL
+```
+
+Проверка подключения:
+
+```bash
+psql -h localhost -U cicada_user -d cicada
+```
+
+---
+
+## 4) Production запуск
+
+### Сборка фронта
+```bash
+npm run build
+```
+
+### Запуск backend под PM2
+```bash
+pm2 start server.mjs --name cicada-server
+pm2 save
+pm2 status
+pm2 logs cicada-server
+```
+
+---
+
+## 5) Порты и firewall
+
+```bash
+sudo ufw allow 3001
+sudo ufw allow 3000
+sudo ufw status
+```
+
+Проверить, кто слушает API-порт:
+
+```bash
+lsof -i :3001
+```
+
+---
+
+## 6) Полезные команды для parser/DSL
+
+```bash
+npm run parser-smoke
+npm run parser-smoke:regression
+npm run ci:parser
+```
+
+---
+
+## 7) Nginx / reverse proxy
+
+После правок конфигурации:
+
+```bash
+sudo systemctl reload nginx
+```
+
+---
+
+## 8) Чек-лист перед деплоем
+
+- [ ] Заполнен `.env` (JWT, DB, APP_URL, ADMIN_KEY, email/AI токены при необходимости).
+- [ ] Пройдено: `npm run check:server`.
+- [ ] Пройдено: `npm run ci:parser`.
+- [ ] Собран фронт: `npm run build`.
+- [ ] Backend запущен и стабилен в PM2.
+- [ ] Открыты нужные порты / настроен reverse proxy.
+
+---
+
+## 9) Куда смотреть при проблемах
+
+1. `pm2 logs cicada-server` — runtime ошибки backend.  
+2. Логи БД (`postgresql`) — ошибки подключений/прав.  
+3. Проверка `.env` — неверные URL/секреты/порты.  
+4. `npm run check:server` — быстрый sanity-check перед рестартом.
+
+---
+
+## 10) Полезно
+
+Путь к бинарю Cicada (если используете внешний DSL runtime):
+
+```bash
+which cicada
+```
+
+Если не найден — установите runtime и пропишите `CICADA_BIN` в `.env`.

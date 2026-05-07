@@ -1,0 +1,6 @@
+{
+  "projectFormatVersion": 1,
+  "requiredFeatures": [],
+  "requiredAstSchemaVersion": 1,
+  "notes": "Минимальный проект без языковых расширений; совместим с текущими эталонами core/tests."
+}

@@ -1,0 +1,4 @@
+{
+  "schemaVersion": 1,
+  "description": "Эталонные DSL-снимки (tests/snapshots/*.dsl). Версия должна совпадать с schemas/schema-versions.json → dslSnapshotManifestVersion."
+}

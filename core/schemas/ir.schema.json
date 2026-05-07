@@ -1,0 +1,270 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cicada.local/schemas/ir.schema.json",
+  "title": "Cicada Block IR + renderIr envelope",
+  "$comment": "Контракт формы данных Studio ↔ dslCodegen.js (emitBlock / renderIr). Поле props намеренно свободное (additionalProperties), жёстко задан только block.type — ловит переименование типов и опечатки.",
+  "$defs": {
+    "IrSchemaVersionField": {
+      "$comment": "Необязательное поле на корне IR-документа Studio / renderIr.",
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Совпадает с schemas/schema-versions.json → irSchemaVersion."
+        }
+      }
+    },
+    "IrBlockType": {
+      "type": "string",
+      "enum": [
+        "start",
+        "on_photo",
+        "photo_received",
+        "on_voice",
+        "voice_received",
+        "on_document",
+        "document_received",
+        "on_sticker",
+        "sticker_received",
+        "on_location",
+        "location_received",
+        "on_contact",
+        "contact_received",
+        "on_text",
+        "command",
+        "callback",
+        "block",
+        "scenario",
+        "middleware",
+        "loop",
+        "step",
+        "version",
+        "bot",
+        "global",
+        "commands",
+        "message",
+        "buttons",
+        "inline",
+        "menu",
+        "condition",
+        "else",
+        "switch",
+        "ask",
+        "remember",
+        "get",
+        "save",
+        "random",
+        "photo",
+        "video",
+        "audio",
+        "document",
+        "sticker",
+        "contact",
+        "location",
+        "poll",
+        "pause",
+        "delay",
+        "typing",
+        "http",
+        "run",
+        "goto",
+        "stop",
+        "log",
+        "notify",
+        "broadcast",
+        "check_sub",
+        "member_role",
+        "forward_msg",
+        "db_delete",
+        "save_global",
+        "get_user",
+        "all_keys",
+        "call_block",
+        "database",
+        "payment",
+        "analytics",
+        "classify",
+        "role",
+        "use"
+      ]
+    },
+    "IrBlock": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "$ref": "#/$defs/IrBlockType" },
+        "props": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "IrStack": {
+      "allOf": [
+        {
+          "type": "object",
+          "required": ["blocks"],
+          "properties": {
+            "blocks": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/IrBlock" }
+            },
+            "x": { "type": "number" },
+            "y": { "type": "number" },
+            "id": { "type": "string" }
+          },
+          "additionalProperties": true
+        },
+        { "$ref": "#/$defs/IrSchemaVersionField" }
+      ]
+    },
+    "FlowEdge": {
+      "type": "object",
+      "required": ["source", "target"],
+      "properties": {
+        "id": { "type": "string" },
+        "source": { "type": "string" },
+        "target": { "type": "string" },
+        "sourceHandle": { "type": ["string", "null"] },
+        "targetHandle": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    },
+    "FlowNode": {
+      "type": "object",
+      "required": ["id", "type"],
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "$ref": "#/$defs/IrBlockType" },
+        "props": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "position": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "data": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "label": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "IrFlow": {
+      "allOf": [
+        {
+          "type": "object",
+          "properties": {
+            "nodes": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/FlowNode" }
+            },
+            "edges": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/FlowEdge" }
+            }
+          },
+          "additionalProperties": true
+        },
+        { "$ref": "#/$defs/IrSchemaVersionField" }
+      ]
+    },
+    "IrWrap": {
+      "type": "object",
+      "properties": {
+        "version": { "type": "string" },
+        "bot": { "type": "string" },
+        "command": { "type": "string" },
+        "start": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "RenderIrEmitBlock": {
+      "allOf": [
+        {
+          "type": "object",
+          "required": ["kind", "block"],
+          "properties": {
+            "kind": { "const": "emitBlock" },
+            "block": { "$ref": "#/$defs/IrBlock" },
+            "indent": { "type": "integer", "minimum": 0 },
+            "wrap": { "$ref": "#/$defs/IrWrap" }
+          },
+          "additionalProperties": true
+        },
+        { "$ref": "#/$defs/IrSchemaVersionField" }
+      ]
+    },
+    "RenderIrWrappedChain": {
+      "allOf": [
+        {
+          "type": "object",
+          "required": ["kind", "blocks", "wrap"],
+          "properties": {
+            "kind": { "const": "wrappedChain" },
+            "wrap": { "$ref": "#/$defs/IrWrap" },
+            "blocks": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["block"],
+                "properties": {
+                  "block": { "$ref": "#/$defs/IrBlock" },
+                  "indent": { "type": "integer", "minimum": 0 }
+                },
+                "additionalProperties": true
+              }
+            }
+          },
+          "additionalProperties": true
+        },
+        { "$ref": "#/$defs/IrSchemaVersionField" }
+      ]
+    },
+    "RenderIrStacks": {
+      "allOf": [
+        {
+          "type": "object",
+          "required": ["kind", "stacks"],
+          "properties": {
+            "kind": { "const": "stacks" },
+            "stacks": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/IrStack" }
+            }
+          },
+          "additionalProperties": true
+        },
+        { "$ref": "#/$defs/IrSchemaVersionField" }
+      ]
+    },
+    "RenderIrFlow": {
+      "allOf": [
+        {
+          "type": "object",
+          "required": ["kind", "flow"],
+          "properties": {
+            "kind": { "const": "flow" },
+            "flow": { "$ref": "#/$defs/IrFlow" },
+            "token": { "type": "string" }
+          },
+          "additionalProperties": true
+        },
+        { "$ref": "#/$defs/IrSchemaVersionField" }
+      ]
+    }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/RenderIrEmitBlock" },
+    { "$ref": "#/$defs/RenderIrWrappedChain" },
+    { "$ref": "#/$defs/RenderIrStacks" },
+    { "$ref": "#/$defs/RenderIrFlow" },
+    { "$ref": "#/$defs/IrBlock" },
+    { "$ref": "#/$defs/IrStack" },
+    { "$ref": "#/$defs/IrFlow" }
+  ]
+}

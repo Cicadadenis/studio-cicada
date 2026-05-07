@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cicada.local/schemas/project.manifest.schema.json",
+  "title": "Bot project compatibility manifest",
+  "$comment": "Согласование Studio / parser / executor / cloud / экспорт bundle. При bump AST/IR — миграции + проверка requiredAstSchemaVersion. Для инкрементальной сборки и кеша опирайтесь на canonical_ast_json.dumps_canonical и хеш поддеревьев AST.",
+  "type": "object",
+  "required": ["projectFormatVersion", "requiredFeatures", "requiredAstSchemaVersion"],
+  "properties": {
+    "projectFormatVersion": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Версия формата этого файла (schemas/schema-versions.json → projectManifestFormatVersion)."
+    },
+    "requiredFeatures": {
+      "type": "array",
+      "description": "Имена возможностей из capability-манифеста runtime/parser (пересечение с manifests/parser-capabilities.default.json → features).",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "requiredAstSchemaVersion": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Минимальная поддерживаемая версия AST-схемы у parser/executor/cloud (schemas/schema-versions.json → astSchemaVersion у потребителя должен быть ≥ этого значения)."
+    },
+    "requiredIrSchemaVersion": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Опционально: минимальная версия IR Studio для открытия проекта."
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "name": {
+      "type": "string"
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": true
+}

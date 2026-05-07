@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "emitBlock",
+  "indent": 0,
+  "wrap": {
+    "version": "1.0",
+    "bot": "0:dummy",
+    "command": "/t"
+  },
+  "block": {
+    "type": "message",
+    "props": {
+      "text": "line1\nline2"
+    }
+  }
+}

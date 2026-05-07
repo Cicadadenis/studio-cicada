@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cicada.local/schemas/capabilities.manifest.schema.json",
+  "title": "Parser / executor capability manifest",
+  "$comment": "Для согласования Studio ↔ parser ↔ executor (наличие SwitchStmt, инлайн-кнопок и т.д.).",
+  "type": "object",
+  "required": ["schemaVersion", "features"],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "features": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "parserMinAstSchemaVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "notes": { "type": "string" }
+  },
+  "additionalProperties": true
+}

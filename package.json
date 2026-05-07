@@ -1,0 +1,42 @@
+{
+  "name": "cicada-studio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "server": "node server.mjs",
+    "check:server": "node --check server.mjs",
+    "docker:nuke": "bash scripts/docker-nuke.sh",
+    "parser-smoke": "node scripts/parser-batch-check.mjs",
+    "parser-smoke:regression": "node scripts/parser-batch-check.mjs --regression",
+    "ci:parser": "CI=true node scripts/parser-batch-check.mjs && CI=true node scripts/parser-batch-check.mjs --regression && python3 scripts/callback-parser-check.py && node scripts/core-blocks-check.mjs",
+    "parser-callback-check": "python3 scripts/callback-parser-check.py",
+    "parser-core-blocks": "node scripts/core-blocks-check.mjs"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "canvas-confetti": "^1.9.4",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.5.1",
+    "express-session": "^1.19.0",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.3",
+    "passport": "^0.7.0",
+    "passport-google-oauth20": "^2.0.0",
+    "pg": "^8.13.1",
+    "pm2": "^6.0.14",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "resend": "^6.12.2"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.2.1",
+    "vite": "^5.2.0"
+  }
+}

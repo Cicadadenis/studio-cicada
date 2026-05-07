@@ -1,0 +1,6 @@
+{
+  "projectFormatVersion": 1,
+  "requiredFeatures": ["switch"],
+  "requiredAstSchemaVersion": 1,
+  "notes": "Пример бота с переключателем; runtime должен объявлять feature «switch» и поддерживать AST schema ≥ 1."
+}
