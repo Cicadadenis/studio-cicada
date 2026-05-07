@@ -19,7 +19,7 @@ import { sendPreviewRequest } from './services/cicadaPreviewWorker.mjs';
 import { normalizeAdminTotpSecret, verifyTotp } from './services/adminTotp.mjs';
 import { generateDSL } from './core/stacksToDsl.js';
 import { lintDSLSchema, formatDSLDiagnostic } from './core/validator/schema.js';
-import { normalizeAiGeneratedStacks, repairCollapsedCicadaCode } from './core/validator/fixes.js';
+import { extractAiGeneratedStacksFromRaw, normalizeAiGeneratedStacks, repairCollapsedCicadaCode, stripThinkingFromAiRaw } from './core/validator/fixes.js';
 import { isPlaceholderBotToken } from './core/botTokenPlaceholders.mjs';
 
 const { Pool } = pg;
@@ -2319,17 +2319,6 @@ async function callGroq(messages, options = {}) {
   throw e;
 }
 
-/** Убираем цепочки размышлений моделей, чтобы не ломали JSON. */
-function stripThinkingFromAiRaw(raw) {
-  const reThink = /\u003c\u0074\u0068\u0069\u006E\u006B\u003e[\s\S]*?\u003c\/\u0074\u0068\u0069\u006E\u006B\u003e/gi;
-  const reThinkBr = /\u003c\u005B\u0074\u0068\u0069\u006E\u006B\u005D\u003e[\s\S]*?\u003c\/\u005B\u0074\u0068\u0069\u006E\u006B\u005D\u003e/gi;
-  return String(raw || '')
-    .replace(reThink, '')
-    .replace(reThinkBr, '')
-    .replace(/<redacted_reasoning>[\s\S]*?<\/redacted_reasoning>/gi, '')
-    .trim();
-}
-
 /** Выделяет текст .ccd из ответа ИИ (снимает обёртку \`\`\`ccd ... \`\`\`). */
 function extractCicadaCodeFromLlm(raw) {
   const cleaned = stripThinkingFromAiRaw(String(raw ?? ''));
@@ -2644,42 +2633,14 @@ app.post('/api/ai-generate', requireUserAuth, async (req, res) => {
     let raw = data.choices?.[0]?.message?.content || '';
     console.log('AI raw (first 300):', raw.slice(0, 300));
 
-    raw = stripThinkingFromAiRaw(raw);
-
-    // Убираем markdown ```json ... ```
-    raw = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
-
-    // Умный парсер: находим первый валидный JSON-массив
-    function extractJSON(text) {
-      const start = text.indexOf('[');
-      if (start === -1) return null;
-      let depth = 0, inStr = false, escape = false;
-      for (let i = start; i < text.length; i++) {
-        const ch = text[i];
-        if (escape)        { escape = false; continue; }
-        if (ch === '\\') { escape = true;  continue; }
-        if (ch === '"')    { inStr = !inStr;  continue; }
-        if (inStr)         continue;
-        if (ch === '[' || ch === '{') depth++;
-        if (ch === ']' || ch === '}') depth--;
-        if (depth === 0)   return text.slice(start, i + 1);
-      }
-      return null;
-    }
-
-    const jsonStr = extractJSON(raw);
-    if (!jsonStr) {
-      console.error('AI вернул не JSON после очистки:', raw.slice(0, 400));
+    const extracted = extractAiGeneratedStacksFromRaw(raw);
+    if (!extracted) {
+      const cleaned = stripThinkingFromAiRaw(raw);
+      console.error('AI вернул не JSON-схему после очистки:', cleaned.slice(0, 400));
       return sendAiGenerateError(res, authUser, 422, 'AI не смог сгенерировать схему. Попробуй описать подробнее.');
     }
 
-    let stacks;
-    try {
-      stacks = JSON.parse(jsonStr);
-    } catch (parseErr) {
-      console.error('JSON parse error:', parseErr.message, '\nJSON:', jsonStr.slice(0, 400));
-      return sendAiGenerateError(res, authUser, 422, 'AI вернул некорректный JSON. Попробуй ещё раз.');
-    }
+    let stacks = extracted.stacks;
 
     if (!Array.isArray(stacks) || stacks.length === 0) {
       return sendAiGenerateError(res, authUser, 422, 'AI вернул пустую схему.');
