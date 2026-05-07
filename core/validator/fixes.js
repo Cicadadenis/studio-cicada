@@ -49,6 +49,78 @@ export function repairTemplatePlaceholders(value) {
 
 const AI_TEMPLATE_PROP_KEYS = new Set(['key', 'value', 'text', 'url', 'body']);
 
+const CICADA_IDENTIFIER_RE = /^[A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё0-9_]*$/;
+const AI_QUOTED_STRING_PROP_KEYS = new Set([
+  'text', 'question', 'label', 'rows', 'buttons', 'key', 'value',
+  'url', 'body', 'caption', 'filename', 'title', 'cmd', 'phone',
+  'first_name', 'last_name', 'file_id',
+]);
+
+function normalizeCicadaIdentifier(value, fallback = 'значение') {
+  const raw = String(value ?? '').trim();
+  if (!raw) return fallback;
+  const normalized = raw
+    .replace(/[\s\-–—]+/g, '_')
+    .replace(/[^A-Za-zА-Яа-яЁё0-9_]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  const withPrefix = /^[0-9]/.test(normalized) ? `v_${normalized}` : normalized;
+  return CICADA_IDENTIFIER_RE.test(withPrefix) ? withPrefix : fallback;
+}
+
+function normalizeCicadaQuotedString(value) {
+  if (typeof value !== 'string') return value;
+  return value
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/"([^"\n]{1,120})"/g, '«$1»')
+    .replace(/"/g, '″');
+}
+
+function replaceTemplateVarRefs(value, varNameMap) {
+  if (typeof value !== 'string' || !value.includes('{') || varNameMap.size === 0) {
+    return value;
+  }
+  let out = value;
+  for (const [from, to] of varNameMap.entries()) {
+    if (!from || from === to) continue;
+    out = out.split(`{${from}}`).join(`{${to}}`);
+  }
+  return out;
+}
+
+function buildAiNameMaps(stacks) {
+  const scenarioNameMap = new Map();
+  const stepNameMap = new Map();
+  const varNameMap = new Map();
+
+  (stacks || []).forEach((stack) => {
+    (stack?.blocks || []).forEach((block) => {
+      const props = block?.props || {};
+      if (block?.type === 'scenario' && props.name) {
+        scenarioNameMap.set(
+          String(props.name),
+          normalizeCicadaIdentifier(props.name, 'scenario'),
+        );
+      }
+      if (block?.type === 'step' && props.name) {
+        stepNameMap.set(
+          String(props.name),
+          normalizeCicadaIdentifier(props.name, 'step'),
+        );
+      }
+      if (['ask', 'get', 'remember', 'http'].includes(block?.type) && props.varname) {
+        varNameMap.set(
+          String(props.varname),
+          normalizeCicadaIdentifier(props.varname, 'var'),
+        );
+      }
+    });
+  });
+
+  return { scenarioNameMap, stepNameMap, varNameMap };
+}
+
 /** «Стоп» сразу после «запустить …» в том же обработчике ломает FSM ядра Cicada (EndScenario попадает в общую очередь с отложенными шагами «спросить»). */
 const STOP_AFTER_RUN_FIX_MSG =
   'Удалён «стоп» после «запустить»: в одном обработчике так нельзя — завершится сценарий до шагов «спросить». Добавляйте «стоп» только внутри сценария или после полного прохождения цепочки.';
@@ -93,26 +165,72 @@ export function stripStopAfterRunScenario(lines) {
  */
 export function normalizeAiGeneratedStacks(stacks) {
   if (!Array.isArray(stacks)) return stacks;
+  const { scenarioNameMap, stepNameMap, varNameMap } = buildAiNameMaps(stacks);
+
   return stacks.map((stack) => ({
     ...stack,
     blocks: (stack?.blocks || []).map((block) => {
       const props = block?.props || {};
       let nextProps = props;
+      const setProp = (key, value) => {
+        if (nextProps === props) nextProps = { ...props };
+        nextProps[key] = value;
+      };
 
       if (block?.type === 'buttons' && typeof props.rows === 'string') {
-        nextProps = {
-          ...nextProps,
-          rows: normalizeReplyKeyboardRowsProp(props.rows),
-        };
+        const rows = normalizeReplyKeyboardRowsProp(props.rows);
+        if (rows !== props.rows) setProp('rows', rows);
+      }
+
+      for (const key of AI_QUOTED_STRING_PROP_KEYS) {
+        if (typeof nextProps[key] !== 'string') continue;
+        const fixed = normalizeCicadaQuotedString(nextProps[key]);
+        if (fixed !== nextProps[key]) setProp(key, fixed);
+      }
+
+      if (block?.type === 'command' && typeof nextProps.cmd === 'string') {
+        const fixed = nextProps.cmd.replace(/^\/+/, '').trim().split(/\s+/)[0] || 'start';
+        if (fixed !== nextProps.cmd) setProp('cmd', fixed);
+      }
+
+      if (
+        (block?.type === 'scenario' || block?.type === 'run') &&
+        typeof nextProps.name === 'string'
+      ) {
+        const fixed =
+          scenarioNameMap.get(nextProps.name) ||
+          normalizeCicadaIdentifier(nextProps.name, 'scenario');
+        if (fixed !== nextProps.name) setProp('name', fixed);
+      }
+
+      if (block?.type === 'step' && typeof nextProps.name === 'string') {
+        const fixed =
+          stepNameMap.get(nextProps.name) ||
+          normalizeCicadaIdentifier(nextProps.name, 'step');
+        if (fixed !== nextProps.name) setProp('name', fixed);
+      }
+
+      if (block?.type === 'goto') {
+        const raw = typeof nextProps.label === 'string' ? nextProps.label : nextProps.target;
+        if (typeof raw === 'string') {
+          const fixed = stepNameMap.get(raw) || normalizeCicadaIdentifier(raw, 'step');
+          if (fixed !== nextProps.label) setProp('label', fixed);
+          if (nextProps.target != null && fixed !== nextProps.target) setProp('target', fixed);
+        }
+      }
+
+      if (typeof nextProps.varname === 'string') {
+        const fixed =
+          varNameMap.get(nextProps.varname) ||
+          normalizeCicadaIdentifier(nextProps.varname, 'var');
+        if (fixed !== nextProps.varname) setProp('varname', fixed);
       }
 
       for (const key of AI_TEMPLATE_PROP_KEYS) {
         if (typeof nextProps[key] !== 'string') continue;
-        const fixed = repairTemplatePlaceholders(nextProps[key]);
-        if (fixed !== nextProps[key]) {
-          if (nextProps === props) nextProps = { ...props };
-          nextProps[key] = fixed;
-        }
+        let fixed = replaceTemplateVarRefs(nextProps[key], varNameMap);
+        fixed = repairTemplatePlaceholders(fixed);
+        if (fixed !== nextProps[key]) setProp(key, fixed);
       }
 
       return nextProps === props ? block : { ...block, props: nextProps };
