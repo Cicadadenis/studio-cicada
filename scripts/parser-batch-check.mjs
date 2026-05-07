@@ -22,10 +22,11 @@ import { fileURLToPath } from 'url';
 import { lintCicadaWithPython } from '../services/pythonDslLint.mjs';
 import { generateDSL } from '../core/stacksToDsl.js';
 import { lintDSLSchema, formatDSLDiagnostic } from '../core/validator/schema.js';
-import { normalizeAiGeneratedStacks } from '../core/validator/fixes.js';
+import { normalizeAiGeneratedStacks, repairCollapsedCicadaCode } from '../core/validator/fixes.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
+const SYNTHETIC_CONFLICT_TAIL = '='.repeat(7) + '>'.repeat(7) + ' main';
 
 /** @type {{ name: string, dsl: string, expectParserFail?: boolean }[]} */
 const BUILTIN_DSL_CASES = [
@@ -134,6 +135,27 @@ const BUILTIN_DSL_CASES = [
     ответ "Старт"
     стоп
 `,
+  },
+  {
+    name: 'схлопнутый DSL от AI-конвертера восстанавливается',
+    dsl: repairCollapsedCicadaCode(
+      'бот ""при старте:    ответ "Добро пожаловать в Dropbox-бот! 📁"    ' +
+        'кнопки "📄 Загрузить файл" "📁 Просмотреть файлы"    стоппри нажатии ' +
+        '"📄 Загрузить файл":    запустить загрузкапри нажатии ' +
+        '"📁 Просмотреть файлы":    ответ "Ваши файлы:"    ' +
+        'получить "files_{chat_id}" → files    ответ "{files}"    ' +
+        'стопсценарий загрузка:    шаг шаг_загрузки:        ' +
+        'спросить "Загрузите файл:" → файл        сохранить "files_{chat_id}" = {файл}        ' +
+        'ответ "Файл загружен! 📄"        стоп' + SYNTHETIC_CONFLICT_TAIL,
+    ),
+  },
+  {
+    name: 'готовый DSL с хвостом conflict marker очищается',
+    dsl: repairCollapsedCicadaCode(`бот "TEST"
+при старте:
+    ответ "ok"
+    стоп${SYNTHETIC_CONFLICT_TAIL}
+`),
   },
   {
     name: 'намеренная ошибка: неподдерживаемый формат фото с подписью не игнорируется',
