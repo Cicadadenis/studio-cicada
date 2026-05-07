@@ -12,10 +12,9 @@ import {
   isRuntimeVar,
 } from '../core/runtime/rules.js';
 import {
-  generateDSL,
-  stackToDSL,
+  generateDSLFromFlow,
   SCHEMA_VERSIONS_FOR_UI,
-  buildProjectManifestDraftFromStacks,
+  buildProjectManifestDraft,
 } from '../core/stacksToDsl.js';
 import { getCsrfTokenForRequest, resetCsrfPrefetch } from './csrf.js';
 import confetti from 'canvas-confetti';
@@ -29,15 +28,179 @@ function fireRegistrationConfetti() {
   setTimeout(() => { confetti({ ...opts, particleCount: 70, spread: 100, scalar: 0.85, ticks: 220, colors }); }, 500);
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FLOW MODEL — каноническое представление холста { nodes, edges }
+// ═══════════════════════════════════════════════════════════════════════════
+
+const FLOW_FORMAT_VERSION = 1;
+
+function normalizeFlow(raw) {
+  const src = raw && typeof raw === 'object' ? raw : {};
+  const nodes = Array.isArray(src.nodes) ? src.nodes : [];
+  const edges = Array.isArray(src.edges) ? src.edges : [];
+  return {
+    format: 'flow',
+    version: src.version || FLOW_FORMAT_VERSION,
+    nodes: nodes
+      .filter((n) => n && n.id && (n.type || n.data?.dslType || n.data?.type))
+      .map((n) => ({
+        id: String(n.id),
+        type: n.type || n.data?.dslType || n.data?.type,
+        props: { ...(n.props || n.data?.props || {}) },
+        position: {
+          x: Number(n.position?.x ?? n.x ?? 0),
+          y: Number(n.position?.y ?? n.y ?? 0),
+        },
+        stackId: n.stackId || n.data?.stackId || null,
+        stackIndex: Number.isFinite(Number(n.stackIndex ?? n.data?.stackIndex))
+          ? Number(n.stackIndex ?? n.data?.stackIndex)
+          : 0,
+        data: {
+          ...(n.data || {}),
+          dslType: n.type || n.data?.dslType || n.data?.type,
+          props: { ...(n.props || n.data?.props || {}) },
+          stackId: n.stackId || n.data?.stackId || null,
+          stackIndex: Number.isFinite(Number(n.stackIndex ?? n.data?.stackIndex))
+            ? Number(n.stackIndex ?? n.data?.stackIndex)
+            : 0,
+        },
+      })),
+    edges: edges
+      .filter((e) => e && e.source && e.target)
+      .map((e, idx) => ({
+        id: e.id || `${e.source}->${e.target}:${idx}`,
+        source: String(e.source),
+        target: String(e.target),
+      })),
+  };
+}
+
+function stacksToFlow(stacks = []) {
+  const nodes = [];
+  const edges = [];
+  for (const stack of Array.isArray(stacks) ? stacks : []) {
+    const stackId = stack.id || uid();
+    const blocks = Array.isArray(stack.blocks) ? stack.blocks : [];
+    const nodeIds = blocks.map((block) => block.id || uid());
+    blocks.forEach((block, index) => {
+      const nodeId = nodeIds[index];
+      nodes.push({
+        id: nodeId,
+        type: block.type,
+        props: { ...(block.props || {}) },
+        position: {
+          x: Number(stack.x ?? 0),
+          y: Number(stack.y ?? 0) + index * BLOCK_H,
+        },
+        stackId,
+        stackIndex: index,
+        data: {
+          dslType: block.type,
+          props: { ...(block.props || {}) },
+          stackId,
+          stackIndex: index,
+        },
+      });
+      if (index > 0) {
+        const prevId = nodeIds[index - 1];
+        edges.push({ id: `${prevId}->${nodeId}`, source: prevId, target: nodeId });
+      }
+    });
+  }
+  return normalizeFlow({ nodes, edges });
+}
+
+function flowToStacks(flow) {
+  const normalized = normalizeFlow(flow);
+  const { nodes, edges } = normalized;
+  if (!nodes.length) return [];
+
+  const groupedByStack = nodes.every((n) => n.stackId);
+  if (groupedByStack) {
+    const groups = new Map();
+    for (const node of nodes) {
+      if (!groups.has(node.stackId)) groups.set(node.stackId, []);
+      groups.get(node.stackId).push(node);
+    }
+    return [...groups.entries()]
+      .map(([stackId, group]) => {
+        const ordered = group.slice().sort((a, b) => a.stackIndex - b.stackIndex);
+        const first = ordered[0];
+        return {
+          id: stackId,
+          x: Number(first?.position?.x ?? 0),
+          y: Number(first?.position?.y ?? 0),
+          blocks: ordered.map((n) => ({ id: n.id, type: n.type, props: { ...(n.props || {}) } })),
+        };
+      })
+      .sort((a, b) => (a.y - b.y) || (a.x - b.x));
+  }
+
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const incoming = new Set(edges.map((e) => e.target));
+  const outgoing = new Map();
+  for (const edge of edges) {
+    if (!outgoing.has(edge.source)) outgoing.set(edge.source, []);
+    const target = byId.get(edge.target);
+    if (target) outgoing.get(edge.source).push(target);
+  }
+  for (const list of outgoing.values()) {
+    list.sort((a, b) => (a.position.y - b.position.y) || (a.position.x - b.position.x));
+  }
+
+  const roots = nodes
+    .filter((n) => !incoming.has(n.id))
+    .sort((a, b) => (a.position.y - b.position.y) || (a.position.x - b.position.x));
+  const visited = new Set();
+  const stacks = [];
+  const emitChain = (root) => {
+    const blocks = [];
+    let current = root;
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id);
+      blocks.push({ id: current.id, type: current.type, props: { ...(current.props || {}) } });
+      current = (outgoing.get(current.id) || []).find((n) => !visited.has(n.id));
+    }
+    if (blocks.length) {
+      stacks.push({
+        id: root.stackId || `stack_${root.id}`,
+        x: Number(root.position?.x ?? 0),
+        y: Number(root.position?.y ?? 0),
+        blocks,
+      });
+    }
+  };
+  roots.forEach(emitChain);
+  nodes.filter((n) => !visited.has(n.id)).forEach(emitChain);
+  return stacks;
+}
+
+function projectDataToFlow(projectData) {
+  if (projectData?.flow) return normalizeFlow(projectData.flow);
+  if (Array.isArray(projectData?.nodes) || Array.isArray(projectData?.edges)) return normalizeFlow(projectData);
+  if (projectData?.format === 'flow') return normalizeFlow(projectData);
+  if (Array.isArray(projectData?.stacks)) return stacksToFlow(projectData.stacks);
+  if (Array.isArray(projectData)) return stacksToFlow(projectData);
+  return normalizeFlow({ nodes: [], edges: [] });
+}
+
+function flowToProjectPayload(flow) {
+  if (Array.isArray(flow)) return stacksToFlow(flow);
+  return normalizeFlow(flow);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // PROJECTS STORAGE — PostgreSQL via API
 // ═══════════════════════════════════════════════════════════════════════════
 
-async function saveProjectToCloud(_userId, projectName, stacks) {
+async function saveProjectToCloud(_userId, projectName, flow) {
+  const projectFlow = flowToProjectPayload(flow);
   const data = await apiFetch('/api/projects', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: projectName, stacks }),
+    // Серверное поле пока называется stacks; внутри храним новый Flow payload.
+    body: JSON.stringify({ name: projectName, stacks: projectFlow }),
   });
   return data.project;
 }
@@ -2181,11 +2344,11 @@ function buildAutoFixFromValidation(code, validationResult) {
 }
 
 // ─── DSL PANEL ────────────────────────────────────────────────────────────
-function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
-  const dsl = generateDSL(stacks);
+function DSLPane({ flow, stacks, isMobile, onApplyCorrectedCode }) {
+  const dsl = generateDSLFromFlow(flow);
   const manifestDraft = React.useMemo(
-    () => buildProjectManifestDraftFromStacks(stacks),
-    [stacks],
+    () => buildProjectManifestDraft(flow),
+    [flow],
   );
   const copyManifestJson = React.useCallback(() => {
     const text = JSON.stringify(manifestDraft, null, 2);
@@ -2320,8 +2483,10 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
   );
   const hasErrors = visibleErrors.length > 0;
   const hasWarnings = (validationResult?.warnings?.length ?? 0) > 0;
-  const isValid = validationResult && !hasErrors && !hasWarnings;
+  const hasIssues = hasErrors || hasWarnings;
+  const isValid = validationResult && !hasIssues;
   const hasFixes = (computedFixes?.fixes?.length ?? 0) > 0;
+  const showFixButtonAfterCheck = Boolean(validationResult && (hasIssues || hasFixes));
 
   const displayCode = previewCorrected ?? dsl;
   const displayLines = displayCode.split('\n');
@@ -2365,24 +2530,26 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
             onMouseEnter={e => e.target.style.background = 'var(--accent2)'}
             onMouseLeave={e => e.target.style.background = 'var(--accent)'}
           >↓ .ccd</button>
-          <button
-            type="button"
-            onClick={applySuggestedFixes}
-            disabled={!hasFixes || !!previewCorrected}
-            style={{
-              background: (!hasFixes || previewCorrected) ? 'var(--bg3)' : '#0ea5e9',
-              color: (!hasFixes || previewCorrected) ? 'var(--text3)' : '#fff',
-              padding: '2px 7px',
-              borderRadius: 4,
-              fontSize: 9,
-              border: 'none',
-              cursor: (!hasFixes || previewCorrected) ? 'default' : 'pointer',
-              opacity: (!hasFixes || previewCorrected) ? 0.7 : 1,
-            }}
-            title={!validationResult ? 'Сначала нажми «проверить»' : (!hasFixes ? 'Нет доступных автоисправлений' : 'Применить автоисправления')}
-          >
-            Исправить{hasFixes ? ` (${computedFixes?.fixes?.length || 0})` : ''}
-          </button>
+          {showFixButtonAfterCheck && (
+            <button
+              type="button"
+              onClick={applySuggestedFixes}
+              disabled={!hasFixes || !!previewCorrected}
+              style={{
+                background: (!hasFixes || previewCorrected) ? 'var(--bg3)' : '#0ea5e9',
+                color: (!hasFixes || previewCorrected) ? 'var(--text3)' : '#fff',
+                padding: '2px 7px',
+                borderRadius: 4,
+                fontSize: 9,
+                border: 'none',
+                cursor: (!hasFixes || previewCorrected) ? 'default' : 'pointer',
+                opacity: (!hasFixes || previewCorrected) ? 0.7 : 1,
+              }}
+              title={!hasFixes ? 'Нет доступных автоисправлений' : 'Применить автоисправления'}
+            >
+              Исправить{hasFixes ? ` (${computedFixes?.fixes?.length || 0})` : ''}
+            </button>
+          )}
         </div>
       </div>
 
@@ -2445,6 +2612,39 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
               {validationResult.warnings.map((warn, i) => (
                 <div key={`warn-${i}`} style={{ fontSize: 9, color: '#f59e0b' }}>{warn}</div>
               ))}
+              {showFixButtonAfterCheck && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4 }}>
+                  <button
+                    type="button"
+                    onClick={applySuggestedFixes}
+                    disabled={!hasFixes || !!previewCorrected}
+                    style={{
+                      alignSelf: 'flex-start',
+                      background: (!hasFixes || previewCorrected)
+                        ? 'rgba(148,163,184,0.12)'
+                        : 'linear-gradient(135deg,#0ea5e9,#2563eb)',
+                      color: (!hasFixes || previewCorrected) ? 'var(--text3)' : '#fff',
+                      border: (!hasFixes || previewCorrected) ? '1px solid var(--border2)' : 'none',
+                      borderRadius: 6,
+                      fontSize: 10,
+                      fontWeight: 700,
+                      padding: '5px 10px',
+                      cursor: (!hasFixes || previewCorrected) ? 'default' : 'pointer',
+                      boxShadow: hasFixes && !previewCorrected ? '0 4px 14px rgba(14,165,233,0.28)' : 'none',
+                    }}
+                    title={!hasFixes ? 'Для найденных ошибок нет безопасного автоисправления' : 'Исправить найденные проблемы автоматически'}
+                  >
+                    🔧 {hasFixes
+                      ? `Исправить автоматически (${computedFixes?.fixes?.length || 0})`
+                      : 'Нет автоисправлений'}
+                  </button>
+                  {!hasFixes && (
+                    <div style={{ fontSize: 8, color: 'var(--text3)' }}>
+                      Исправьте эти ошибки вручную: для них нет безопасного автоматического патча.
+                    </div>
+                  )}
+                </div>
+              )}
               {(computedFixes?.fixes || []).slice(0, 5).map((fx, i) => {
                 const beforeT = String(fx.before || '').trim();
                 const hideEmptyBotBefore = /^бот\s+""\s*$/i.test(beforeT);
@@ -2552,9 +2752,9 @@ function loadCanvasForKey(key) {
   }
 }
 
-function saveCanvasForKey(key, stacks, offset, scale) {
+function saveCanvasForKey(key, flow, offset, scale) {
   try {
-    localStorage.setItem(key, JSON.stringify({ stacks, offset, scale }));
+    localStorage.setItem(key, JSON.stringify({ flow: flowToProjectPayload(flow), offset, scale }));
   } catch {/* ignore */}
 }
 
@@ -2733,7 +2933,17 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState(() => getSession());
   const canvasStorageKey = React.useMemo(() => canvasKeyForUser(currentUser), [currentUser?.id]);
 
-  const [stacks, setStacks] = useState([]);
+  const [flow, setFlow] = useState(() => normalizeFlow({ nodes: [], edges: [] }));
+  const stacks = React.useMemo(() => flowToStacks(flow), [flow]);
+  const setStacks = React.useCallback((nextStacksOrUpdater) => {
+    setFlow((prevFlow) => {
+      const prevStacks = flowToStacks(prevFlow);
+      const nextStacks = typeof nextStacksOrUpdater === 'function'
+        ? nextStacksOrUpdater(prevStacks)
+        : nextStacksOrUpdater;
+      return stacksToFlow(nextStacks);
+    });
+  }, []);
   const [selectedBlockId, setSelectedBlockId] = useState(null);
   const [selectedStackId, setSelectedStackId] = useState(null);
   const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 });
@@ -2915,13 +3125,14 @@ export default function App() {
     const data = loadCanvasForKey(canvasStorageKey);
     setSelectedBlockId(null);
     setSelectedStackId(null);
-    if (data?.stacks && Array.isArray(data.stacks)) {
-      setStacks(data.stacks);
+    const restoredFlow = projectDataToFlow(data);
+    if (restoredFlow.nodes.length > 0) {
+      setFlow(restoredFlow);
       setCanvasOffset(data.offset ?? { x: 0, y: 0 });
       const sc = data.scale;
       setCanvasScale(typeof sc === 'number' && !Number.isNaN(sc) ? sc : 1);
     } else {
-      setStacks([]);
+      setFlow(normalizeFlow({ nodes: [], edges: [] }));
       setCanvasOffset({ x: 0, y: 0 });
       setCanvasScale(1);
     }
@@ -2932,8 +3143,8 @@ export default function App() {
       skipNextCanvasSave.current = false;
       return;
     }
-    saveCanvasForKey(canvasStorageKey, stacks, canvasOffset, canvasScale);
-  }, [canvasStorageKey, stacks, canvasOffset, canvasScale]);
+    saveCanvasForKey(canvasStorageKey, flow, canvasOffset, canvasScale);
+  }, [canvasStorageKey, flow, canvasOffset, canvasScale]);
 
   const loadUserProjects = async (userId) => {
     // Однократная миграция: если есть старые проекты в localStorage — загрузим их в БД
@@ -2945,7 +3156,7 @@ export default function App() {
           const oldProjects = JSON.parse(raw).filter(p => p.userId === userId);
           for (const p of oldProjects) {
             if (p.name && p.stacks) {
-              await saveProjectToCloud(userId, p.name, p.stacks).catch(() => {});
+              await saveProjectToCloud(userId, p.name, stacksToFlow(p.stacks)).catch(() => {});
             }
           }
           if (oldProjects.length > 0) {
@@ -3814,15 +4025,15 @@ const EXAMPLE_FULL = `версия "1.0"
   }, [loadExampleFromFile, showToast]);
 
   const saveProject = useCallback(() => {
-    const data = JSON.stringify(stacks, null, 2);
+    const data = JSON.stringify(flowToProjectPayload(flow), null, 2);
     const blob = new Blob([data], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'cicada-project.json';
+    a.download = 'cicada-flow-project.json';
     a.click();
     URL.revokeObjectURL(url);
-  }, [stacks]);
+  }, [flow]);
 
   const loadProject = useCallback(() => {
     const input = document.createElement('input');
@@ -3835,8 +4046,9 @@ const EXAMPLE_FULL = `версия "1.0"
       reader.onload = (event) => {
         try {
           const data = JSON.parse(event.target.result);
-          if (Array.isArray(data)) {
-            setStacks(data);
+          const nextFlow = projectDataToFlow(data);
+          if (nextFlow.nodes.length > 0) {
+            setFlow(nextFlow);
             setSelectedBlockId(null);
             setSelectedStackId(null);
             showToast('Проект загружен!', 'success');
@@ -4027,18 +4239,10 @@ const EXAMPLE_FULL = `версия "1.0"
     return () => clearInterval(id);
   }, [startCountdown]);
 
-  // Generate DSL from current stacks
+  // Generate DSL from current Flow graph
   const generateBotDSL = useCallback(() => {
-    let dsl = '';
-    const hasBot = stacks.some(s => s.blocks.some(b => b.type === 'bot'));
-    if (!hasBot) {
-      dsl += `бот "0000000000:PASTE_YOUR_BOTFATHER_TOKEN_HERE"\n\n`;
-    }
-    stacks.forEach(stack => {
-      dsl += stackToDSL(stack) + '\n\n';
-    });
-    return dsl.trim();
-  }, [stacks]);
+    return generateDSLFromFlow(flow, '0000000000:PASTE_YOUR_BOTFATHER_TOKEN_HERE').trim();
+  }, [flow]);
 
   const runPreviewStep = useCallback(
     async ({ text = '', callbackData = null }) => {
@@ -4921,7 +5125,7 @@ const EXAMPLE_FULL = `версия "1.0"
                         data-tour="save-cloud-desktop"
                         onClick={async () => {
                           const name = projectName.trim() || 'Без названия';
-                          await saveProjectToCloud(currentUser.id, name, stacks);
+                          await saveProjectToCloud(currentUser.id, name, flow);
                           await loadUserProjects(currentUser.id);
                           showToast('☁ Проект сохранён в облако: ' + name, 'success');
                           setShowFilesMenu(false);
@@ -5124,7 +5328,7 @@ const EXAMPLE_FULL = `версия "1.0"
                     <button
                       onClick={async () => {
                         const name = projectName.trim() || 'Без названия';
-                        await saveProjectToCloud(currentUser.id, name, stacks);
+                        await saveProjectToCloud(currentUser.id, name, flow);
                         await loadUserProjects(currentUser.id);
                         showToast('☁ Проект сохранён в облако: ' + name, 'success');
                         setMobileMoreOpen(false);
@@ -5849,7 +6053,7 @@ const EXAMPLE_FULL = `версия "1.0"
           )}
           {(!isMobileView || mobileTab === 'dsl') && (
             canSeeCode
-              ? <DSLPane stacks={stacks} isMobile={isMobileView} onApplyCorrectedCode={applyCorrectedDSLCode} />
+              ? <DSLPane flow={flow} stacks={stacks} isMobile={isMobileView} onApplyCorrectedCode={applyCorrectedDSLCode} />
               : !isMobileView && (
                 <div style={{
                   flex: 1, display: 'flex', flexDirection: 'column',
@@ -5998,7 +6202,7 @@ const EXAMPLE_FULL = `версия "1.0"
           onLoadProject={async (projectId) => {
             const project = await loadProjectFromCloud(projectId);
             if (project) {
-              setStacks(project.stacks);
+              setFlow(projectDataToFlow(project.stacks));
               setProjectName(project.name);
               setShowProfileModal(false);
             }
@@ -6012,7 +6216,7 @@ const EXAMPLE_FULL = `версия "1.0"
           }}
           onSaveToCloud={async (name) => {
             const n = name || projectName.trim() || 'Без названия';
-            await saveProjectToCloud(currentUser.id, n, stacks);
+            await saveProjectToCloud(currentUser.id, n, flow);
             await loadUserProjects(currentUser.id);
             showToast('☁ Сохранено: ' + n, 'success');
           }}
