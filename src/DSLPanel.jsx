@@ -4,7 +4,7 @@ import {
   validateFlow,
   SCHEMA_VERSIONS_FOR_UI,
   buildProjectManifestDraft,
-} from '../core/dslCodegen.js';
+} from './dslCodegen.js';
 
 export {
   generateDSLFromFlow,
@@ -18,7 +18,7 @@ export {
   inferRequiredFeaturesFromStacks,
   buildProjectManifestDraft,
   buildProjectManifestDraftFromStacks,
-} from '../core/dslCodegen.js';
+} from './dslCodegen.js';
 
 export default function DSLPanel({ flow, token, schemaVersions }) {
   const sv = schemaVersions || SCHEMA_VERSIONS_FOR_UI;
@@ -112,12 +112,14 @@ export default function DSLPanel({ flow, token, schemaVersions }) {
           gap: 8,
           alignItems: 'center',
         }}
-        title={`Фичи (эвристика по Flow): ${manifestDraft.requiredFeatures.join(', ') || '—'}\nAST / Merkle build-graph — на сервере (Python tools в core/tests/tools).`}
+        title={`Фичи (эвристика по Flow): ${manifestDraft.requiredFeatures.join(', ') || '—'}\nПолная проверка AST / Merkle graph — на сервере (Python tools).`}
       >
         <span>
           Контракт UI: IR·{sv.irSchemaVersion} AST·{sv.astSchemaVersion} graph·{sv.buildGraphFormatVersion}
         </span>
-        <span style={{ opacity: 0.85 }}>фичи·{manifestDraft.requiredFeatures.length}</span>
+        <span style={{ opacity: 0.85 }}>
+          фичи·{manifestDraft.requiredFeatures.length}
+        </span>
         <button
           type="button"
           onClick={copyManifest}
@@ -130,8 +132,12 @@ export default function DSLPanel({ flow, token, schemaVersions }) {
             fontSize: 9,
             cursor: 'pointer',
           }}
-          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text)'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text3)'; }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color = 'var(--text)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = 'var(--text3)';
+          }}
         >
           project manifest
         </button>
