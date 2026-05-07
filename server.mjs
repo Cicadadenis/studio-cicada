@@ -25,6 +25,23 @@ import { isPlaceholderBotToken } from './core/botTokenPlaceholders.mjs';
 const { Pool } = pg;
 
 const app = express();
+
+const AVATAR_UPLOAD_DIR = path.resolve('uploads/avatars');
+const AVATAR_URL_PREFIX = '/api/avatars';
+const AVATAR_MAX_BYTES = 5 * 1024 * 1024;
+const AVATAR_MIME_EXT = new Map([
+  ['image/jpeg', 'jpg'],
+  ['image/jpg', 'jpg'],
+  ['image/png', 'png'],
+  ['image/webp', 'webp'],
+]);
+
+app.use(AVATAR_URL_PREFIX, express.static(AVATAR_UPLOAD_DIR, {
+  fallthrough: false,
+  immutable: true,
+  maxAge: '30d',
+}));
+
 app.use(
   helmet({
     contentSecurityPolicy: false,
@@ -920,6 +937,87 @@ app.post('/api/logout', (req, res) => {
   res.json({ ok: true });
 });
 
+
+function parseAvatarDataUrl(dataUrl) {
+  const match = String(dataUrl || '').match(/^data:(image\/(?:jpeg|jpg|png|webp));base64,([A-Za-z0-9+/=\s]+)$/i);
+  if (!match) {
+    const err = new Error('Неверный формат аватара. Загрузите JPG, PNG или WebP.');
+    err.publicMessage = err.message;
+    throw err;
+  }
+  const mime = match[1].toLowerCase() === 'image/jpg' ? 'image/jpeg' : match[1].toLowerCase();
+  const ext = AVATAR_MIME_EXT.get(mime);
+  if (!ext) {
+    const err = new Error('Поддерживаются только JPG, PNG и WebP');
+    err.publicMessage = err.message;
+    throw err;
+  }
+  const buffer = Buffer.from(match[2].replace(/\s/g, ''), 'base64');
+  if (!buffer.length || buffer.length > AVATAR_MAX_BYTES) {
+    const err = new Error('Аватар слишком большой. Максимум 5MB после сжатия.');
+    err.publicMessage = err.message;
+    throw err;
+  }
+  const isJpeg = buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  const isPng = buffer.length >= 8 && buffer.slice(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  const isWebp = buffer.length >= 12 && buffer.slice(0, 4).toString('ascii') === 'RIFF' && buffer.slice(8, 12).toString('ascii') === 'WEBP';
+  if ((mime === 'image/jpeg' && !isJpeg) || (mime === 'image/png' && !isPng) || (mime === 'image/webp' && !isWebp)) {
+    const err = new Error('Файл аватара повреждён или не совпадает с выбранным форматом');
+    err.publicMessage = err.message;
+    throw err;
+  }
+  return { buffer, ext };
+}
+
+function avatarFilePathFromUrl(photoUrl) {
+  if (typeof photoUrl !== 'string' || !photoUrl.startsWith(`${AVATAR_URL_PREFIX}/`)) return null;
+  const fileName = path.basename(photoUrl.slice(AVATAR_URL_PREFIX.length + 1));
+  if (!/^avatar-[a-f0-9-]+\.(?:jpg|png|webp)$/i.test(fileName)) return null;
+  return path.join(AVATAR_UPLOAD_DIR, fileName);
+}
+
+function cleanupLocalAvatar(photoUrl) {
+  const filePath = avatarFilePathFromUrl(photoUrl);
+  if (!filePath) return;
+  try { fs.unlinkSync(filePath); } catch {}
+}
+
+function saveAvatarDataUrl(dataUrl, oldPhotoUrl = null) {
+  const { buffer, ext } = parseAvatarDataUrl(dataUrl);
+  fs.mkdirSync(AVATAR_UPLOAD_DIR, { recursive: true });
+  const fileName = `avatar-${crypto.randomUUID()}.${ext}`;
+  const filePath = path.join(AVATAR_UPLOAD_DIR, fileName);
+  fs.writeFileSync(filePath, buffer, { flag: 'wx' });
+  cleanupLocalAvatar(oldPhotoUrl);
+  return `${AVATAR_URL_PREFIX}/${fileName}`;
+}
+
+async function updateUserAvatar(userId, dataUrl) {
+  const user = await findById(userId);
+  if (!user) {
+    const err = new Error('Пользователь не найден');
+    err.publicMessage = err.message;
+    throw err;
+  }
+  const photoUrl = saveAvatarDataUrl(dataUrl, user.photo_url);
+  await pool.query('UPDATE users SET photo_url=$1 WHERE id=$2', [photoUrl, userId]);
+  recordUserAction(userId, 'avatar_update', { storage: 'local_file' });
+  return findById(userId);
+}
+
+
+app.post('/api/avatar', requireUserAuth, async (req, res) => {
+  const { userId, dataUrl } = req.body || {};
+  if (!userId || req.authUserId !== userId) return res.status(403).json({ error: 'Forbidden' });
+  try {
+    const updated = await updateUserAvatar(userId, dataUrl);
+    return res.json({ success: true, user: safeUser(updated) });
+  } catch (e) {
+    console.error('POST /api/avatar', e?.message || e);
+    return res.status(400).json({ error: e?.publicMessage || 'Не удалось сохранить аватар' });
+  }
+});
+
 app.post('/api/update', requireUserAuth, async (req, res) => {
   const { userId, updates } = req.body;
   if (!userId || !updates) return res.json({ error: 'Неверный запрос' });
@@ -940,12 +1038,20 @@ app.post('/api/update', requireUserAuth, async (req, res) => {
   if (Object.prototype.hasOwnProperty.call(updates, 'photo_url')) {
     const candidate = updates.photo_url;
     if (candidate === null || candidate === '') {
+      cleanupLocalAvatar(user.photo_url);
       newPhotoUrl = null;
     } else if (typeof candidate === 'string') {
-      if (candidate.length > 24_000_000) {
-        return res.json({ error: 'Аватар слишком большой' });
+      if (candidate.startsWith('data:image/')) {
+        try {
+          newPhotoUrl = saveAvatarDataUrl(candidate, user.photo_url);
+        } catch (e) {
+          return res.status(400).json({ error: e?.publicMessage || 'Неверный формат аватара' });
+        }
+      } else if (candidate.length > 2048) {
+        return res.json({ error: 'Ссылка на аватар слишком длинная' });
+      } else {
+        newPhotoUrl = candidate;
       }
-      newPhotoUrl = candidate;
     } else {
       return res.json({ error: 'Неверный формат аватара' });
     }
