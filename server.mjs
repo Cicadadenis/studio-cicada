@@ -12,7 +12,7 @@ import pg from 'pg';
 import bcrypt from 'bcryptjs';
 import cookieParser from 'cookie-parser';
 import jwt from 'jsonwebtoken';
-import { sendVerificationEmail, sendPasswordResetEmail, sendEmailChangeCode } from './email.mjs';
+import { sendVerificationEmail, sendPasswordResetEmail, sendEmailChangeCode, sendSupportReplyEmail } from './email.mjs';
 import { startRunner, stopRunner, isRunnerActive, getRunnerStatus, listRunners, getRunnerLogs } from './services/dslRunner.mjs';
 import { lintCicadaWithPython, requireParsedDSL, getDslHintsWithPython } from './services/pythonDslLint.mjs';
 import { sendPreviewRequest } from './services/cicadaPreviewWorker.mjs';
@@ -487,6 +487,35 @@ async function initDB() {
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS twofa_secret TEXT`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS twofa_enabled BOOLEAN NOT NULL DEFAULT FALSE`);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_passkeys (
+      credential_id TEXT PRIMARY KEY,
+      user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      public_key    TEXT NOT NULL,
+      sign_count    BIGINT NOT NULL DEFAULT 0,
+      name          TEXT NOT NULL DEFAULT 'Passkey',
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_used_at  TIMESTAMPTZ
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_passkeys_user_id ON user_passkeys(user_id)`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS support_requests (
+      id         TEXT PRIMARY KEY,
+      user_id    TEXT REFERENCES users(id) ON DELETE SET NULL,
+      from_text  TEXT NOT NULL,
+      email      TEXT,
+      subject    TEXT NOT NULL,
+      message    TEXT NOT NULL,
+      status     TEXT NOT NULL DEFAULT 'open',
+      reply_text TEXT,
+      replied_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_support_requests_created_at ON support_requests(created_at DESC)`);
+
   // ── User libraries ───────────────────────────────────────────────────────────
   await pool.query(`
     CREATE TABLE IF NOT EXISTS user_libraries (
@@ -928,6 +957,150 @@ app.post('/api/2fa/disable', requireUserAuth, async (req, res) => {
   await pool.query('UPDATE users SET twofa_enabled=FALSE WHERE id=$1', [userId]);
   const updated = await findById(userId);
   return res.json({ success: true, user: safeUser(updated) });
+});
+
+
+function userPasskeyRow(row) {
+  return row ? {
+    credentialId: row.credential_id,
+    userId: row.user_id,
+    publicKey: row.public_key,
+    signCount: Number(row.sign_count || 0),
+    name: row.name || 'Passkey',
+    createdAt: row.created_at,
+    lastUsedAt: row.last_used_at,
+  } : null;
+}
+
+async function listUserPasskeys(userId) {
+  const { rows } = await pool.query(
+    'SELECT credential_id, user_id, public_key, sign_count, name, created_at, last_used_at FROM user_passkeys WHERE user_id=$1 ORDER BY created_at DESC',
+    [userId]
+  );
+  return rows.map(userPasskeyRow);
+}
+
+function buildUserPasskeyOptions(req, kind, userId = null) {
+  const challenge = b64url(crypto.randomBytes(32));
+  putUserWebAuthnChallenge(kind, challenge, userId);
+  return {
+    challenge,
+    rpId: resolveAdminWebAuthnRpId(req),
+    origin: resolveAdminWebAuthnOrigin(req),
+  };
+}
+
+function verifyUserPasskeyAssertion(req, credential, expectedUserId = null) {
+  const { id, response } = req.body || {};
+  const clientDataJSON = fromB64url(response?.clientDataJSON);
+  const authenticatorData = fromB64url(response?.authenticatorData);
+  const signature = fromB64url(response?.signature);
+  const parsed = parseAuthenticatorData(authenticatorData);
+  verifyClientData(clientDataJSON, {
+    type: 'webauthn.get',
+    challenge: req.body?.challenge,
+    origin: resolveAdminWebAuthnOrigin(req),
+  });
+  if (!consumeUserWebAuthnChallenge('login', req.body?.challenge, expectedUserId)) throw new Error('Challenge истёк');
+  if (!parsed.rpIdHash.equals(expectedRpIdHash(req))) throw new Error('RP ID не совпадает');
+  if ((parsed.flags & 0x01) === 0) throw new Error('Пользователь не подтверждён authenticator');
+  const signed = Buffer.concat([authenticatorData, crypto.createHash('sha256').update(clientDataJSON).digest()]);
+  const ok = crypto.verify('sha256', signed, credential.publicKey, signature);
+  if (!ok || id !== credential.credentialId) throw new Error('Подпись passkey не прошла проверку');
+  return parsed.signCount;
+}
+
+app.get('/api/passkeys', requireUserAuth, async (req, res) => {
+  const rows = await listUserPasskeys(req.authUserId);
+  res.json({ success: true, passkeys: rows.map(({ credentialId, name, createdAt, lastUsedAt }) => ({ credentialId, name, createdAt, lastUsedAt })) });
+});
+
+app.post('/api/passkey/register-options', requireUserAuth, async (req, res) => {
+  const user = await findById(req.authUserId);
+  if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
+  const existing = await listUserPasskeys(user.id);
+  const base = buildUserPasskeyOptions(req, 'register', user.id);
+  res.json({
+    publicKey: {
+      challenge: base.challenge,
+      rp: { name: 'Cicada Studio', id: base.rpId },
+      user: { id: b64url(Buffer.from(user.id)), name: user.email || user.id, displayName: user.name || user.email || user.id },
+      pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+      timeout: 60000,
+      authenticatorSelection: { userVerification: 'required', residentKey: 'preferred' },
+      excludeCredentials: existing.map((c) => ({ type: 'public-key', id: c.credentialId })),
+      attestation: 'none',
+    },
+    challenge: base.challenge,
+  });
+});
+
+app.post('/api/passkey/register', requireUserAuth, async (req, res) => {
+  try {
+    const clientDataJSON = fromB64url(req.body?.response?.clientDataJSON);
+    const attestationObject = fromB64url(req.body?.response?.attestationObject);
+    verifyClientData(clientDataJSON, {
+      type: 'webauthn.create',
+      challenge: req.body?.challenge,
+      origin: resolveAdminWebAuthnOrigin(req),
+    });
+    if (!consumeUserWebAuthnChallenge('register', req.body?.challenge, req.authUserId)) throw new Error('Challenge истёк');
+    const parsed = extractRegistrationCredential(attestationObject);
+    const authData = decodeCborFirst(attestationObject).get('authData');
+    if (!parseAuthenticatorData(authData).rpIdHash.equals(expectedRpIdHash(req))) throw new Error('RP ID не совпадает');
+    await pool.query(
+      `INSERT INTO user_passkeys (credential_id, user_id, public_key, sign_count, name)
+       VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (credential_id) DO UPDATE SET user_id=EXCLUDED.user_id, public_key=EXCLUDED.public_key, sign_count=EXCLUDED.sign_count`,
+      [parsed.credentialId, req.authUserId, parsed.publicKey, parsed.signCount, String(req.body?.name || 'Passkey').slice(0, 80)]
+    );
+    recordUserAction(req.authUserId, 'passkey_register', { credentialId: parsed.credentialId.slice(0, 12) });
+    res.json({ success: true, passkeys: (await listUserPasskeys(req.authUserId)).map(({ credentialId, name, createdAt, lastUsedAt }) => ({ credentialId, name, createdAt, lastUsedAt })) });
+  } catch (err) {
+    recordAuthError('user_passkey_register', req, req.authUserId, err.message);
+    res.status(400).json({ error: err.message || 'Не удалось зарегистрировать passkey' });
+  }
+});
+
+app.post('/api/passkey/login-options', loginRateLimit, async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const user = email ? await findByEmail(email) : null;
+  if (!user || user.banned || !user.verified) return res.status(404).json({ error: 'Passkey для этого email не найден' });
+  const passkeys = await listUserPasskeys(user.id);
+  if (!passkeys.length) return res.status(404).json({ error: 'Passkey для этого email не найден' });
+  const base = buildUserPasskeyOptions(req, 'login', user.id);
+  res.json({
+    publicKey: {
+      challenge: base.challenge,
+      rpId: base.rpId,
+      timeout: 60000,
+      userVerification: 'required',
+      allowCredentials: passkeys.map((c) => ({ type: 'public-key', id: c.credentialId })),
+    },
+    challenge: base.challenge,
+  });
+});
+
+app.post('/api/passkey/login', loginRateLimit, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT credential_id, user_id, public_key, sign_count, name, created_at, last_used_at FROM user_passkeys WHERE credential_id=$1',
+      [String(req.body?.id || '')]
+    );
+    const credential = userPasskeyRow(rows[0]);
+    if (!credential) throw new Error('Passkey не найден');
+    const signCount = verifyUserPasskeyAssertion(req, credential, credential.userId);
+    const user = await findById(credential.userId);
+    if (!user || user.banned || !user.verified) throw new Error('Аккаунт недоступен');
+    await pool.query('UPDATE user_passkeys SET sign_count=$1, last_used_at=NOW() WHERE credential_id=$2', [signCount, credential.credentialId]);
+    const authToken = issueUserJwt(user.id);
+    recordUserLogin(user.id, req.ip, 'passkey');
+    recordUserAction(user.id, 'login_success', { method: 'passkey' });
+    res.json({ success: true, user: safeUser(user), token: authToken });
+  } catch (err) {
+    recordAuthError('user_passkey_login', req, null, err.message);
+    res.status(400).json({ error: err.message || 'Не удалось войти по passkey' });
+  }
 });
 app.post('/api/logout', (req, res) => {
   res.clearCookie(OAUTH_JWT_HANDOFF_COOKIE, {
@@ -1687,6 +1860,7 @@ const ADMIN_WEBAUTHN_RP_NAME = process.env.ADMIN_WEBAUTHN_RP_NAME || 'Cicada Stu
 const ADMIN_WEBAUTHN_RP_ID = String(process.env.ADMIN_WEBAUTHN_RP_ID || '').trim();
 const ADMIN_WEBAUTHN_ORIGIN = String(process.env.ADMIN_WEBAUTHN_ORIGIN || APP_URL || '').replace(/\/$/, '');
 const adminWebAuthnChallenges = new Map();
+const userWebAuthnChallenges = new Map();
 
 function b64url(buf) {
   return Buffer.from(buf).toString('base64url');
@@ -1722,10 +1896,28 @@ function consumeAdminWebAuthnChallenge(kind, challenge) {
   return Boolean(meta && meta.kind === kind && meta.exp > Date.now());
 }
 
+function putUserWebAuthnChallenge(kind, challenge, userId = null) {
+  userWebAuthnChallenges.set(challenge, { kind, userId, exp: Date.now() + 5 * 60 * 1000 });
+}
+
+function consumeUserWebAuthnChallenge(kind, challenge, userId = null) {
+  const meta = userWebAuthnChallenges.get(challenge);
+  userWebAuthnChallenges.delete(challenge);
+  return Boolean(
+    meta
+    && meta.kind === kind
+    && meta.exp > Date.now()
+    && (userId == null || meta.userId === userId)
+  );
+}
+
 setInterval(() => {
   const now = Date.now();
   for (const [challenge, meta] of adminWebAuthnChallenges.entries()) {
     if (!meta || meta.exp <= now) adminWebAuthnChallenges.delete(challenge);
+  }
+  for (const [challenge, meta] of userWebAuthnChallenges.entries()) {
+    if (!meta || meta.exp <= now) userWebAuthnChallenges.delete(challenge);
   }
 }, 5 * 60 * 1000).unref();
 
@@ -2155,6 +2347,88 @@ app.get('/api/admin/logs', (req, res) => {
     authErrors: recentAuthErrors.filter(includesQ).slice(-200),
     adminActions: recentAdminActions.filter(includesQ).slice(-200),
   });
+});
+
+
+function supportRequestRow(row) {
+  return row ? {
+    id: row.id,
+    userId: row.user_id,
+    from: row.from_text,
+    email: row.email,
+    subject: row.subject,
+    message: row.message,
+    status: row.status,
+    replyText: row.reply_text,
+    repliedAt: row.replied_at,
+    createdAt: row.created_at,
+    userName: row.user_name,
+    userEmail: row.user_email,
+  } : null;
+}
+
+app.post('/api/support/requests', requireUserAuth, async (req, res) => {
+  const user = await findById(req.authUserId);
+  if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
+  const from = String(req.body?.from || user.email || user.name || '').trim().slice(0, 200);
+  const subject = String(req.body?.subject || '').trim().slice(0, 180);
+  const message = String(req.body?.message || '').trim().slice(0, 8000);
+  const emailCandidate = String(req.body?.email || user.email || '').trim().slice(0, 200);
+  const email = emailCandidate.includes('@') ? emailCandidate : (user.email || null);
+  if (!from || !subject || !message) return res.status(400).json({ error: 'Заполните поля: кто, тема и суть вопроса' });
+  const id = crypto.randomUUID();
+  await pool.query(
+    `INSERT INTO support_requests (id, user_id, from_text, email, subject, message)
+     VALUES ($1,$2,$3,$4,$5,$6)`,
+    [id, user.id, from, email, subject, message]
+  );
+  recordUserAction(user.id, 'support_request_create', { supportRequestId: id, subject });
+  res.json({ success: true, id });
+});
+
+app.get('/api/admin/support-requests', async (req, res) => {
+  if (!isAdminAuthed(req)) return res.status(403).json({ error: 'Forbidden' });
+  const { rows } = await pool.query(
+    `SELECT sr.*, u.name AS user_name, u.email AS user_email
+     FROM support_requests sr
+     LEFT JOIN users u ON u.id = sr.user_id
+     ORDER BY sr.created_at DESC
+     LIMIT 300`
+  );
+  res.json({ requests: rows.map(supportRequestRow) });
+});
+
+app.post('/api/admin/support-requests/:id/reply', async (req, res) => {
+  if (!isAdminAuthed(req)) return res.status(403).json({ error: 'Forbidden' });
+  const id = String(req.params.id || '');
+  const reply = String(req.body?.reply || '').trim().slice(0, 8000);
+  if (!reply) return res.status(400).json({ error: 'Введите текст ответа' });
+  const { rows } = await pool.query('SELECT * FROM support_requests WHERE id=$1', [id]);
+  const item = supportRequestRow(rows[0]);
+  if (!item) return res.status(404).json({ error: 'Обращение не найдено' });
+  if (!item.email) return res.status(400).json({ error: 'У обращения нет email для ответа' });
+  await sendSupportReplyEmail(item.email, item.from || item.userName || 'пользователь', item.subject, reply);
+  await pool.query('UPDATE support_requests SET status=$1, reply_text=$2, replied_at=NOW() WHERE id=$3', ['answered', reply, id]);
+  recordAdminAction(req, 'support_request_reply', item.userId, { supportRequestId: id });
+  res.json({ success: true });
+});
+
+app.post('/api/admin/support-requests/:id/status', async (req, res) => {
+  if (!isAdminAuthed(req)) return res.status(403).json({ error: 'Forbidden' });
+  const id = String(req.params.id || '');
+  const status = String(req.body?.status || 'open').trim();
+  if (!['open', 'answered', 'closed'].includes(status)) return res.status(400).json({ error: 'Некорректный статус' });
+  await pool.query('UPDATE support_requests SET status=$1 WHERE id=$2', [status, id]);
+  recordAdminAction(req, 'support_request_status', null, { supportRequestId: id, status });
+  res.json({ success: true });
+});
+
+app.delete('/api/admin/support-requests/:id', async (req, res) => {
+  if (!isAdminAuthed(req)) return res.status(403).json({ error: 'Forbidden' });
+  const id = String(req.params.id || '');
+  await pool.query('DELETE FROM support_requests WHERE id=$1', [id]);
+  recordAdminAction(req, 'support_request_delete', null, { supportRequestId: id });
+  res.json({ success: true });
 });
 
 app.get('/api/admin/security', (req, res) => {
