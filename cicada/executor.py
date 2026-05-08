@@ -13,6 +13,7 @@ import requests
 
 from cicada.parser import (
     Program, Handler, Reply, RandomReply, SwitchStmt, Ask, Remember, If,
+    parse_condition,
     Buttons, InlineButton, InlineKeyboard, Photo, PhotoVar, Sticker,
     GlobalVar,
     StartScenario, Step,
@@ -331,7 +332,43 @@ def _eval_attr(target, name: str):
     )
 
 
+def _normalize_var_name(name: str) -> str:
+    """Возвращает имя переменной без шаблонных обёрток.
+
+    Старый парсер условий иногда отдаёт VarRef с исходным фрагментом
+    вроде ``{логин}`` (или с пробелами/кавычками вокруг него). В строгом
+    режиме это приводило к ошибке "Переменная '{логин}' не определена",
+    хотя в контексте уже была переменная ``логин``. Нормализуем имя перед
+    поиском, чтобы шаблонный синтаксис работал одинаково в условиях,
+    ответах и выражениях.
+    """
+    if not isinstance(name, str):
+        return name
+
+    normalized = name.strip()
+
+    # Допускаем одинарные/двойные кавычки вокруг шаблонного имени, которые
+    # могут остаться после legacy fallback: "{логин}" -> логин.
+    if len(normalized) >= 2 and normalized[0] == normalized[-1] and normalized[0] in ("'", '"'):
+        inner = normalized[1:-1].strip()
+        if inner.startswith("{") and inner.endswith("}"):
+            normalized = inner
+
+    # Поддерживаем шаблонный синтаксис {переменная} в выражениях
+    # (например, если {логин} == "admin":). Делаем это в цикле, чтобы
+    # безопасно обработать двойную обёртку вида {{логин}}.
+    while len(normalized) >= 3 and normalized.startswith("{") and normalized.endswith("}"):
+        inner = normalized[1:-1].strip()
+        if inner == normalized:
+            break
+        normalized = inner
+
+    return normalized
+
+
 def _get_var(name: str, ctx, strict: bool):
+    name = _normalize_var_name(name)
+
     # Встроенные динамические переменные
     if name == "текущая_дата":
         return _dt.datetime.now().strftime("%d.%m.%Y")
@@ -678,7 +715,26 @@ def _call_builtin(name: str, args: list):
     raise CicadaRuntimeError(f"Неизвестная функция: '{name}'")
 
 
+def _looks_like_compound_legacy_rhs(value) -> bool:
+    """Проверяет legacy RHS, который на самом деле содержит хвост условия."""
+    if not isinstance(value, VarRef) or not isinstance(value.name, str):
+        return False
+    raw = value.name
+    return "&&" in raw or "||" in raw or " и " in raw or " или " in raw
+
+
 def _eval_legacy_condition(cond: Condition, ctx, strict: bool) -> bool:
+    if _looks_like_compound_legacy_rhs(cond.right):
+        # Старый fallback мог разобрать выражение вида
+        # {логин} == "admin" && пароль == "123" как одно сравнение,
+        # где RHS = '"admin" && пароль == "123"'. Перед вычислением
+        # собираем исходную строку обратно и отдаём современному parser/evaluator.
+        left_raw = cond.left.name if isinstance(cond.left, VarRef) else str(eval_expr(cond.left, ctx, strict))
+        repaired = parse_condition(f"{left_raw} {cond.op} {cond.right.name}")
+        result = eval_expr(repaired, ctx, strict)
+        result = result if isinstance(result, bool) else _truthy(result)
+        return not result if cond.negate else result
+
     left  = eval_expr(cond.left, ctx, strict)
     right = eval_expr(cond.right, ctx, strict)
     op    = cond.op
@@ -896,6 +952,10 @@ class Executor:
             ctx.waiting_for = None
             if ctx.scenario:
                 self._continue_scenario(ctx)
+            elif getattr(ctx, "_pending_stmts", None):
+                pending = ctx._pending_stmts
+                ctx._pending_stmts = []
+                self._exec_body(pending, ctx)
             # `вернуть` должен влиять только на текущую обработку тела,
             # но не на after_each middleware.
             ctx._return_requested = False
@@ -956,6 +1016,12 @@ class Executor:
                 ctx.waiting_for = None
                 if ctx.scenario:
                     self._continue_scenario(ctx)
+                elif getattr(ctx, "_pending_stmts", None):
+                    pending = ctx._pending_stmts
+                    ctx._pending_stmts = []
+                    self._exec_body(pending, ctx)
+                ctx._return_requested = False
+                self._run_after_each(ctx)
                 return
             for h in self.program.handlers:
                 if h.kind == media_kind:
@@ -967,6 +1033,12 @@ class Executor:
             ctx.waiting_for = None
             if ctx.scenario:
                 self._continue_scenario(ctx)
+            elif getattr(ctx, "_pending_stmts", None):
+                pending = ctx._pending_stmts
+                ctx._pending_stmts = []
+                self._exec_body(pending, ctx)
+            ctx._return_requested = False
+            self._run_after_each(ctx)
             return
 
         if text == "/start":
@@ -1070,7 +1142,7 @@ class Executor:
 
         signal = None
         try:
-            for stmt in stmts:
+            for i, stmt in enumerate(stmts):
                 result = self._exec(stmt, ctx)
 
                 if isinstance(stmt, If):
@@ -1088,6 +1160,14 @@ class Executor:
                 # FSM semantics: `спросить ... → var` должен поставить ожидание и
                 # остановить выполнение текущего шага до ввода пользователя.
                 if getattr(ctx, "waiting_for", None):
+                    # Сохраняем хвост текущего тела, чтобы цепочки
+                    # `спросить → спросить → если ...` продолжались после ответа.
+                    tail = stmts[i + 1 :]
+                    prev = getattr(ctx, "_pending_stmts", None)
+                    if prev is not None:
+                        ctx._pending_stmts = list(prev) + list(tail)
+                    else:
+                        ctx._pending_stmts = list(tail)
                     break
         except (_BreakSignal, _ContinueSignal) as e:
             signal = e
