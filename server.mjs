@@ -2577,10 +2577,12 @@ app.post('/api/admin/update-apply', (req, res) => {
   }
   if (String(statusRes.stdout || '').trim()) {
     const stashRes = spawnSync('git', ['-C', root, 'stash', 'push', '--include-untracked', '-m', stashName], { encoding: 'utf8', timeout: 60_000 });
-    if (stashRes.error || stashRes.status !== 0) {
+    const stashCombined = `${stashRes.stdout || ''}\n${stashRes.stderr || ''}`;
+    const noChangesToSave = /no local changes to save/i.test(stashCombined);
+    if (stashRes.error || (stashRes.status !== 0 && !noChangesToSave)) {
       return res.status(500).json({ error: `git stash: ${stashRes.error?.message || stashRes.stderr || 'ошибка'}` });
     }
-    autoStashed = true;
+    autoStashed = !noChangesToSave;
   }
 
   const pullRes = spawnSync('git', ['-C', root, 'pull', '--ff-only'], { encoding: 'utf8', timeout: 120_000 });
