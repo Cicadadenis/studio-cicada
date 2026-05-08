@@ -1778,29 +1778,17 @@ function decodeCborFirst(buf) {
   return readItem();
 }
 
-function cosePublicKeyToPem(coseKey) {
+function coseEc2ToPem(coseKey) {
   const kty = coseKey.get(1);
   const alg = coseKey.get(3);
-  if (kty === 2 && alg === -7) {
-    const crv = coseKey.get(-1);
-    const x = coseKey.get(-2);
-    const y = coseKey.get(-3);
-    if (crv !== 1 || !Buffer.isBuffer(x) || !Buffer.isBuffer(y)) {
-      throw new Error('Некорректный passkey ES256/P-256');
-    }
-    const jwk = { kty: 'EC', crv: 'P-256', x: b64url(x), y: b64url(y) };
-    return crypto.createPublicKey({ key: jwk, format: 'jwk' }).export({ type: 'spki', format: 'pem' });
+  const crv = coseKey.get(-1);
+  const x = coseKey.get(-2);
+  const y = coseKey.get(-3);
+  if (kty !== 2 || alg !== -7 || crv !== 1 || !Buffer.isBuffer(x) || !Buffer.isBuffer(y)) {
+    throw new Error('Поддерживаются passkeys ES256/P-256');
   }
-  if (kty === 3 && alg === -257) {
-    const n = coseKey.get(-1);
-    const e = coseKey.get(-2);
-    if (!Buffer.isBuffer(n) || !Buffer.isBuffer(e)) {
-      throw new Error('Некорректный passkey RS256');
-    }
-    const jwk = { kty: 'RSA', n: b64url(n), e: b64url(e) };
-    return crypto.createPublicKey({ key: jwk, format: 'jwk' }).export({ type: 'spki', format: 'pem' });
-  }
-  throw new Error('Поддерживаются passkeys ES256/P-256 и RS256');
+  const jwk = { kty: 'EC', crv: 'P-256', x: b64url(x), y: b64url(y) };
+  return crypto.createPublicKey({ key: jwk, format: 'jwk' }).export({ type: 'spki', format: 'pem' });
 }
 
 function parseAuthenticatorData(authData) {
