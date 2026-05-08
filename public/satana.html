@@ -1442,6 +1442,7 @@
       if (res.status === 403) { box.textContent = 'Нет доступа'; return; }
       systemInfo = await res.json();
       renderSystemSummary();
+      loadUpdateStatus();
     } catch (e) {
       box.textContent = 'Ошибка загрузки';
     }
@@ -1466,7 +1467,43 @@
         '<div class="stat-card"><span class="bg-icon">🤖</span><div class="value" style="color:var(--green)">' + (systemInfo.activeBots || 0) + '</div><div class="label">Active bots</div></div>' +
       '</div>' +
       '<div style="margin-top:12px;font-size:12px;color:var(--text2)">Node: ' + escHtml(systemInfo.nodeVersion || '-') + ' | PID: ' + escHtml(systemInfo.pid || '-') + '</div>' +
+      '<div id="update-box" style="margin-top:10px;font-size:12px;color:var(--text2)">Проверка обновлений...</div>' +
       errorsHtml;
+  }
+
+  async function loadUpdateStatus() {
+    var box = document.getElementById('update-box');
+    if (!box) return;
+    box.textContent = 'Проверка обновлений...';
+    try {
+      var res = await fetch(API + '/api/admin/update-status', { credentials: 'include' });
+      var data = await res.json().catch(function(){ return {}; });
+      if (!res.ok || data.error) throw new Error(data.error || 'Ошибка проверки');
+      if (data.hasUpdate) {
+        box.innerHTML = '<span style="color:var(--accent);font-weight:700">Доступно обновление из Git.</span> ' +
+          '<button class="btn-primary" style="margin-left:8px" onclick="applySystemUpdate()">Обновить</button>';
+      } else {
+        box.innerHTML = '<span style="color:var(--green)">Обновлений нет (актуальная версия).</span> ' +
+          '<button class="topbar-btn" style="margin-left:8px" onclick="loadUpdateStatus()">Проверить снова</button>';
+      }
+    } catch (e) {
+      box.innerHTML = '<span style="color:var(--red)">Ошибка проверки обновлений: ' + escHtml(e.message || 'unknown') + '</span>';
+    }
+  }
+
+  async function applySystemUpdate() {
+    if (!confirm('Применить обновление? Будут выполнены: git pull, npm run build и pm2 restart.')) return;
+    try {
+      showToast('Запуск обновления...', 'var(--accent)');
+      var res = await apiPostJson(API + '/api/admin/update-apply', {});
+      var data = await res.json().catch(function(){ return {}; });
+      if (!res.ok || data.error) throw new Error(data.error || 'Ошибка обновления');
+      showToast(data.message || 'Обновление применено', 'var(--green)');
+      loadUpdateStatus();
+      loadSystem();
+    } catch (e) {
+      showToast(e.message || 'Ошибка обновления', 'var(--red)');
+    }
   }
 
   async function loadAdminLogs() {
