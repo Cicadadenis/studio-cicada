@@ -19,6 +19,7 @@ import { sendPreviewRequest } from './services/cicadaPreviewWorker.mjs';
 import { normalizeAdminTotpSecret, verifyTotp } from './services/adminTotp.mjs';
 import { generateDSL } from './core/stacksToDsl.js';
 import { lintDSLSchema, formatDSLDiagnostic } from './core/validator/schema.js';
+import { validateDSL as validateUiDsl } from './core/validator/uiDslValidator.js';
 import { extractAiGeneratedStacksFromRaw, normalizeAiGeneratedStacks, repairCollapsedCicadaCode, stripThinkingFromAiRaw } from './core/validator/fixes.js';
 import { isPlaceholderBotToken } from './core/botTokenPlaceholders.mjs';
 
@@ -3518,6 +3519,22 @@ app.post('/api/ai-generate', requireUserAuth, async (req, res) => {
         authUser,
         422,
         `Схема от AI не прошла парсер Cicada. Попробуй ещё раз. ${parserErr.message}`.trim(),
+      );
+    }
+
+    // ── UI-валидатор конструктора ────────────────────────────────────────
+    // Python-парсер отвечает только за грамматику. Перед отправкой схемы в
+    // редактор прогоняем те же правила, что вкладка «Проверка ошибок» в UI.
+    const uiValidation = validateUiDsl(dslFromStacks, stacks);
+    const uiDiagnostics = [...uiValidation.errors, ...uiValidation.warnings];
+    if (uiDiagnostics.length > 0) {
+      const hint = uiDiagnostics.slice(0, 5).join(' ');
+      console.error('[AI] UI validator rejected schema:', hint);
+      return sendAiGenerateError(
+        res,
+        authUser,
+        422,
+        `Схема от AI не прошла UI-валидатор конструктора. Попробуй ещё раз. ${hint}`.trim(),
       );
     }
 
