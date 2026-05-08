@@ -658,8 +658,12 @@
     .btn-grant-sub:active { transform: scale(0.98); }
     .btn-grant-sub:disabled { opacity: 0.4; cursor: not-allowed; }
 
+    .mobile-only-passkey { display: none; }
+
     /* ── Responsive ── */
     @media (max-width: 640px) {
+      .mobile-only-passkey { display: flex; }
+
       /* Stats: 3 columns but smaller */
       .stat-card .value { font-size: 22px; }
 
@@ -760,7 +764,7 @@
           <span>→</span>
           <span>ВОЙТИ</span>
         </button>
-        <button class="btn-primary" id="passkey-login-btn" onclick="tryPasskeyLogin()" style="display:none;margin-top:10px;background:linear-gradient(135deg,#7c3aed,#2563eb)">
+        <button class="btn-primary mobile-only-passkey" id="passkey-login-btn" onclick="tryPasskeyLogin()" style="display:none;margin-top:10px;background:linear-gradient(135deg,#7c3aed,#2563eb)">
           <span>🔐</span>
           <span>ВОЙТИ ПО ОТПЕЧАТКУ</span>
         </button>
@@ -823,6 +827,7 @@
     <div class="filter-tabs" style="margin-bottom:14px">
       <div class="filter-tab active" data-section="money" onclick="setSection('money', this)">💰 Деньги</div>
       <div class="filter-tab" data-section="users" onclick="setSection('users', this)">👥 Пользователи</div>
+      <div class="filter-tab" data-section="support" onclick="setSection('support', this)">🛟 Обращения</div>
       <div class="filter-tab" data-section="product" onclick="setSection('product', this)">🤖 Боты / продукт</div>
       <div class="filter-tab" data-section="security" onclick="setSection('security', this)">🔒 Безопасность</div>
       <div class="filter-tab" data-section="system" onclick="setSection('system', this)">🖥 Система</div>
@@ -878,6 +883,16 @@
           <div class="icon">👤</div>
           Пользователи не найдены
         </div>
+      </div>
+    </div>
+
+    <div id="section-support" style="display:none">
+      <div class="section-header">
+        <div class="section-title">Обращения</div>
+        <button class="topbar-btn" onclick="loadSupportRequests()">↻ Обновить</button>
+      </div>
+      <div class="table-wrap" style="padding:14px">
+        <div id="support-list" class="loading" style="padding:20px">Загрузка...</div>
       </div>
     </div>
 
@@ -947,6 +962,7 @@
   let loginTotpRequired = false;
   let loginPasskeyEnabled = false;
   let adminLogs = { apiErrors: [], authErrors: [], adminActions: [] };
+  let supportRequests = [];
 
   const AVATAR_COLORS = [
     'linear-gradient(135deg,#ffd700,#ff8c00)',
@@ -1030,11 +1046,12 @@
     currentSection = section;
     document.querySelectorAll('[data-section]').forEach(function(t) { t.classList.remove('active'); });
     if (el) el.classList.add('active');
-    ['money', 'users', 'product', 'security', 'system'].forEach(function(key) {
+    ['money', 'users', 'support', 'product', 'security', 'system'].forEach(function(key) {
       var node = document.getElementById('section-' + key);
       if (node) node.style.display = (key === section ? 'block' : 'none');
     });
     if (section === 'product') renderProductSummary();
+    if (section === 'support') loadSupportRequests();
     if (section === 'security') { loadSecurity(); loadGroqTokens(); }
     if (section === 'system') { loadSystem(); loadAdminLogs(); }
   }
@@ -1047,11 +1064,15 @@
       loginPasskeyEnabled = !!j.passkeyEnabled && !!window.PublicKeyCredential;
       var wrap = document.getElementById('admin-totp-wrap');
       if (wrap) wrap.style.display = loginTotpRequired ? 'block' : 'none';
-      var passkeyBtn = document.getElementById('passkey-login-btn');
-      if (passkeyBtn) passkeyBtn.style.display = loginPasskeyEnabled ? 'flex' : 'none';
+      syncPasskeyLoginButtonVisibility();
     } catch (e) {}
   }
 
+
+  function syncPasskeyLoginButtonVisibility() {
+    var passkeyBtn = document.getElementById('passkey-login-btn');
+    if (passkeyBtn) passkeyBtn.style.display = (loginPasskeyEnabled && window.innerWidth <= 640) ? 'flex' : 'none';
+  }
 
   async function tryPasskeyLogin() {
     if (!window.PublicKeyCredential) {
@@ -1226,6 +1247,7 @@
       renderTable();
       renderProductSummary();
       loadPlans();
+      if (currentSection === 'support') loadSupportRequests();
       if (currentSection === 'security') loadSecurity();
       if (currentSection === 'system') { loadSystem(); loadAdminLogs(); }
 
@@ -1318,6 +1340,90 @@
     } catch (e) {
       showToast('Ошибка подключения', 'var(--red)');
     }
+  }
+
+  async function loadSupportRequests() {
+    var box = document.getElementById('support-list');
+    if (!box) return;
+    box.className = 'loading';
+    box.textContent = 'Загрузка...';
+    try {
+      var res = await fetch(API + '/api/admin/support-requests', { credentials: 'include' });
+      if (res.status === 403) { box.textContent = 'Нет доступа'; return; }
+      var data = await res.json();
+      supportRequests = Array.isArray(data.requests) ? data.requests : [];
+      renderSupportRequests();
+    } catch (e) {
+      box.textContent = 'Ошибка загрузки обращений';
+    }
+  }
+
+  function supportStatusBadge(status) {
+    var color = status === 'answered' ? 'var(--green)' : (status === 'closed' ? 'var(--text3)' : 'var(--accent)');
+    var label = status === 'answered' ? 'отвечено' : (status === 'closed' ? 'закрыто' : 'новое');
+    return '<span style="display:inline-flex;padding:4px 8px;border-radius:999px;border:1px solid ' + color + '55;color:' + color + ';font-size:11px;font-weight:700">' + label + '</span>';
+  }
+
+  function renderSupportRequests() {
+    var box = document.getElementById('support-list');
+    if (!box) return;
+    box.className = '';
+    if (!supportRequests.length) {
+      box.innerHTML = '<div class="empty" style="display:block">Обращений пока нет</div>';
+      return;
+    }
+    box.innerHTML = supportRequests.map(function(r) {
+      var date = r.createdAt ? new Date(r.createdAt).toLocaleString('ru-RU') : '—';
+      return '<div style="padding:14px;border:1px solid var(--border);border-radius:12px;background:var(--bg2);margin-bottom:10px">' +
+        '<div style="display:flex;gap:10px;align-items:flex-start;justify-content:space-between;margin-bottom:8px">' +
+          '<div><div style="font-weight:800;color:var(--text);font-size:14px">' + escHtml(r.subject || 'Без темы') + '</div>' +
+          '<div style="font-size:12px;color:var(--text3);margin-top:4px">' + escHtml(r.from || '-') + ' · ' + escHtml(r.email || r.userEmail || 'email не указан') + ' · ' + escHtml(date) + '</div></div>' +
+          supportStatusBadge(r.status) +
+        '</div>' +
+        '<pre style="white-space:pre-wrap;font-family:system-ui,sans-serif;font-size:13px;line-height:1.55;color:var(--text2);background:var(--bg3);border-radius:10px;padding:10px;margin:0 0 10px">' + escHtml(r.message || '') + '</pre>' +
+        (r.replyText ? '<div style="font-size:12px;color:var(--green);margin-bottom:8px"><b>Ответ:</b><br><span style="white-space:pre-wrap">' + escHtml(r.replyText) + '</span></div>' : '') +
+        '<textarea id="support-reply-' + escHtml(r.id) + '" placeholder="Ответ пользователю на email" style="width:100%;min-height:84px;box-sizing:border-box;margin-bottom:8px;padding:10px;border-radius:10px;background:var(--bg3);border:1px solid var(--border2);color:var(--text);resize:vertical"></textarea>' +
+        '<div style="display:flex;flex-wrap:wrap;gap:8px">' +
+          '<button class="btn-primary" onclick="replySupportRequest(\'' + escJs(r.id) + '\')">✉ Ответить через support</button>' +
+          '<button class="topbar-btn" onclick="setSupportRequestStatus(\'' + escJs(r.id) + '\',\'closed\')">Закрыть</button>' +
+          '<button class="topbar-btn danger" onclick="deleteSupportRequest(\'' + escJs(r.id) + '\')">Удалить</button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  async function replySupportRequest(id) {
+    var textarea = document.getElementById('support-reply-' + id);
+    var reply = textarea ? textarea.value.trim() : '';
+    if (!reply) { showToast('Введите текст ответа', 'var(--red)'); return; }
+    try {
+      var res = await apiPostJson(API + '/api/admin/support-requests/' + encodeURIComponent(id) + '/reply', { reply: reply });
+      var data = await res.json().catch(function(){ return {}; });
+      if (!res.ok || data.error) throw new Error(data.error || 'Ошибка отправки');
+      showToast('Ответ отправлен на email', 'var(--green)');
+      loadSupportRequests();
+    } catch (e) { showToast(e.message || 'Ошибка отправки', 'var(--red)'); }
+  }
+
+  async function setSupportRequestStatus(id, status) {
+    try {
+      var res = await apiPostJson(API + '/api/admin/support-requests/' + encodeURIComponent(id) + '/status', { status: status });
+      if (!res.ok) throw new Error('Ошибка статуса');
+      loadSupportRequests();
+    } catch (e) { showToast(e.message || 'Ошибка статуса', 'var(--red)'); }
+  }
+
+  async function deleteSupportRequest(id) {
+    if (!confirm('Удалить обращение?')) return;
+    try {
+      var cr = await fetch(API + '/api/csrf-token', { credentials: 'include' });
+      var ct = '';
+      try { ct = (await cr.json()).csrfToken; } catch (e) {}
+      var res = await fetch(API + '/api/admin/support-requests/' + encodeURIComponent(id), { method: 'DELETE', credentials: 'include', headers: ct ? { 'x-csrf-token': ct } : {} });
+      if (!res.ok) throw new Error('Ошибка удаления');
+      showToast('Обращение удалено', 'var(--green)');
+      loadSupportRequests();
+    } catch (e) { showToast(e.message || 'Ошибка удаления', 'var(--red)'); }
   }
 
   async function loadSystem() {
@@ -1465,7 +1571,7 @@
     }
   }
 
-  window.addEventListener('resize', renderTable);
+  window.addEventListener('resize', function() { renderTable(); syncPasskeyLoginButtonVisibility(); });
 
   function escHtml(str) {
     if (str == null) return '';
