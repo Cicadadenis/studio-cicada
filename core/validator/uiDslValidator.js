@@ -102,6 +102,39 @@ export function validateDSL(code, stacks, blockTypes = []) {
     }
   });
 
+  // Клавиатуры должны присоединяться к накопленному тексту сообщения.
+  // После вложенных body (if/else/step) executor делает flush и очищает pending-message,
+  // поэтому «кнопки»/«inline-кнопки» должны иметь «ответ» в той же линейной части
+  // текущего обработчика/шага, а не только внутри вложенного условия.
+  const pendingTextByIndent = new Map();
+  lines.forEach((line, i) => {
+    const l = line.trim();
+    if (!l || l.startsWith('#')) return;
+
+    const indent = getLineIndent(line);
+    for (const key of [...pendingTextByIndent.keys()]) {
+      if (key > indent) pendingTextByIndent.delete(key);
+    }
+
+    const isKeyboard = /^кнопки(?:\s|:|$)/i.test(l) || /^inline-кнопки:?\s*$/i.test(l);
+    if (isKeyboard && !pendingTextByIndent.get(indent)) {
+      const label = l.startsWith('inline-кнопки') ? 'Inline-кнопки' : 'Кнопки';
+      errors.push(`❌ Строка ${i+1}: блок «${label}» должен идти после блока «Ответ» в том же шаге/обработчике`);
+    }
+
+    if (/^(?:ответ|ответ_md)\s+/i.test(l) || l === 'рандом:' || l === 'рандом') {
+      pendingTextByIndent.set(indent, true);
+      return;
+    }
+
+    if (
+      /^(?:при|сценарий|шаг|блок|если|иначе|переключить)\b/i.test(l) ||
+      /^(?:спросить|фото|видео|аудио|документ|стикер|контакт|локация|опрос|стоп|перейти|запустить|использовать)\b/i.test(l)
+    ) {
+      pendingTextByIndent.set(indent, false);
+    }
+  });
+
   // Дублирующиеся callback-триггеры
   // Ядро: при совпадении trigger берёт ПЕРВЫЙ handler и прерывает (break)
   const callbackTriggers = {};

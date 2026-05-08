@@ -1375,6 +1375,10 @@ class Executor:
             if stmt.labels and isinstance(stmt.labels[0], list)
             else [[_unwrap(lbl) for lbl in stmt.labels]]
         )
+        # Кнопки могут оказаться первыми после вложенного блока/шага, который уже
+        # сделал flush и очистил _pending_message. Не падаем: создаём пустой
+        # pending-message, а _flush отправит клавиатуру с zero-width текстом.
+        self._reset_pending(ctx)
         existing = ctx._pending_message.get("buttons") or []
         ctx._pending_message["buttons"] = existing + new_rows
 
