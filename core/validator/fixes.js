@@ -616,6 +616,106 @@ function ensureAiBotStack(stacks) {
     ...stacks,
   ];
 }
+
+
+const AI_HANDLER_ROOT_TYPES = new Set(['start', 'callback', 'command']);
+const AI_VISIBLE_OUTPUT_TYPES = new Set([
+  'message', 'buttons', 'inline', 'photo', 'video', 'audio', 'document',
+  'contact', 'location', 'poll', 'sticker', 'random',
+]);
+
+function stackHasMultipleLinearAsks(stack) {
+  const blocks = stack?.blocks || [];
+  const rootType = blocks[0]?.type;
+  if (!AI_HANDLER_ROOT_TYPES.has(rootType)) return false;
+  if (blocks.some((b) => b?.type === 'scenario' || b?.type === 'step' || b?.type === 'run')) return false;
+  return blocks.filter((b) => b?.type === 'ask').length >= 2;
+}
+
+function hasVisibleAiOutput(blocks) {
+  return (blocks || []).some((b) => AI_VISIBLE_OUTPUT_TYPES.has(b?.type));
+}
+
+function ensureVisibleTailAfterFinalAsk(tail, stackId) {
+  const out = [...(tail || [])];
+  if (hasVisibleAiOutput(out)) return out;
+
+  const completion = {
+    id: `${stackId}_auto_done_msg`,
+    type: 'message',
+    props: { text: 'Спасибо! Данные сохранены.' },
+  };
+  const firstStop = out.findIndex((b) => b?.type === 'stop');
+  if (firstStop >= 0) out.splice(firstStop, 0, completion);
+  else out.push(completion, { id: `${stackId}_auto_done_stop`, type: 'stop', props: {} });
+  return out;
+}
+
+function scenarioNameForLinearAskStack(stack, index) {
+  const root = stack?.blocks?.[0];
+  const raw = root?.props?.label || root?.props?.cmd || root?.type || `форма_${index}`;
+  return normalizeCicadaIdentifier(`${raw}_форма`, `форма_${index}`);
+}
+
+function convertLinearAskStackToScenario(stack, index) {
+  const blocks = stack?.blocks || [];
+  const firstAskIndex = blocks.findIndex((b) => b?.type === 'ask');
+  if (firstAskIndex <= 0) return [stack];
+
+  const scenarioName = scenarioNameForLinearAskStack(stack, index);
+  const rootBlocks = [
+    ...blocks.slice(0, firstAskIndex),
+    { id: `${stack.id}_auto_run`, type: 'run', props: { name: scenarioName } },
+  ];
+
+  const askIndexes = [];
+  blocks.forEach((block, blockIdx) => {
+    if (block?.type === 'ask') askIndexes.push(blockIdx);
+  });
+
+  const scenarioBlocks = [
+    { id: `${stack.id}_auto_scenario`, type: 'scenario', props: { name: scenarioName } },
+  ];
+
+  askIndexes.forEach((askIndex, askOrdinal) => {
+    const askBlock = blocks[askIndex];
+    const isLastAsk = askOrdinal === askIndexes.length - 1;
+    const nextAskIndex = askIndexes[askOrdinal + 1];
+    const between = blocks.slice(askIndex + 1, isLastAsk ? blocks.length : nextAskIndex);
+    const stepName = normalizeCicadaIdentifier(
+      askBlock?.props?.varname || `шаг_${askOrdinal + 1}`,
+      `шаг_${askOrdinal + 1}`,
+    );
+
+    scenarioBlocks.push({
+      id: `${askBlock.id || stack.id}_auto_step_${askOrdinal + 1}`,
+      type: 'step',
+      props: { name: stepName },
+    });
+    scenarioBlocks.push(askBlock);
+    scenarioBlocks.push(...(isLastAsk ? ensureVisibleTailAfterFinalAsk(between, stack.id) : between));
+  });
+
+  return [
+    { ...stack, blocks: rootBlocks },
+    {
+      id: `${stack.id}_auto_scenario_stack`,
+      x: Number.isFinite(Number(stack.x)) ? Number(stack.x) + 360 : 40 + ((index + 1) % 5) * 360,
+      y: Number.isFinite(Number(stack.y)) ? Number(stack.y) + 320 : 360 + Math.floor((index + 1) / 5) * 320,
+      blocks: scenarioBlocks,
+    },
+  ];
+}
+
+function convertLinearAskStacksToScenarios(stacks) {
+  const out = [];
+  for (let i = 0; i < (stacks || []).length; i += 1) {
+    const stack = stacks[i];
+    if (stackHasMultipleLinearAsks(stack)) out.push(...convertLinearAskStackToScenario(stack, i));
+    else out.push(stack);
+  }
+  return out;
+}
 /**
  * Нормализует JSON-стеки от AI до generateDSL/парсера.
  * @param {Array} stacks
@@ -623,7 +723,7 @@ function ensureAiBotStack(stacks) {
  */
 export function normalizeAiGeneratedStacks(stacks) {
   if (!Array.isArray(stacks)) return stacks;
-  const shapedStacks = ensureAiBotStack(stacks).map((stack, stackIdx) => {
+  const shapedStacks = convertLinearAskStacksToScenarios(ensureAiBotStack(stacks).map((stack, stackIdx) => {
     const blocks = (stack?.blocks || []).map((block, blockIdx) => {
       const type = normalizeAiBlockType(block?.type);
       return {
@@ -640,7 +740,7 @@ export function normalizeAiGeneratedStacks(stacks) {
       y: Number.isFinite(Number(stack?.y)) ? Number(stack.y) : 40 + Math.floor(stackIdx / 5) * 320,
       blocks: removeStopImmediatelyAfterRun(blocks),
     };
-  });
+  }));
   const { scenarioNameMap, stepNameMap, varNameMap } = buildAiNameMaps(shapedStacks);
 
   return shapedStacks.map((stack) => ({
