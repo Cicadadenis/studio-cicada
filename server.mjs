@@ -2591,20 +2591,27 @@ app.post('/api/admin/update-apply', (req, res) => {
   if (buildRes.error || buildRes.status !== 0) {
     return res.status(500).json({ error: `npm run build: ${buildRes.error?.message || buildRes.stderr || 'ошибка'}` });
   }
-  const pm2Res = spawnSync('pm2', ['restart', 'server.mjs', '--name', 'cicada-server'], { cwd: root, encoding: 'utf8', timeout: 60_000 });
-  if (pm2Res.error || pm2Res.status !== 0) {
-    if (autoStashed) spawnSync('git', ['-C', root, 'stash', 'pop'], { encoding: 'utf8', timeout: 60_000 });
-    return res.status(500).json({ error: `pm2 restart: ${pm2Res.error?.message || pm2Res.stderr || 'ошибка'}` });
-  }
-
   if (autoStashed) {
     const popRes = spawnSync('git', ['-C', root, 'stash', 'pop'], { encoding: 'utf8', timeout: 60_000 });
     if (popRes.error || popRes.status !== 0) {
       return res.status(500).json({ error: `git stash pop: ${popRes.error?.message || popRes.stderr || 'разрешите конфликт и примените stash вручную'}` });
     }
   }
+
   recordAdminAction(req, 'system_update_apply', null, { ok: true });
-  return res.json({ success: true, message: 'Обновление установлено и сервер перезапущен.' });
+  res.json({ success: true, message: 'Обновление установлено. Перезапуск сервера запущен.' });
+
+  setTimeout(() => {
+    try {
+      const pm2Res = spawnSync('pm2', ['restart', 'server.mjs', '--name', 'cicada-server'], { cwd: root, encoding: 'utf8', timeout: 60_000 });
+      if (pm2Res.error || pm2Res.status !== 0) {
+        pushSystemError('admin:update-apply:pm2', new Error(pm2Res.error?.message || pm2Res.stderr || 'pm2 restart failed'));
+      }
+    } catch (err) {
+      pushSystemError('admin:update-apply:pm2', err);
+    }
+  }, 150);
+  return;
 });
 
 function buildCicadaSourceArchiveBuffer() {
