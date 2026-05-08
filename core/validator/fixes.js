@@ -345,6 +345,45 @@ function stripMergeConflictMarkers(text) {
     .join('\n');
 }
 
+
+function parseUnsupportedBlockCommentPayload(raw) {
+  const text = String(raw || '').trim();
+  if (!text) return {};
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function emitSupportedDslForBlockComment(type, props) {
+  const p = props || {};
+  if (type === 'run') {
+    const name = firstString(p.name, p.scenario, p.target, p.label);
+    return name ? `запустить ${normalizeCicadaIdentifier(name, 'scenario')}` : null;
+  }
+  if (type === 'use') {
+    const blockname = firstString(p.blockname, p.name, p.target, p.label);
+    return blockname ? `использовать ${normalizeCicadaIdentifier(blockname, 'block')}` : null;
+  }
+  return null;
+}
+
+function repairUnsupportedDslBlockComments(text) {
+  return String(text || '').replace(
+    /#\s*блок\s+([A-Za-zА-Яа-яЁё0-9_\-]+)\s*:\s*(\{[^\n]*?\})/g,
+    (match, rawType, rawProps) => {
+      const type = normalizeAiBlockType(rawType);
+      const replacement = emitSupportedDslForBlockComment(
+        type,
+        parseUnsupportedBlockCommentPayload(rawProps),
+      );
+      return replacement || match;
+    },
+  );
+}
+
 const COLLAPSED_CICADA_STARTERS = [
   'inline-кнопки:', 'при геолокации:', 'при документе:', 'при голосовом:',
   'при контакте:', 'при стикере:', 'при старте:', 'при фото:',
@@ -428,7 +467,7 @@ function nextCicadaScope(statement, scope) {
  * @returns {string}
  */
 export function repairCollapsedCicadaCode(code) {
-  const src = stripMergeConflictMarkers(code)
+  const src = repairUnsupportedDslBlockComments(stripMergeConflictMarkers(code))
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
     .trim();
@@ -507,6 +546,12 @@ const AI_BLOCK_TYPE_ALIASES = new Map([
   ['question', 'ask'], ['input', 'ask'], ['set', 'remember'], ['variable', 'remember'],
   ['if', 'condition'], ['elseif', 'condition'], ['end', 'stop'], ['finish', 'stop'],
   ['on_start', 'start'], ['on_command', 'command'], ['on_callback', 'callback'],
+  ['on_document', 'document_received'],
+  ['on_photo', 'photo_received'],
+  ['on_voice', 'voice_received'],
+  ['on_sticker', 'sticker_received'],
+  ['on_location', 'location_received'],
+  ['on_contact', 'contact_received'],
   ['call', 'run'], ['scenario_call', 'run'], ['transition', 'goto'], ['delay', 'pause'],
 ]);
 
@@ -543,6 +588,7 @@ function normalizeAiBlockProps(type, props) {
   if (type === 'run' || type === 'scenario') p.name = firstString(p.name, p.scenario, p.label, p.target) ?? p.name;
   if (type === 'goto') p.label = firstString(p.label, p.target, p.step, p.name) ?? p.label;
   if (type === 'condition') p.cond = firstString(p.cond, p.condition, p.expr, p.expression, p.if) ?? p.cond;
+  if (type === 'log') p.message = firstString(p.message, p.text, p.event, p.content) ?? p.message;
   if (type === 'remember') {
     p.varname = firstString(p.varname, p.variable, p.var, p.name) ?? p.varname;
     if (p.value == null && p.text != null) p.value = p.text;

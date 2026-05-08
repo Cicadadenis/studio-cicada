@@ -150,6 +150,24 @@ const BUILTIN_DSL_CASES = [
     ),
   },
   {
+    name: 'схлопнутый Drop Box DSL с # блок run восстанавливается',
+    dsl: repairCollapsedCicadaCode(
+      'бот "YOUR_BOT_TOKEN"при старте:    ответ "Добро пожаловать в Drop Box! 📦"    ' +
+        'кнопки "📁 Загрузить файл" "📝 О нас"    стоппри нажатии "📁 Загрузить файл":    ' +
+        '# блок run: {"name":"загрузка"}при нажатии "📝 О нас":    ответ "Мы — Drop Box! 📦"    ' +
+        'стопсценарий загрузка:    шаг шаг_загрузки:    спросить "Отправьте файл для загрузки:" → файл    ' +
+        'сохранить "f_{chat_id}" = {файл}    ответ "Файл загружен! 📦"    стоп',
+    ),
+  },
+  {
+    name: 'намеренная ошибка: # блок comment не считается рабочим DSL',
+    expectParserFail: true,
+    dsl: `бот "TEST"
+при старте:
+    # блок run: {"name":"загрузка"}
+`,
+  },
+  {
     name: 'готовый DSL с хвостом conflict marker очищается',
     dsl: repairCollapsedCicadaCode(`бот "TEST"
 при старте:
@@ -199,7 +217,15 @@ function listCsvFiles(dir) {
     .map((f) => path.join(abs, f));
 }
 
+function unsupportedBlockCommentLines(dsl) {
+  return String(dsl || '')
+    .split('\n')
+    .map((line, idx) => ({ line: idx + 1, text: line.trim() }))
+    .filter((row) => /^#\s*блок\s+/.test(row.text));
+}
+
 function runOne(name, dsl, meta = {}) {
+  const unsupportedComments = unsupportedBlockCommentLines(dsl);
   const schemaDiags = lintDSLSchema(dsl);
   const schemaErrs = schemaDiags.filter((d) => d.severity === 'error');
   const py = lintCicadaWithPython({ code: dsl, cwd: REPO_ROOT });
@@ -208,6 +234,9 @@ function runOne(name, dsl, meta = {}) {
     expectParserFail: !!meta.expectParserFail,
     schemaOk: schemaErrs.length === 0,
     schemaHints: schemaErrs.slice(0, 3).map((d) => formatDSLDiagnostic(d)),
+    rejectUnsupportedComments: !!meta.rejectUnsupportedComments,
+    unsupportedComments: unsupportedComments.slice(0, 5),
+    unsupportedCommentsOk: !meta.rejectUnsupportedComments || unsupportedComments.length === 0,
     py,
   };
 }
@@ -222,6 +251,7 @@ function parserHasErrors(r) {
 /** Итог по кейсу: ok / unexpectedFail / negativeOk / negativeMiss (парсер проглотил баг) */
 function classifyRow(r) {
   if (!r.schemaOk) return 'schemaFail';
+  if (!r.unsupportedCommentsOk) return 'unsupportedCommentFail';
   if (r.expectParserFail) {
     if (parserHasErrors(r)) return 'negativeOk';
     return 'negativeMiss';
@@ -248,7 +278,7 @@ function printReport(rows, asJson) {
     const py = r.py;
     const kind = classifyRow(r);
     let mark = '✓';
-    if (kind === 'schemaFail' || kind === 'unexpectedFail') mark = '✗';
+    if (kind === 'schemaFail' || kind === 'unsupportedCommentFail' || kind === 'unexpectedFail') mark = '✗';
     if (kind === 'negativeOk') mark = '✓';
     if (kind === 'negativeMiss') mark = '✗';
 
@@ -256,6 +286,9 @@ function printReport(rows, asJson) {
     console.log('\n──', r.name, mark + suffix, '──');
     if (!r.schemaOk) {
       console.log('  schema:', r.schemaHints.join(' | ') || 'errors');
+    }
+    if (!r.unsupportedCommentsOk) {
+      console.log('  unsupported:', r.unsupportedComments.map((x) => `стр.${x.line} ${x.text}`).join(' | '));
     }
     if (!py.available) {
       console.log('  parser: недоступен —', py.error || '?');
@@ -324,6 +357,7 @@ async function main() {
       cases.push({
         name: `regression:${f}`,
         dsl: generateDSL(stacks),
+        rejectUnsupportedComments: true,
       });
     }
   } else if (dirIdx !== -1 && args[dirIdx + 1]) {
@@ -341,6 +375,7 @@ async function main() {
       cases.push({
         name: path.basename(fp),
         dsl: generateDSL(stacks),
+        rejectUnsupportedComments: true,
       });
     }
   } else {
@@ -353,7 +388,7 @@ async function main() {
   }
 
   const rows = cases.map((c) =>
-    runOne(c.name, c.dsl, { expectParserFail: c.expectParserFail }),
+    runOne(c.name, c.dsl, { expectParserFail: c.expectParserFail, rejectUnsupportedComments: c.rejectUnsupportedComments }),
   );
   printReport(rows, wantJson);
 
