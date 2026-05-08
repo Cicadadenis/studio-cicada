@@ -349,3 +349,58 @@ export async function sendPasswordResetEmail(to, name, token) {
     }),
   });
 }
+
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// ─── Шаблон: ответ поддержки ────────────────────────────────────────────────
+export async function sendSupportReplyEmail(to, name, subject, replyText) {
+  const body = `
+    ${greeting(name)}
+
+    <p style="margin:0 0 22px;font-size:15px;color:rgba(255,255,255,0.58);line-height:1.75;">
+      Команда <strong style="color:#3ecf8e;">Cicada Studio Support</strong> ответила на ваше обращение.
+    </p>
+
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 22px;">
+      <tr>
+        <td style="padding:14px 16px;background:rgba(62,207,142,0.07);border:1px solid rgba(62,207,142,0.2);border-radius:12px;">
+          <div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:rgba(62,207,142,0.75);font-weight:700;margin-bottom:8px;">Тема обращения</div>
+          <div style="font-size:15px;color:#fff;font-weight:700;line-height:1.5;">${escapeHtml(subject)}</div>
+        </td>
+      </tr>
+    </table>
+
+    <div style="padding:18px 18px;background:rgba(255,255,255,0.035);border:1px solid rgba(255,255,255,0.08);border-radius:14px;margin-bottom:24px;">
+      <div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:rgba(255,255,255,0.28);font-weight:700;margin-bottom:12px;">Ответ support</div>
+      <div style="font-size:15px;color:rgba(255,255,255,0.74);line-height:1.75;white-space:pre-wrap;">${escapeHtml(replyText)}</div>
+    </div>
+
+    ${divider()}
+
+    <p style="margin:0;font-size:12px;color:rgba(255,255,255,0.38);line-height:1.7;text-align:center;">
+      Если вопрос остался — создайте новое обращение в профиле Cicada Studio.
+    </p>
+  `;
+
+  await getResend().emails.send({
+    from: process.env.SUPPORT_EMAIL_FROM || `Cicada Studio Support <support@cicada-studio.online>`,
+    to,
+    subject: `Ответ поддержки Cicada Studio: ${subject}`,
+    html: baseLayout({
+      accentColor: '#3ecf8e',
+      accentColor2: '#0ea5e9',
+      icon: '🛟',
+      title: 'Ответ поддержки',
+      bodyHtml: body,
+      footerText: 'Письмо отправлено службой поддержки Cicada Studio.<br>Отвечать на него не нужно — создайте новое обращение в профиле.',
+    }),
+  });
+}
