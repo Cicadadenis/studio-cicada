@@ -76,6 +76,18 @@ async function loadProjectFromCloud(projectId) {
 
 const API_URL = import.meta.env.VITE_API_URL ?? "/api";
 
+function resolveApiAssetUrl(url) {
+  if (!url || typeof url !== 'string') return '';
+  if (/^(?:data:|blob:|https?:\/\/)/i.test(url)) return url;
+  if (!url.startsWith('/api/')) return url;
+  try {
+    const apiBase = new URL(API_URL, window.location.origin);
+    return new URL(url, apiBase.origin).toString();
+  } catch {
+    return url;
+  }
+}
+
 // ─── JWT helpers ────────────────────────────────────────────────────────────
 const JWT_KEY = 'cicada_jwt';
 function getStoredJwt() { return localStorage.getItem(JWT_KEY) || null; }
@@ -7893,8 +7905,9 @@ function SaveToCloudButton({ onSaveToCloud }) {
 }
 
 function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onLoadProject, onDeleteProject, onSaveToCloud, showToast, isMobile, onOpenInstructions }) {
-  const builderUiForToast = React.useContext(BuilderUiContext)?.t;
-  const uiLang = user.uiLanguage || 'ru';
+  const builderUiContext = React.useContext(BuilderUiContext);
+  const builderUiForToast = builderUiContext?.t;
+  const uiLang = (builderUiContext?.lang || user.uiLanguage || 'ru').toLowerCase();
   const I18N = {
     ru: {
       newProject: 'Новый проект',
@@ -7907,6 +7920,31 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onLoadP
       upgradePro: 'Перейти на Pro →',
       logoutConfirm: 'Выйти из аккаунта?',
       editProfile: '✎ Редактировать профиль',
+      avatar: 'Аватар',
+      uploadPhoto: '📷 Загрузить фото',
+      saving: '⏳ Сохраняем…',
+      remove: 'Удалить',
+      maxFile: '@ Максимум 15MB',
+      language: 'Язык',
+      interfaceLanguage: 'Язык интерфейса',
+      profileData: 'Данные профиля',
+      name: 'Имя',
+      yourName: 'Ваше имя',
+      codeSent: '📧 Код отправлен',
+      sentTo: 'на',
+      checking: '⏳ Проверяем...',
+      enterCodeFor: 'Введите его для подтверждения смены на',
+      confirm: 'Подтвердить',
+      cancel: 'Отмена',
+      saved: '✓ Сохранено!',
+      sendingCode: '⏳ Отправляем код...',
+      saveChanges: '✦ Сохранить изменения',
+      security: 'Безопасность',
+      changePassword: 'Изменить пароль',
+      passwordChangedAgo: 'Последнее изменение 2 мес. назад',
+      twoFactor: 'Двухфакторная аутентификация',
+      enabled: 'Включена',
+      disabled: 'Выключена',
     },
     en: {
       newProject: 'New project',
@@ -7919,6 +7957,31 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onLoadP
       upgradePro: 'Upgrade to Pro →',
       logoutConfirm: 'Sign out?',
       editProfile: '✎ Edit profile',
+      avatar: 'Avatar',
+      uploadPhoto: '📷 Upload photo',
+      saving: '⏳ Saving…',
+      remove: 'Remove',
+      maxFile: '@ Maximum 15MB',
+      language: 'Language',
+      interfaceLanguage: 'Interface language',
+      profileData: 'Profile data',
+      name: 'Name',
+      yourName: 'Your name',
+      codeSent: '📧 Code sent',
+      sentTo: 'to',
+      checking: '⏳ Checking...',
+      enterCodeFor: 'Enter it to confirm changing to',
+      confirm: 'Confirm',
+      cancel: 'Cancel',
+      saved: '✓ Saved!',
+      sendingCode: '⏳ Sending code...',
+      saveChanges: '✦ Save changes',
+      security: 'Security',
+      changePassword: 'Change password',
+      passwordChangedAgo: 'Last changed 2 months ago',
+      twoFactor: 'Two-factor authentication',
+      enabled: 'Enabled',
+      disabled: 'Disabled',
     },
     uk: {
       newProject: 'Новий проєкт',
@@ -7931,6 +7994,31 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onLoadP
       upgradePro: 'Перейти на Pro →',
       logoutConfirm: 'Вийти з акаунту?',
       editProfile: '✎ Редагувати профіль',
+      avatar: 'Аватар',
+      uploadPhoto: '📷 Завантажити фото',
+      saving: '⏳ Зберігаємо…',
+      remove: 'Видалити',
+      maxFile: '@ Максимум 15MB',
+      language: 'Мова',
+      interfaceLanguage: 'Мова інтерфейсу',
+      profileData: 'Дані профілю',
+      name: 'Ім’я',
+      yourName: 'Ваше ім’я',
+      codeSent: '📧 Код надіслано',
+      sentTo: 'на',
+      checking: '⏳ Перевіряємо...',
+      enterCodeFor: 'Введіть його, щоб підтвердити зміну на',
+      confirm: 'Підтвердити',
+      cancel: 'Скасувати',
+      saved: '✓ Збережено!',
+      sendingCode: '⏳ Надсилаємо код...',
+      saveChanges: '✦ Зберегти зміни',
+      security: 'Безпека',
+      changePassword: 'Змінити пароль',
+      passwordChangedAgo: 'Остання зміна 2 міс. тому',
+      twoFactor: 'Двофакторна автентифікація',
+      enabled: 'Увімкнена',
+      disabled: 'Вимкнена',
     },
   };
   const t = I18N[uiLang] || I18N.ru;
@@ -8117,9 +8205,10 @@ ${supportMessage.trim()}`;
     day: 'numeric', month: 'long', year: 'numeric',
   });
 
-  const avatarLetter = user.name[0].toUpperCase();
+  const avatarLetter = (user.name || user.email || '?')[0].toUpperCase();
   const avatarColors = ['#ffd700,#ff8c00', '#3ecf8e,#0ea5e9', '#a78bfa,#ec4899', '#f87171,#fb923c'];
-  const avatarColor = avatarColors[user.name.charCodeAt(0) % avatarColors.length];
+  const avatarColor = avatarColors[(user.name || user.email || '?').charCodeAt(0) % avatarColors.length];
+  const avatarSrc = resolveApiAssetUrl(newAvatar);
 
   const inputBase = (field) => ({
     width: '100%', padding: '12px 16px', fontSize: 13,
@@ -8258,7 +8347,7 @@ ${supportMessage.trim()}`;
             {/* Bottom user info */}
             <div style={{ padding: '10px 12px', borderTop: '1px solid rgba(249,115,22,0.18)', display: 'flex', alignItems: 'center', gap: 8, position: 'relative' }}>
               <div style={{ width: 34, height: 34, borderRadius: 9, overflow: 'hidden', background: `linear-gradient(135deg,${avatarColor})`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 800, color: 'rgba(0,0,0,0.7)', fontFamily: 'Syne,system-ui', flexShrink: 0, boxShadow: '0 0 0 1.5px rgba(249,115,22,0.5)' }}>
-                {newAvatar ? <img src={newAvatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : avatarLetter}
+                {newAvatar ? <img src={avatarSrc} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : avatarLetter}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: '#fff', fontFamily: 'Syne,system-ui', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.name}</div>
@@ -8284,7 +8373,7 @@ ${supportMessage.trim()}`;
             <div style={{ position:'absolute', bottom:0, left:0, right:0, height:1, background:'linear-gradient(90deg,transparent,rgba(249,115,22,0.5),rgba(99,40,240,0.4),transparent)', pointerEvents:'none' }} />
             <div style={{ position: 'relative', width: isMobile ? 46 : 56, height: isMobile ? 46 : 56, flexShrink: 0 }}>
               <div style={{ width: '100%', height: '100%', borderRadius: 16, overflow: 'hidden', background: `linear-gradient(135deg,${avatarColor})`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: isMobile ? 20 : 24, fontWeight: 800, color: 'rgba(0,0,0,0.7)', fontFamily: 'Syne,system-ui', animation: 'pmAvatarPulse 3s ease-in-out infinite' }}>
-                {newAvatar ? <img src={newAvatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : avatarLetter}
+                {newAvatar ? <img src={avatarSrc} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : avatarLetter}
               </div>
             </div>
 
@@ -8397,7 +8486,7 @@ ${supportMessage.trim()}`;
                           { icon: '✉️', label: 'Email', value: user.email, editable: true },
                           { icon: '📅', label: 'Дата регистрации', value: user.createdAt ? formatDate(user.createdAt) : '—', editable: false },
                           { icon: '🕐', label: 'Последний вход', value: 'Сегодня', editable: false },
-                          { icon: '🌐', label: 'Язык', value: ({ ru:'Русский', en:'English', uk:'Українська' }[user.uiLanguage || 'ru'] || 'Русский'), editable: true },
+                          { icon: '🌐', label: t.language, value: ({ ru:'Русский', en:'English', uk:'Українська' }[user.uiLanguage || 'ru'] || 'Русский'), editable: true },
                         ].map(({ icon, label, value, editable }) => (
                           <div
                             key={label}
@@ -8419,15 +8508,15 @@ ${supportMessage.trim()}`;
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                     {/* Avatar */}
                     <section>
-                      <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', fontFamily: 'Syne,system-ui', marginBottom: 10 }}>Аватар</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', fontFamily: 'Syne,system-ui', marginBottom: 10 }}>{t.avatar}</div>
                       <div style={{ padding: '16px', borderRadius: 12, background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.08)' }}>
                         <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', marginBottom: 14 }}>
                           <div style={{ width: 72, height: 72, borderRadius: 18, overflow: 'hidden', background: `linear-gradient(135deg,${avatarColor})`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 30, fontWeight: 800, color: 'rgba(0,0,0,0.7)', fontFamily: 'Syne,system-ui', flexShrink: 0 }}>
-                            {newAvatar ? <img src={newAvatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : avatarLetter}
+                            {newAvatar ? <img src={avatarSrc} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : avatarLetter}
                           </div>
                           <div style={{ paddingTop: 4 }}>
                             <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', marginBottom: 3 }}>JPG/PNG/WebP</div>
-                            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)' }}>@ Максимум 15MB</div>
+                            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)' }}>{t.maxFile}</div>
                           </div>
                         </div>
                         <button
@@ -8437,7 +8526,7 @@ ${supportMessage.trim()}`;
                           style={{ width: '100%', padding: '9px 14px', borderRadius: 8, border: '1px solid rgba(99,102,241,0.35)', background: 'rgba(99,102,241,0.1)', color: '#818cf8', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'Syne,system-ui', marginBottom: newAvatar ? 8 : 0, transition: 'all .15s', opacity: avatarSaving ? 0.6 : 1 }}
                           onMouseEnter={e => { e.currentTarget.style.background = 'rgba(99,102,241,0.2)'; e.currentTarget.style.borderColor = 'rgba(99,102,241,0.6)'; }}
                           onMouseLeave={e => { e.currentTarget.style.background = 'rgba(99,102,241,0.1)'; e.currentTarget.style.borderColor = 'rgba(99,102,241,0.35)'; }}
-                        >{avatarSaving ? '⏳ Сохраняем…' : '📷 Загрузить фото'}</button>
+                        >{avatarSaving ? t.saving : t.uploadPhoto}</button>
                         {newAvatar && (
                           <button
                             type="button"
@@ -8455,18 +8544,18 @@ ${supportMessage.trim()}`;
                             style={{ width: '100%', padding: '9px 14px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.03)', color: 'rgba(255,255,255,0.5)', fontSize: 12, cursor: 'pointer', fontFamily: 'Syne,system-ui', transition: 'all .15s', opacity: avatarSaving ? 0.6 : 1 }}
                             onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.07)'; }}
                             onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
-                          >Удалить</button>
+                          >{t.remove}</button>
                         )}
                       </div>
                     </section>
 
                     {/* Security */}
                     <section>
-                      <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', fontFamily: 'Syne,system-ui', marginBottom: 10 }}>Безопасность</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', fontFamily: 'Syne,system-ui', marginBottom: 10 }}>{t.security}</div>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                         {[
-                          { icon: '🔒', title: 'Изменить пароль', sub: 'Последнее изменение 2 мес. назад' },
-                          { icon: '🛡', title: 'Двухфакторная аутентификация', sub: user.twofaEnabled ? null : 'Выключена', subGreen: user.twofaEnabled ? 'Включена' : null },
+                          { icon: '🔒', title: t.changePassword, sub: t.passwordChangedAgo },
+                          { icon: '🛡', title: t.twoFactor, sub: user.twofaEnabled ? null : t.disabled, subGreen: user.twofaEnabled ? t.enabled : null },
                         ].map(({ icon, title, sub, subGreen }) => (
                           <div
                             key={title}
@@ -8515,8 +8604,8 @@ ${supportMessage.trim()}`;
                       </div>
                       {confirmDelete === project.id ? (
                         <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                          <button onClick={() => { onDeleteProject(project.id); setConfirmDelete(null); }} style={{ padding: '7px 12px', fontSize: 11, fontWeight: 700, background: '#f87171', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer' }}>Удалить</button>
-                          <button onClick={() => setConfirmDelete(null)} style={{ padding: '7px 12px', fontSize: 11, background: 'rgba(255,255,255,0.07)', color: 'rgba(255,255,255,0.5)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, cursor: 'pointer' }}>Отмена</button>
+                          <button onClick={() => { onDeleteProject(project.id); setConfirmDelete(null); }} style={{ padding: '7px 12px', fontSize: 11, fontWeight: 700, background: '#f87171', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer' }}>{t.remove}</button>
+                          <button onClick={() => setConfirmDelete(null)} style={{ padding: '7px 12px', fontSize: 11, background: 'rgba(255,255,255,0.07)', color: 'rgba(255,255,255,0.5)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, cursor: 'pointer' }}>{t.cancel}</button>
                         </div>
                       ) : (
                         <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
@@ -8562,13 +8651,13 @@ ${supportMessage.trim()}`;
                 <div style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.09)', borderRadius: 14, padding: 16 }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,215,0,0.7)', textTransform: 'uppercase', letterSpacing: '0.1em', fontFamily: 'Syne, system-ui', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
                     <div style={{ flex: 1, height: 1, background: 'rgba(255,215,0,0.15)' }} />
-                    Данные профиля
+                    {t.profileData}
                     <div style={{ flex: 1, height: 1, background: 'rgba(255,215,0,0.15)' }} />
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                     <div>
-                      <label style={{ display: 'block', fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8, fontFamily: 'Syne, system-ui' }}>Имя</label>
-                      <input type="text" value={newName} onChange={e => setNewName(e.target.value)} onFocus={() => setFocusedField('sname')} onBlur={() => setFocusedField(null)} style={inputBase('sname')} placeholder="Ваше имя" />
+                      <label style={{ display: 'block', fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8, fontFamily: 'Syne, system-ui' }}>{t.name}</label>
+                      <input type="text" value={newName} onChange={e => setNewName(e.target.value)} onFocus={() => setFocusedField('sname')} onBlur={() => setFocusedField(null)} style={inputBase('sname')} placeholder={t.yourName} />
                     </div>
                     <div>
                       <label style={{ display: 'block', fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8, fontFamily: 'Syne, system-ui' }}>Email</label>
@@ -8577,14 +8666,14 @@ ${supportMessage.trim()}`;
                       ) : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                           <div style={{ padding: '12px 14px', borderRadius: 12, background: 'rgba(62,207,142,0.07)', border: '1px solid rgba(62,207,142,0.2)', fontSize: 12, color: 'rgba(255,255,255,0.6)', lineHeight: 1.6 }}>
-                            <span style={{ color: '#3ecf8e', fontWeight: 600 }}>📧 Код отправлен</span> на <span style={{ color: 'var(--text)', fontFamily: 'var(--mono)' }}>{user.email}</span><br />
-                            Введите его для подтверждения смены на <span style={{ color: '#ffd700', fontFamily: 'var(--mono)' }}>{emailChangePending}</span>
+                            <span style={{ color: '#3ecf8e', fontWeight: 600 }}>{t.codeSent}</span> {t.sentTo} <span style={{ color: 'var(--text)', fontFamily: 'var(--mono)' }}>{user.email}</span><br />
+                            {t.enterCodeFor} <span style={{ color: '#ffd700', fontFamily: 'var(--mono)' }}>{emailChangePending}</span>
                           </div>
                           <input type="text" value={emailChangeCode} onChange={e => { setEmailChangeCode(e.target.value.replace(/\D/g, '').slice(0, 6)); setEmailChangeError(''); }} onFocus={() => setFocusedField('ecode')} onBlur={() => setFocusedField(null)} style={{ ...inputBase('ecode'), textAlign: 'center', fontSize: 22, letterSpacing: '0.35em', fontWeight: 700, border: `1.5px solid ${emailChangeError ? '#f87171' : focusedField === 'ecode' ? '#3ecf8e' : 'rgba(255,255,255,0.12)'}` }} placeholder="000000" maxLength={6} autoFocus />
                           {emailChangeError && <div style={{ fontSize: 11, color: '#f87171', textAlign: 'center' }}>⚠ {emailChangeError}</div>}
                           <div style={{ display: 'flex', gap: 8 }}>
-                            <button onClick={handleConfirmEmailCode} disabled={emailChangeStep === 'confirming' || emailChangeCode.length < 4} style={{ flex: 1, padding: '11px 0', fontSize: 13, fontWeight: 700, fontFamily: 'Syne, system-ui', background: emailChangeCode.length >= 4 ? 'linear-gradient(135deg,#3ecf8e,#0ea5e9)' : 'rgba(255,255,255,0.06)', color: emailChangeCode.length >= 4 ? '#111' : 'rgba(255,255,255,0.3)', border: 'none', borderRadius: 12, cursor: emailChangeCode.length >= 4 ? 'pointer' : 'not-allowed' }}>{emailChangeStep === 'confirming' ? '⏳ Проверяем...' : '✓ Подтвердить'}</button>
-                            <button onClick={handleCancelEmailChange} style={{ padding: '11px 16px', fontSize: 12, fontWeight: 600, fontFamily: 'Syne, system-ui', background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.4)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12, cursor: 'pointer' }}>Отмена</button>
+                            <button onClick={handleConfirmEmailCode} disabled={emailChangeStep === 'confirming' || emailChangeCode.length < 4} style={{ flex: 1, padding: '11px 0', fontSize: 13, fontWeight: 700, fontFamily: 'Syne, system-ui', background: emailChangeCode.length >= 4 ? 'linear-gradient(135deg,#3ecf8e,#0ea5e9)' : 'rgba(255,255,255,0.06)', color: emailChangeCode.length >= 4 ? '#111' : 'rgba(255,255,255,0.3)', border: 'none', borderRadius: 12, cursor: emailChangeCode.length >= 4 ? 'pointer' : 'not-allowed' }}>{emailChangeStep === 'confirming' ? t.checking : `✓ ${t.confirm}`}</button>
+                            <button onClick={handleCancelEmailChange} style={{ padding: '11px 16px', fontSize: 12, fontWeight: 600, fontFamily: 'Syne, system-ui', background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.4)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12, cursor: 'pointer' }}>{t.cancel}</button>
                           </div>
                         </div>
                       )}
@@ -8592,7 +8681,7 @@ ${supportMessage.trim()}`;
                     </div>
 
                     <div>
-                      <label style={{ display: 'block', fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8, fontFamily: 'Syne, system-ui' }}>Язык интерфейса</label>
+                      <label style={{ display: 'block', fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8, fontFamily: 'Syne, system-ui' }}>{t.interfaceLanguage}</label>
                       <select value={user.uiLanguage || 'ru'} onChange={async (e) => {
                         const uiLanguage = e.target.value;
                         try {
@@ -8610,7 +8699,7 @@ ${supportMessage.trim()}`;
 
                     {(emailChangeStep === 'idle' || emailChangeStep === 'sending') && (
                       <button onClick={handleUpdateProfile} disabled={emailChangeStep === 'sending'} style={{ padding: '12px 20px', fontSize: 13, fontWeight: 700, fontFamily: 'Syne, system-ui', background: saveSuccess ? 'linear-gradient(135deg,#3ecf8e,#0ea5e9)' : emailChangeStep === 'sending' ? 'rgba(255,255,255,0.08)' : 'linear-gradient(135deg,#ffd700,#ffaa00)', color: emailChangeStep === 'sending' ? 'rgba(255,255,255,0.4)' : '#111', border: 'none', borderRadius: 12, cursor: emailChangeStep === 'sending' ? 'not-allowed' : 'pointer', transition: 'all 0.3s ease' }}>
-                        {saveSuccess ? '✓ Сохранено!' : emailChangeStep === 'sending' ? '⏳ Отправляем код...' : '✦ Сохранить изменения'}
+                        {saveSuccess ? t.saved : emailChangeStep === 'sending' ? t.sendingCode : t.saveChanges}
                       </button>
                     )}
                   </div>
