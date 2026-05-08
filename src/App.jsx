@@ -6692,19 +6692,30 @@ function useParticleCanvas(canvasRef) {
       raf = requestAnimationFrame(frame);
     }
     let ro = null;
+    let useWindowResizeFallback = false;
     const onResize = () => resize();
-    if (typeof ResizeObserver !== 'undefined') {
-      ro = new ResizeObserver(resize);
-      ro.observe(canvas);
-    } else {
+
+    try {
+      if (typeof ResizeObserver === 'function') {
+        ro = new ResizeObserver(resize);
+        ro.observe(canvas);
+      } else {
+        useWindowResizeFallback = true;
+      }
+    } catch {
+      useWindowResizeFallback = true;
+    }
+
+    if (useWindowResizeFallback) {
       window.addEventListener('resize', onResize);
     }
+
     resize();
     raf = requestAnimationFrame(frame);
     return () => {
       cancelAnimationFrame(raf);
       if (ro) ro.disconnect();
-      else window.removeEventListener('resize', onResize);
+      if (useWindowResizeFallback) window.removeEventListener('resize', onResize);
     };
   }, [canvasRef]);
 }
