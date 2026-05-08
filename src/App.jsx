@@ -6691,11 +6691,21 @@ function useParticleCanvas(canvasRef) {
       }
       raf = requestAnimationFrame(frame);
     }
-    const ro = new ResizeObserver(resize);
-    ro.observe(canvas);
+    let ro = null;
+    const onResize = () => resize();
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(resize);
+      ro.observe(canvas);
+    } else {
+      window.addEventListener('resize', onResize);
+    }
     resize();
     raf = requestAnimationFrame(frame);
-    return () => { cancelAnimationFrame(raf); ro.disconnect(); };
+    return () => {
+      cancelAnimationFrame(raf);
+      if (ro) ro.disconnect();
+      else window.removeEventListener('resize', onResize);
+    };
   }, [canvasRef]);
 }
 
