@@ -7275,7 +7275,12 @@ function AuthModal({ tab, setTab, onClose, onLogin, onRegister, canClose = true 
     try {
       await onLogin(email, null, '', null, true);
     } catch (err) {
-      setServerError(translateServerError(err.message));
+      if (err?.twofaRequired) {
+        setTotpRequired(true);
+        setServerError('Введите код из Google Authenticator');
+      } else {
+        setServerError(translateServerError(err.message));
+      }
     } finally {
       setLoading(false);
     }
@@ -7400,6 +7405,7 @@ function AuthModal({ tab, setTab, onClose, onLogin, onRegister, canClose = true 
         .am-tg-btn:hover { background:rgba(33,150,243,0.14) !important; border-color:rgba(33,150,243,0.45) !important; }
       `}</style>
 
+      {totpRequired && (<div style={{ position:'absolute', top: 16, left:'50%', transform:'translateX(-50%)', zIndex: 20, padding:'10px 14px', borderRadius:12, border:'1px solid rgba(251,191,36,0.45)', background:'rgba(251,191,36,0.12)', color:'#fde68a', fontSize:12, fontWeight:700, fontFamily:'Syne,system-ui' }}>🔐 Включена 2FA — подтвердите вход кодом из Authenticator</div>)}
       {/* Particle canvas background */}
       <canvas ref={canvasRef} style={{ position:'absolute', inset:0, width:'100%', height:'100%', pointerEvents:'none' }} />
       {/* Ambient depth orbs (layered over canvas) */}
@@ -8230,6 +8236,8 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onLoadP
   const [supportSending, setSupportSending] = useState(false);
   const [passkeySaving, setPasskeySaving] = useState(false);
   const [passkeyCount, setPasskeyCount] = useState(null);
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
+  const [actionNotice, setActionNotice] = useState(null);
 
   const handleUpdateProfile = async () => {
     const nameChanged = newName !== user.name;
@@ -8377,7 +8385,7 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onLoadP
       if (!res.ok || data.error) throw new Error(data.error || 'Не удалось отправить обращение');
       setSupportSubject('');
       setSupportMessage('');
-      showToast('✅ Обращение отправлено в поддержку', 'success');
+      setActionNotice({ title: 'Готово', message: 'Обращение успешно отправлено в поддержку. Мы ответим вам в ближайшее время.' });
     } catch (e) {
       showToast('Ошибка: ' + (e.message || 'не удалось отправить обращение'), 'error');
     } finally {
@@ -8390,7 +8398,7 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onLoadP
     try {
       const passkeys = await registerProfilePasskey();
       setPasskeyCount(passkeys.length);
-      showToast('✅ Passkey добавлен для входа', 'success');
+      setActionNotice({ title: 'Успешно', message: 'Отпечаток/Passkey успешно добавлен и готов для входа.' });
     } catch (e) {
       showToast('Ошибка passkey: ' + (e.message || 'не удалось добавить passkey'), 'error');
     } finally {
@@ -8551,7 +8559,7 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onLoadP
                 <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'var(--mono)' }}>{user.email}</div>
               </div>
               <button
-                onClick={() => { if (confirm(t.logoutConfirm)) { onLogout(); onClose(); } }}
+                onClick={() => setLogoutConfirmOpen(true)}
                 title={t.logoutAccount.replace(/^↩\s*/, '')}
                 style={{ width: 28, height: 28, borderRadius: 7, background: 'rgba(248,113,113,0.06)', border: '1px solid rgba(248,113,113,0.2)', color: 'rgba(248,113,113,0.6)', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'all .15s' }}
                 onMouseEnter={e => { e.currentTarget.style.background = 'rgba(248,113,113,0.18)'; e.currentTarget.style.borderColor = '#f87171'; e.currentTarget.style.color = '#f87171'; }}
@@ -8943,7 +8951,7 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onLoadP
                     {t.dangerZone}
                     <div style={{ flex: 1, height: 1, background: 'rgba(248,113,113,0.15)' }} />
                   </div>
-                  <button onClick={() => { if (confirm(t.logoutConfirm)) { onLogout(); onClose(); } }} style={{ width: '100%', padding: '9px 16px', fontSize: 12, fontWeight: 700, fontFamily: 'Syne, system-ui', background: 'rgba(248,113,113,0.06)', color: '#f87171', border: '1px solid rgba(248,113,113,0.18)', borderRadius: 10, cursor: 'pointer', transition: 'all 0.2s' }} onMouseEnter={e => { e.currentTarget.style.background = 'rgba(248,113,113,0.15)'; }} onMouseLeave={e => { e.currentTarget.style.background = 'rgba(248,113,113,0.06)'; }}>{t.logoutAccount}</button>
+                  <button onClick={() => setLogoutConfirmOpen(true)} style={{ width: '100%', padding: '9px 16px', fontSize: 12, fontWeight: 700, fontFamily: 'Syne, system-ui', background: 'rgba(248,113,113,0.06)', color: '#f87171', border: '1px solid rgba(248,113,113,0.18)', borderRadius: 10, cursor: 'pointer', transition: 'all 0.2s' }} onMouseEnter={e => { e.currentTarget.style.background = 'rgba(248,113,113,0.15)'; }} onMouseLeave={e => { e.currentTarget.style.background = 'rgba(248,113,113,0.06)'; }}>{t.logoutAccount}</button>
                 </div>
               </div>
             )}
@@ -9004,6 +9012,30 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onLoadP
                 </div>
               </div>
             )}
+            {actionNotice && (
+              <div style={{ position: 'fixed', inset: 0, zIndex: 10650, background: 'rgba(2,1,12,0.65)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+                <div style={{ width: 'min(460px,92vw)', borderRadius: 16, border: '1px solid rgba(62,207,142,0.35)', background: 'linear-gradient(160deg, rgba(16,32,28,0.95), rgba(8,20,38,0.95))', boxShadow: '0 30px 100px rgba(0,0,0,0.6)' }}>
+                  <div style={{ padding: '18px 20px', borderBottom: '1px solid rgba(255,255,255,0.08)', fontFamily: 'Syne,system-ui', fontWeight: 700, color: '#3ecf8e' }}>✅ {actionNotice.title}</div>
+                  <div style={{ padding: 20, color: 'rgba(255,255,255,0.85)', fontSize: 14, lineHeight: 1.5 }}>{actionNotice.message}</div>
+                  <div style={{ padding: '0 20px 20px', display: 'flex', justifyContent: 'flex-end' }}>
+                    <button onClick={() => setActionNotice(null)} style={{ padding: '10px 16px', borderRadius: 10, border: 'none', background: 'linear-gradient(135deg,#3ecf8e,#0ea5e9)', color: '#111', fontWeight: 700, cursor: 'pointer' }}>OK</button>
+                  </div>
+                </div>
+              </div>
+            )}
+            {logoutConfirmOpen && (
+              <div style={{ position: 'fixed', inset: 0, zIndex: 10640, background: 'rgba(2,1,12,0.65)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+                <div style={{ width: 'min(460px,92vw)', borderRadius: 16, border: '1px solid rgba(248,113,113,0.35)', background: 'linear-gradient(160deg, rgba(32,12,18,0.95), rgba(18,10,28,0.95))', boxShadow: '0 30px 100px rgba(0,0,0,0.6)' }}>
+                  <div style={{ padding: '18px 20px', borderBottom: '1px solid rgba(255,255,255,0.08)', fontFamily: 'Syne,system-ui', fontWeight: 700, color: '#fda4af' }}>↩ {t.logoutConfirm}</div>
+                  <div style={{ padding: 20, color: 'rgba(255,255,255,0.85)', fontSize: 14 }}>Подтвердите выход из аккаунта.</div>
+                  <div style={{ padding: '0 20px 20px', display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+                    <button onClick={() => setLogoutConfirmOpen(false)} style={{ padding: '10px 14px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.2)', background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.9)', cursor: 'pointer' }}>{t.cancel}</button>
+                    <button onClick={() => { setLogoutConfirmOpen(false); onLogout(); onClose(); }} style={{ padding: '10px 14px', borderRadius: 10, border: 'none', background: 'linear-gradient(135deg,#fb7185,#ef4444)', color: '#fff', fontWeight: 700, cursor: 'pointer' }}>{t.logoutAccount}</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
           </div>
         </div>
       </div>
