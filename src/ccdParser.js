@@ -1,4 +1,4 @@
-const ROOT_KEYWORDS = ['версия', 'бот', 'команды:', 'глобально', 'блок', 'до каждого:', 'после каждого:', 'при старте:', 'старт:', 'при команде', 'команда', 'при нажатии', 'при фото:', 'при документе:', 'при геолокации:', 'сценарий', 'иначе', 'иначе:'];
+const ROOT_KEYWORDS = ['версия', 'бот', 'команды:', 'глобально', 'блок', 'до каждого:', 'после каждого:', 'при старте:', 'старт:', 'при команде', 'команда', 'при нажатии', 'при фото:', 'при документе:', 'при геолокации:', 'сценарий'];
 
 export const FLOW_PORTS = {
   version:     { input: null,           output: null           },
@@ -11,7 +11,7 @@ export const FLOW_PORTS = {
   command:     { input: null,           output: 'flow'         },
   on_location: { input: null,           output: 'flow'         },
   callback:    { input: null,           output: 'flow'         },
-  else:        { input: null,           output: 'flow'         },
+  else:        { input: 'flow',         output: 'flow'         },
   scenario:    { input: null,           output: 'scenario_flow'},
   step:        { input: 'scenario_flow',output: 'scenario_flow'},
   message:     { input: 'flow',         output: 'flow'         },
@@ -118,7 +118,7 @@ function parseNode(line) {
   if (t.startsWith('при нажатии ') && t.endsWith(':')) return { type: 'callback', props: { label: stripQuotes(t.match(/"([^"]+)"/)?.[1] || '') }, root: true };
   if (t.startsWith('сценарий ') && t.endsWith(':')) return { type: 'scenario', props: { name: t.replace('сценарий', '').replace(':', '').trim(), text: 'Начинаем!' }, root: true };
   if (t.startsWith('шаг ') && t.endsWith(':')) return { type: 'step', props: { name: t.replace('шаг', '').replace(':', '').trim(), text: '...' }, root: false };
-  if (t === 'иначе:' || t === 'иначе') return { type: 'else', props: {}, root: true };
+  if (t === 'иначе:' || t === 'иначе') return { type: 'else', props: {}, root: false };
 
   // ── Медиа-обработчики (root) ────────────────────────────────────────────
   if (t === 'при фото:') return { type: 'on_photo', props: {}, root: true };
@@ -177,7 +177,7 @@ function parseNode(line) {
   // ── База данных ─────────────────────────────────────────────────────────
   // получить от USER_ID "key" → var  (должно быть ПЕРЕД обычным получить)
   {
-    const guMatch = t.match(/^получить от (\S+) "([^"]+)"\s*[→\-]>\s*(\S+)/);
+    const guMatch = t.match(/^получить от (\S+) "([^"]+)"\s*(?:→|->)\s*(\S+)/);
     if (guMatch) return { type: 'get_user', props: { user_id: guMatch[1], key: guMatch[2], varname: guMatch[3] }, root: false };
   }
   if (t.startsWith('получить ')) {
@@ -206,13 +206,13 @@ function parseNode(line) {
 
   // все_ключи → var
   {
-    const akMatch = t.match(/^все_ключи\s*[→\-]>\s*(\S+)/);
+    const akMatch = t.match(/^все_ключи\s*(?:→|->)\s*(\S+)/);
     if (akMatch) return { type: 'all_keys', props: { varname: akMatch[1] }, root: false };
   }
 
   // вызвать "блок" → var
   {
-    const cbMatch = t.match(/^вызвать "([^"]+)"\s*[→\-]>\s*(\S+)/);
+    const cbMatch = t.match(/^вызвать "([^"]+)"\s*(?:→|->)\s*(\S+)/);
     if (cbMatch) return { type: 'call_block', props: { blockname: cbMatch[1], varname: cbMatch[2] }, root: false };
   }
 
@@ -275,12 +275,12 @@ function parseNode(line) {
   // ── Telegram расширения ─────────────────────────────────────────────────
   // проверить подписку @channel → var
   {
-    const csMatch = t.match(/^проверить подписку @(\S+)\s*[→\-]>\s*(\S+)/);
+    const csMatch = t.match(/^проверить подписку @(\S+)\s*(?:→|->)\s*(\S+)/);
     if (csMatch) return { type: 'check_sub', props: { channel: '@' + csMatch[1], varname: csMatch[2] }, root: false };
   }
   // роль @channel USER_ID → var  (или: роль @channel USER_ID -> var)
   {
-    const mrMatch = t.match(/^роль @(\S+)\s+(\S+)\s*[→\-]>\s*(\S+)/);
+    const mrMatch = t.match(/^роль @(\S+)\s+(\S+)\s*(?:→|->)\s*(\S+)/);
     if (mrMatch) return { type: 'member_role', props: { channel: '@' + mrMatch[1], user_id: mrMatch[2], varname: mrMatch[3] }, root: false };
   }
   // переслать сообщение TARGET
@@ -291,11 +291,11 @@ function parseNode(line) {
 
   // ── Интеграции ядра ─────────────────────────────────────────────────────
   {
-    const dbMatch = t.match(/^запрос_бд "([^"]+)"\s*[→\-]>\s*(\S+)/);
+    const dbMatch = t.match(/^запрос_бд "([^"]+)"\s*(?:→|->)\s*(\S+)/);
     if (dbMatch) return { type: 'database', props: { query: dbMatch[1], varname: dbMatch[2] }, root: false };
   }
   {
-    const clsMatch = t.match(/^классифицировать\s+\[([^\]]+)\]\s*[→\-]>\s*(\S+)/);
+    const clsMatch = t.match(/^классифицировать\s+\[([^\]]+)\]\s*(?:→|->)\s*(\S+)/);
     if (clsMatch) {
       const intents = splitTopLevelListItems(clsMatch[1]).map((x) => stripQuotes(x)).join('\n');
       return { type: 'classify', props: { intents, varname: clsMatch[2] }, root: false };
@@ -318,32 +318,32 @@ function parseNode(line) {
   }
   // http_get "url" → var
   {
-    const hgMatch = t.match(/^http_get "([^"]+)"\s*[→\-]>\s*(\S+)/);
+    const hgMatch = t.match(/^http_get "([^"]+)"\s*(?:→|->)\s*(\S+)/);
     if (hgMatch) return { type: 'http', props: { method: 'GET', url: hgMatch[1], varname: hgMatch[2] }, root: false };
   }
   // http_delete "url" → var
   {
-    const hdMatch = t.match(/^http_delete "([^"]+)"\s*[→\-]>\s*(\S+)/);
+    const hdMatch = t.match(/^http_delete "([^"]+)"\s*(?:→|->)\s*(\S+)/);
     if (hdMatch) return { type: 'http', props: { method: 'DELETE', url: hdMatch[1], varname: hdMatch[2] }, root: false };
   }
   // http_post/patch/put "url" json VAR → result
   {
-    const hjMatch = t.match(/^http_(post|patch|put) "([^"]+)" json (\S+)\s*[→\-]>\s*(\S+)/);
+    const hjMatch = t.match(/^http_(post|patch|put) "([^"]+)" json (\S+)\s*(?:→|->)\s*(\S+)/);
     if (hjMatch) return { type: 'http', props: { method: hjMatch[1].toUpperCase(), url: hjMatch[2], jsonVar: hjMatch[3], varname: hjMatch[4], isJson: 'true' }, root: false };
   }
   // http_post/patch/put "url" с "data" → var
   {
-    const hbMatch = t.match(/^http_(post|patch|put) "([^"]+)" с "([^"]+)"\s*[→\-]>\s*(\S+)/);
+    const hbMatch = t.match(/^http_(post|patch|put) "([^"]+)" с "([^"]+)"\s*(?:→|->)\s*(\S+)/);
     if (hbMatch) return { type: 'http', props: { method: hbMatch[1].toUpperCase(), url: hbMatch[2], body: hbMatch[3], varname: hbMatch[4] }, root: false };
   }
   // http_post/patch/put "url" → var  (без тела)
   {
-    const hsMatch = t.match(/^http_(post|patch|put) "([^"]+)"\s*[→\-]>\s*(\S+)/);
+    const hsMatch = t.match(/^http_(post|patch|put) "([^"]+)"\s*(?:→|->)\s*(\S+)/);
     if (hsMatch) return { type: 'http', props: { method: hsMatch[1].toUpperCase(), url: hsMatch[2], varname: hsMatch[3] }, root: false };
   }
   // устаревший синтаксис: запрос METHOD "url" → var
   {
-    const oldHMatch = t.match(/^запрос (GET|POST|PATCH|PUT|DELETE) "([^"]+)"\s*[→\-]>\s*(\S+)/);
+    const oldHMatch = t.match(/^запрос (GET|POST|PATCH|PUT|DELETE) "([^"]+)"\s*(?:→|->)\s*(\S+)/);
     if (oldHMatch) return { type: 'http', props: { method: oldHMatch[1], url: oldHMatch[2], varname: oldHMatch[3] }, root: false };
   }
 
@@ -508,8 +508,9 @@ export function parseCCDToFlow(text, blockTypes, defaultProps) {
     const parsed = parseNode(raw);
     if (!parsed) continue;
 
-    // FIX 2: else всегда root
-    const isRoot = parsed.root || parsed.type === 'else' || ROOT_KEYWORDS.some(k => trimmed.startsWith(k));
+    // `иначе` относится к ближайшему `если` на том же уровне отступа;
+    // корневым блоком оно быть не должно, иначе импорт DSL разрывает ветку условия.
+    const isRoot = parsed.root || ROOT_KEYWORDS.some(k => trimmed.startsWith(k));
 
     if (isRoot) {
       currentRoot += 1;
