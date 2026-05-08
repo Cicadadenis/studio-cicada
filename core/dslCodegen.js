@@ -254,6 +254,15 @@ function emitMenu(p) {
   return [head, ...items.map((it) => `# меню пункт: ${q(it)}`)].join('\n');
 }
 
+function quoteListLines(value) {
+  return String(value || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => q(line))
+    .join(', ');
+}
+
 function unsupportedComment(type, props) {
   return `# блок ${type}: ${JSON.stringify(props || {})}`;
 }
@@ -302,16 +311,22 @@ export function emitBlockText(block) {
     case 'on_text':
       return 'при тексте:';
     case 'on_photo':
+    case 'photo_received':
       return 'при фото:';
     case 'on_voice':
+    case 'voice_received':
       return 'при голосовом:';
     case 'on_document':
+    case 'document_received':
       return 'при документе:';
     case 'on_sticker':
+    case 'sticker_received':
       return 'при стикере:';
     case 'on_location':
+    case 'location_received':
       return 'при геолокации:';
     case 'on_contact':
+    case 'contact_received':
       return 'при контакте:';
     case 'scenario':
       return `сценарий ${p.name}:`;
@@ -329,6 +344,8 @@ export function emitBlockText(block) {
       return p.md ? `ответ_md ${q(p.text || '')}` : `ответ ${q(p.text || '')}`;
     case 'use':
       return `использовать ${p.blockname || ''}`;
+    case 'run':
+      return `запустить ${p.name || p.scenario || p.target || ''}`;
     case 'ask':
       return `спросить ${q(p.question || '')} ${ARROW} ${p.varname || 'var'}`;
     case 'remember':
@@ -348,6 +365,7 @@ export function emitBlockText(block) {
     case 'call_block':
       return `вызвать ${q(p.blockname || '')} ${ARROW} ${p.varname || 'var'}`;
     case 'delay':
+    case 'pause':
       return `подождать ${p.seconds || '1'}с`;
     case 'typing':
       return `печатает ${p.seconds || '1'}с`;
@@ -403,10 +421,11 @@ export function emitBlockText(block) {
       return emitHttp(p);
     case 'loop': {
       const mode = p.mode || 'count';
-      if (mode === 'while') return `пока ${p.cond}:`;
-      if (mode === 'foreach') return `для каждого ${p.var} в ${p.collection}:`;
-      if (mode === 'timeout') return `таймаут ${p.seconds || 5} секунд:`;
-      return `повторять ${p.count || 3} раз:`;
+      const placeholder = '    # тело цикла';
+      if (mode === 'while') return [`пока ${p.cond || 'истина'}:`, placeholder].join('\n');
+      if (mode === 'foreach') return [`для каждого ${p.var || 'item'} в ${p.collection || 'список'}:`, placeholder].join('\n');
+      if (mode === 'timeout') return [`таймаут ${p.seconds || 5} секунд:`, placeholder].join('\n');
+      return [`повторять ${p.count || 3} раз:`, placeholder].join('\n');
     }
     case 'notify':
       return `уведомить ${p.target}: ${q(p.text || '')}`;
@@ -421,14 +440,20 @@ export function emitBlockText(block) {
       return `роль @${stripAt(p.channel)} ${p.user_id} ${ARROW} ${p.varname || 'var'}`;
     case 'forward_msg':
       return `переслать сообщение ${p.target}`;
-    case 'role':
-      return unsupportedComment(type, p);
-    case 'payment':
-    case 'analytics':
-    case 'classify':
     case 'database':
+      return `запрос_бд ${q(p.query || 'select 1')} ${ARROW} ${p.varname || 'rows'}`;
+    case 'payment':
+      return `оплата ${p.provider || 'stripe'} ${p.amount || '1'} ${p.currency || 'USD'} ${q(p.title || 'Платёж')}`;
+    case 'analytics':
+      return `событие ${q(p.event || 'event')}`;
+    case 'classify': {
+      const intents = quoteListLines(p.intents) || q('намерение');
+      return `классифицировать [${intents}] ${ARROW} ${p.varname || 'намерение'}`;
+    }
     case 'sticker':
-      return unsupportedComment(type, p);
+      return `стикер ${q(p.file_id || '')}`;
+    case 'role':
+      return `получить ${q(p.key || 'role_{chat_id}')} ${ARROW} ${p.varname || 'роль'}`;
     default:
       return unsupportedComment(type, p);
   }
@@ -437,48 +462,67 @@ export function emitBlockText(block) {
 /**
  * Линейные стеки с «если … иначе» — добавляем отступы тел как в parser.py.
  */
-function stackToDSLWithBranches(blocks) {
+function stackToDSLStructured(blocks) {
   const out = [];
+  const rootType = blocks[0]?.type || '';
   let i = 0;
-  let isFirst = true;
-  const n = blocks.length;
+  let insideScenarioStep = false;
 
-  while (i < n) {
-    const b = blocks[i];
-    if (b.type === 'condition') {
-      const linePrefix = isFirst ? '' : '    ';
-      for (const line of emitBlockText(b).split('\n')) {
-        out.push(linePrefix + line);
-      }
+  const baseIndentFor = (block, index) => {
+    if (index === 0) return 0;
+    if (rootType !== 'scenario') return 1;
+    if (block?.type === 'step') return 1;
+    return insideScenarioStep ? 2 : 1;
+  };
+
+  const isBoundary = (block) => {
+    if (!block) return true;
+    if (block.type === 'condition' || block.type === 'else') return true;
+    if (rootType === 'scenario' && block.type === 'step') return true;
+    return false;
+  };
+
+  const pushBlock = (block, indent) => {
+    for (const line of emitBlockText(block).split('\n')) {
+      out.push(`${'    '.repeat(indent)}${line}`);
+    }
+  };
+
+  while (i < blocks.length) {
+    const block = blocks[i];
+    const baseIndent = baseIndentFor(block, i);
+
+    if (block.type === 'step') insideScenarioStep = true;
+
+    if (block.type === 'condition') {
+      pushBlock(block, baseIndent);
       i += 1;
-      const inner = linePrefix + '    ';
-      while (i < n && blocks[i].type !== 'else') {
-        for (const line of emitBlockText(blocks[i]).split('\n')) {
-          out.push(inner + line);
-        }
+      while (i < blocks.length && blocks[i].type !== 'else' && !isBoundary(blocks[i])) {
+        pushBlock(blocks[i], baseIndent + 1);
         i += 1;
       }
-      if (i < n && blocks[i].type === 'else') {
-        for (const line of emitBlockText(blocks[i]).split('\n')) {
-          out.push(linePrefix + line);
-        }
+      if (i < blocks.length && blocks[i].type === 'else') {
+        pushBlock(blocks[i], baseIndent);
         i += 1;
-        while (i < n && blocks[i].type !== 'condition') {
-          for (const line of emitBlockText(blocks[i]).split('\n')) {
-            out.push(inner + line);
-          }
+        while (i < blocks.length && !isBoundary(blocks[i])) {
+          pushBlock(blocks[i], baseIndent + 1);
           i += 1;
         }
       }
-      isFirst = false;
       continue;
     }
 
-    const indent = isFirst ? '' : '    ';
-    for (const line of emitBlockText(b).split('\n')) {
-      out.push(indent + line);
+    if (block.type === 'else') {
+      pushBlock(block, baseIndent);
+      i += 1;
+      while (i < blocks.length && !isBoundary(blocks[i])) {
+        pushBlock(blocks[i], baseIndent + 1);
+        i += 1;
+      }
+      continue;
     }
-    isFirst = false;
+
+    pushBlock(block, baseIndent);
     i += 1;
   }
   return out.join('\n');
@@ -487,18 +531,7 @@ function stackToDSLWithBranches(blocks) {
 export function stackToDSL(stack) {
   const blocks = stack?.blocks || [];
   if (!blocks.length) return '';
-  if (blocks.some((b) => b.type === 'condition')) {
-    return stackToDSLWithBranches(blocks);
-  }
-  const out = [];
-  for (let i = 0; i < blocks.length; i += 1) {
-    const indent = i === 0 ? '' : '    ';
-    const text = emitBlockText(blocks[i]);
-    for (const line of text.split('\n')) {
-      out.push(indent + line);
-    }
-  }
-  return out.join('\n');
+  return stackToDSLStructured(blocks);
 }
 
 export function generateDSLFromStacks(stacks) {

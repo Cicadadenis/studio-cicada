@@ -507,6 +507,12 @@ const AI_BLOCK_TYPE_ALIASES = new Map([
   ['question', 'ask'], ['input', 'ask'], ['set', 'remember'], ['variable', 'remember'],
   ['if', 'condition'], ['elseif', 'condition'], ['end', 'stop'], ['finish', 'stop'],
   ['on_start', 'start'], ['on_command', 'command'], ['on_callback', 'callback'],
+  ['on_document', 'document_received'],
+  ['on_photo', 'photo_received'],
+  ['on_voice', 'voice_received'],
+  ['on_sticker', 'sticker_received'],
+  ['on_location', 'location_received'],
+  ['on_contact', 'contact_received'],
   ['call', 'run'], ['scenario_call', 'run'], ['transition', 'goto'], ['delay', 'pause'],
 ]);
 
@@ -543,6 +549,7 @@ function normalizeAiBlockProps(type, props) {
   if (type === 'run' || type === 'scenario') p.name = firstString(p.name, p.scenario, p.label, p.target) ?? p.name;
   if (type === 'goto') p.label = firstString(p.label, p.target, p.step, p.name) ?? p.label;
   if (type === 'condition') p.cond = firstString(p.cond, p.condition, p.expr, p.expression, p.if) ?? p.cond;
+  if (type === 'log') p.message = firstString(p.message, p.text, p.event, p.content) ?? p.message;
   if (type === 'remember') {
     p.varname = firstString(p.varname, p.variable, p.var, p.name) ?? p.varname;
     if (p.value == null && p.text != null) p.value = p.text;

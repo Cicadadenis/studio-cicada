@@ -150,7 +150,11 @@ function parserHasError(py) {
 const rows = readPaletteTypes().map(({ type, label }) => {
   const dsl = generateDSL(caseFor(type));
   const py = lintCicadaWithPython({ code: dsl, cwd: REPO_ROOT });
-  return { type, label, dsl, py, ok: !parserHasError(py) };
+  const unsupportedComments = dsl
+    .split('\n')
+    .map((line, idx) => ({ line: idx + 1, text: line.trim() }))
+    .filter((row) => /^#\s*блок\s+/.test(row.text));
+  return { type, label, dsl, py, unsupportedComments, ok: !parserHasError(py) && unsupportedComments.length === 0 };
 });
 
 for (const row of rows) {
@@ -158,6 +162,9 @@ for (const row of rows) {
   console.log(`${mark} ${row.type} — ${row.label}`);
   if (!row.ok) {
     const diag = row.py.diagnostics?.[0];
+    if (row.unsupportedComments?.length) {
+      console.log(`  unsupported: ${row.unsupportedComments.map((x) => `стр.${x.line} ${x.text}`).join(' | ')}`);
+    }
     console.log(`  ${diag?.line ? `стр.${diag.line} ` : ''}${diag?.message || row.py.error || 'parser error'}`);
     console.log(row.dsl.split('\n').map((line, idx) => `${String(idx + 1).padStart(3, ' ')}: ${line}`).join('\n'));
   }

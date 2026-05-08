@@ -2485,6 +2485,7 @@ const AI_ALLOWED_BLOCK_TYPES = new Set([
   'message', 'buttons', 'inline', 'ask', 'remember', 'save', 'get',
   'condition', 'else', 'run', 'step', 'goto', 'stop', 'http', 'pause',
   'typing', 'log',
+  'photo', 'video', 'audio', 'document', 'sticker', 'contact', 'location',
   'on_photo', 'on_voice', 'on_document', 'on_sticker', 'on_location', 'on_contact',
   'photo_received', 'voice_received', 'document_received', 'sticker_received',
   'location_received', 'contact_received',
@@ -2705,6 +2706,14 @@ const FEW_SHOT_ASSISTANT_3 = `[{"id":"s0","x":40,"y":40,"blocks":[{"id":"b0","ty
 
 const AI_GENERATE_PUBLIC_ERROR = 'Cicada AI перегружен попробуйте позже';
 
+
+function findUnsupportedDslBlockComments(dsl) {
+  return String(dsl || '')
+    .split('\n')
+    .map((line, idx) => ({ line: idx + 1, text: line.trim() }))
+    .filter((row) => /^#\s*блок\s+/.test(row.text));
+}
+
 function sendAiGenerateError(res, authUser, status, adminMessage) {
   return res.status(status).json({
     error: authUser?.role === 'admin' ? adminMessage : AI_GENERATE_PUBLIC_ERROR,
@@ -2785,6 +2794,21 @@ app.post('/api/ai-generate', requireUserAuth, async (req, res) => {
     }
 
     const dslFromStacks = generateDSL(stacks);
+    const unsupportedDslComments = findUnsupportedDslBlockComments(dslFromStacks);
+    if (unsupportedDslComments.length > 0) {
+      const hint = unsupportedDslComments
+        .slice(0, 5)
+        .map((row) => `стр.${row.line}: ${row.text}`)
+        .join(' | ');
+      console.error('[AI] Unsupported DSL comments after generation:', hint);
+      return sendAiGenerateError(
+        res,
+        authUser,
+        422,
+        `AI вернул блоки, которые генератор не смог превратить в рабочий DSL. ${hint}`,
+      );
+    }
+
     const schemaDiags = lintDSLSchema(dslFromStacks);
     const schemaErrs = schemaDiags.filter((d) => d.severity === 'error');
     if (schemaErrs.length > 0) {
