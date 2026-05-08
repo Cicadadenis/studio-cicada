@@ -206,7 +206,7 @@ Cicada DSL — декларативный язык с русскоязычным
 
 ## 🖥️ Admin-панель
 
-Доступ по **`/satana`** (canonical URL; есть редирект со старых имён вида `.html`). Для входа используется `ADMIN_KEY` в `.env`.
+Доступ по **`/satana`** (canonical URL; есть редирект со старых имён вида `.html`). Первый вход выполняется через `ADMIN_KEY` в `.env` (и `ADMIN_TOTP_SECRET`, если он задан). После входа в разделе **🔒 Безопасность** можно зарегистрировать WebAuthn / Passkey и затем входить кнопкой «ВОЙТИ PASSKEY» без ввода ключа.
 
 ### Разделы
 
@@ -223,6 +223,7 @@ Cicada DSL — декларативный язык с русскоязычным
 
 **🔒 Безопасность** — статус конфигурации:
 - Длина и статус `ADMIN_KEY`
+- Количество зарегистрированных admin Passkeys и WebAuthn RP ID
 - JWT настройки
 - Политика cookie
 - Активные сессии
@@ -352,8 +353,14 @@ TG_BOT_TOKEN=...
 JWT_SECRET=...                    # в production не короче 32 символов
 JWT_EXPIRES_SEC=604800
 ADMIN_KEY=...                   # не короче 16 символов
+# ADMIN_TOTP_SECRET=...          # опциональный TOTP-фактор для входа по ADMIN_KEY
 # ADMIN_JWT_EXPIRES_SEC=28800
+# ADMIN_WEBAUTHN_RP_ID=example.com
+# ADMIN_WEBAUTHN_ORIGIN=https://example.com
+# ADMIN_PASSKEYS_FILE=/secure/path/admin-passkeys.json
 ```
+
+Passkeys работают только в secure context: `https://` на домене или `http://localhost` для разработки. `ADMIN_WEBAUTHN_RP_ID` должен совпадать с доменом, где открыта админка (например, `example.com`), а `ADMIN_WEBAUTHN_ORIGIN` — с origin страницы (например, `https://example.com`). Если переменные не заданы, сервер вычисляет их из `APP_URL`/заголовков запроса.
 
 ### Google OAuth (опционально)
 ```env
