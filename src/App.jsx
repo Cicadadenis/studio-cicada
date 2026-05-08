@@ -6805,15 +6805,37 @@ function getTelegramWidgetAuthCallbackUrl() {
 
 function TelegramLoginButton({ onLogin }) {
   const widgetRef = React.useRef(null);
+  const [hovered, setHovered] = React.useState(false);
 
   React.useEffect(() => {
     if (!TG_BOT_NAME || !widgetRef.current) return;
-    widgetRef.current.innerHTML = '';
+    const widgetHost = widgetRef.current;
+    widgetHost.innerHTML = '';
+
+    const stretchTelegramIframe = () => {
+      const iframe = widgetHost.querySelector('iframe');
+      if (!iframe) return;
+      Object.assign(iframe.style, {
+        position: 'absolute',
+        inset: '0',
+        width: '100%',
+        height: '100%',
+        minWidth: '100%',
+        minHeight: '100%',
+        border: '0',
+        opacity: '0.001',
+        zIndex: '2',
+        cursor: 'pointer',
+      });
+      iframe.setAttribute('title', 'Telegram');
+      iframe.setAttribute('aria-label', 'Telegram');
+    };
+
     const authUrl = getTelegramWidgetAuthCallbackUrl();
     const script = document.createElement('script');
     script.src = 'https://telegram.org/js/telegram-widget.js?22';
     script.setAttribute('data-telegram-login', TG_BOT_NAME);
-    script.setAttribute('data-size', 'medium');
+    script.setAttribute('data-size', 'large');
     script.setAttribute('data-radius', '12');
     script.setAttribute('data-request-access', 'write');
     script.async = true;
@@ -6831,8 +6853,14 @@ function TelegramLoginButton({ onLogin }) {
         }
       };
     }
-    widgetRef.current.appendChild(script);
+
+    const observer = new MutationObserver(stretchTelegramIframe);
+    observer.observe(widgetHost, { childList: true, subtree: true });
+    widgetHost.appendChild(script);
+    stretchTelegramIframe();
+
     return () => {
+      observer.disconnect();
       delete window.onTelegramAuth;
     };
   }, [onLogin]);
@@ -6841,19 +6869,40 @@ function TelegramLoginButton({ onLogin }) {
 
   return (
     <div
-      ref={widgetRef}
+      role="button"
+      tabIndex={0}
+      aria-label="Telegram"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       style={{
         flex: 1,
+        position: 'relative',
         minHeight: 48,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
+        gap: 9,
+        padding: '13px 14px',
         borderRadius: 12,
-        background: 'rgba(33,150,243,0.07)',
-        border: '1px solid rgba(33,150,243,0.25)',
+        border: hovered ? '1px solid rgba(255,255,255,0.2)' : '1px solid rgba(255,255,255,0.1)',
+        background: hovered ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.04)',
+        color: 'rgba(255,255,255,0.85)',
+        fontFamily: 'inherit',
+        fontWeight: 500,
+        fontSize: 14,
+        cursor: 'pointer',
+        transition: 'all .2s',
+        transform: hovered ? 'translateY(-1px)' : 'none',
         overflow: 'hidden',
       }}
-    />
+    >
+      <div ref={widgetRef} style={{ position: 'absolute', inset: 0, zIndex: 2 }} />
+      <svg width="18" height="18" viewBox="0 0 240 240" aria-hidden="true" style={{ position: 'relative', zIndex: 1, flex: '0 0 auto' }}>
+        <circle cx="120" cy="120" r="120" fill="#2AABEE" />
+        <path fill="#fff" d="M178.9 72.1c2.1-8.8-3.2-12.3-9.5-9.8L52.1 107.5c-8 3.1-7.9 7.6-1.4 9.6l30.1 9.4 69.7-44c3.3-2 6.3-.9 3.8 1.3l-56.5 51 0 0-2.2 32.1c3.2 0 4.7-1.5 6.5-3.2l15.7-15.3 32.7 24.2c6 3.3 10.4 1.6 11.9-5.6l21.5-101.2Z" />
+      </svg>
+      <span style={{ position: 'relative', zIndex: 1 }}>Telegram</span>
+    </div>
   );
 }
 
