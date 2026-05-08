@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "kind": "wrappedChain",
   "wrap": {
     "version": "1.0",
@@ -11,7 +11,9 @@
       "indent": 0,
       "block": {
         "type": "condition",
-        "props": {}
+        "props": {
+          "cond": "текст == \"да\""
+        }
       }
     },
     {
