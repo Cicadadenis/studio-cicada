@@ -98,7 +98,11 @@ const FEATURE_BY_TYPE = {
 
 function q(v) {
   const s = String(v ?? '');
-  return `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+  return `"${s
+    .replace(/\\/g, '\\\\')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/"/g, '\\"')}"`;
 }
 
 function stripAt(ch) {
@@ -232,7 +236,7 @@ function emitSwitch(p) {
   const out = [`переключить ${v}:`];
   for (const c of cases) {
     out.push(`    ${q(c)}:`);
-    out.push(`        стоп`);
+    out.push(`        ответ ${q('...')}`);
   }
   return out.join('\n');
 }
@@ -776,10 +780,54 @@ export function validateFlow(flow) {
   return { errors, warnings };
 }
 
-export function renderIr(flow) {
-  const nodes = (flow?.nodes || []).map(normalizeFlowNode);
-  const edges = flow?.edges || [];
-  return JSON.stringify({ nodes, edges }, null, 2);
+function indentDsl(text, level = 0) {
+  const prefix = '    '.repeat(Math.max(0, Number(level) || 0));
+  return String(text || '')
+    .split('\n')
+    .map((line) => `${prefix}${line}`)
+    .join('\n');
+}
+
+function renderIrBlock(entry) {
+  const block = entry?.block || entry;
+  const indent = entry?.indent ?? 0;
+  return indentDsl(emitBlockText(block), indent);
+}
+
+function renderWrappedIr(body, wrap = {}) {
+  const version = wrap.version ?? '1.0';
+  const bot = wrap.bot ?? '';
+  const command = wrap.command ?? '/t';
+  const head = [
+    `версия ${q(version)}`,
+    `бот ${q(bot)}`,
+    '',
+    `при команде ${q(command)}:`,
+  ];
+  const bodyText = String(body || '')
+    .split('\n')
+    .filter((line) => line.length > 0)
+    .map((line) => `    ${line}`)
+    .join('\n');
+  return `${head.join('\n')}\n${bodyText}`;
+}
+
+export function renderIr(ir) {
+  if (ir?.kind === 'emitBlock') {
+    const body = renderIrBlock({ block: ir.block, indent: ir.indent ?? 0 });
+    return ir.wrap ? renderWrappedIr(body, ir.wrap) : body;
+  }
+
+  if (ir?.kind === 'wrappedChain') {
+    const body = (ir.blocks || []).map(renderIrBlock).filter(Boolean).join('\n');
+    return renderWrappedIr(body, ir.wrap);
+  }
+
+  if (Array.isArray(ir?.blocks)) {
+    return ir.blocks.map(renderIrBlock).filter(Boolean).join('\n');
+  }
+
+  return generateDSLFromFlow(ir);
 }
 
 function inferFeaturesFromTypes(types) {
