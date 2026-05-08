@@ -13,6 +13,7 @@ import requests
 
 from cicada.parser import (
     Program, Handler, Reply, RandomReply, Ask, Remember, If,
+    parse_condition,
     Buttons, InlineButton, InlineKeyboard, Photo, PhotoVar, Sticker,
     GlobalVar,
     StartScenario, Step,
@@ -715,7 +716,26 @@ def _call_builtin(name: str, args: list):
     raise CicadaRuntimeError(f"Неизвестная функция: '{name}'")
 
 
+def _looks_like_compound_legacy_rhs(value) -> bool:
+    """Проверяет legacy RHS, который на самом деле содержит хвост условия."""
+    if not isinstance(value, VarRef) or not isinstance(value.name, str):
+        return False
+    raw = value.name
+    return "&&" in raw or "||" in raw or " и " in raw or " или " in raw
+
+
 def _eval_legacy_condition(cond: Condition, ctx, strict: bool) -> bool:
+    if _looks_like_compound_legacy_rhs(cond.right):
+        # Старый fallback мог разобрать выражение вида
+        # {логин} == "admin" && пароль == "123" как одно сравнение,
+        # где RHS = '"admin" && пароль == "123"'. Перед вычислением
+        # собираем исходную строку обратно и отдаём современному parser/evaluator.
+        left_raw = cond.left.name if isinstance(cond.left, VarRef) else str(eval_expr(cond.left, ctx, strict))
+        repaired = parse_condition(f"{left_raw} {cond.op} {cond.right.name}")
+        result = eval_expr(repaired, ctx, strict)
+        result = result if isinstance(result, bool) else _truthy(result)
+        return not result if cond.negate else result
+
     left  = eval_expr(cond.left, ctx, strict)
     right = eval_expr(cond.right, ctx, strict)
     op    = cond.op
