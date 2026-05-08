@@ -6800,9 +6800,10 @@ function serializeWebauthnCredential(credential, challenge) {
   return out;
 }
 
-async function loginWithPasskey(email) {
+async function loginWithPasskey(email = '') {
   if (!window.PublicKeyCredential) throw new Error('Этот браузер не поддерживает passkey');
-  const optionsRes = await postJsonWithCsrf('/api/passkey/login-options', { email });
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const optionsRes = await postJsonWithCsrf('/api/passkey/login-options', normalizedEmail ? { email: normalizedEmail } : {});
   const options = await optionsRes.json().catch(() => ({}));
   if (!optionsRes.ok) throw new Error(options.error || 'Passkey не найден');
   const credential = await navigator.credentials.get({ publicKey: prepareWebauthnOptions(options.publicKey) });
@@ -7354,10 +7355,7 @@ function AuthModal({ tab, setTab, onClose, onLogin, onRegister, canClose = true,
 
   const handlePasskeyLogin = async () => {
     setServerError('');
-    if (!email || !email.includes('@')) {
-      setErrors({ email: 'Введите email, к которому привязан passkey' });
-      return;
-    }
+    setErrors({});
     setLoading(true);
     try {
       await onLogin(email, null, '', null, true);
@@ -7787,7 +7785,7 @@ function AuthModal({ tab, setTab, onClose, onLogin, onRegister, canClose = true,
               >
                 <span style={{ position: 'absolute', width: 42, height: 42, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.25)', animation: 'passkeyRingScan 1.5s ease-out infinite' }} />
                 <span style={{ fontSize: 21, lineHeight: 1, animation: 'passkeyFingerprintPulse 1.4s ease-in-out infinite', zIndex: 1 }}>🫆</span>
-                <span style={{ zIndex: 1 }}>ВОЙТИ</span>
+                <span style={{ zIndex: 1 }}>ВОЙТИ ПО ОТПЕЧАТКУ</span>
               </button>
             )}
 

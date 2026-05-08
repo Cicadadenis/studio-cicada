@@ -671,7 +671,7 @@ def _tokenize_expr(src: str) -> list:
         # Ключевые слова выделяются постобработкой, а не отдельным альтернативным
         # паттерном, чтобы «или» в «переменная» не съедало часть идентификатора.
         r'|[а-яёА-ЯЁa-zA-Z_][а-яёА-ЯЁa-zA-Z0-9_.]*'  # идентификатор / ключевое слово
-        r'|\*\*|//|>=|<=|==|!='                        # двойные операторы
+        r'|\*\*|//|>=|<=|==|!=|&&|\|\|'                  # двойные операторы
         r'|[+\-*/%><!(),\[\]]'                         # одиночные операторы
         r'|\s+'                                         # пробелы
     )
@@ -695,14 +695,14 @@ class _ExprParser:
 
     def parse_or(self):
         node = self.parse_and()
-        while self.peek() == "или":
+        while self.peek() in ("или", "||"):
             self.consume()
             node = BinaryOp(node, "или", self.parse_and())
         return node
 
     def parse_and(self):
         node = self.parse_not()
-        while self.peek() == "и":
+        while self.peek() in ("и", "&&"):
             self.consume()
             node = BinaryOp(node, "и", self.parse_not())
         return node
@@ -962,11 +962,11 @@ def parse_condition(raw: str):
         return parse_expr(raw)
     except SyntaxError:
         # Фоллбэк на старый парсер для совместимости
-        or_parts = re.split(r'\s+или\s+', raw)
+        or_parts = re.split(r'\s+(?:или|\|\|)\s+', raw)
         if len(or_parts) > 1:
             conditions = [parse_simple_condition(p) for p in or_parts]
             return ComplexCondition(conditions, ["или"] * (len(conditions) - 1))
-        and_parts = re.split(r'\s+и\s+', raw)
+        and_parts = re.split(r'\s+(?:и|&&)\s+', raw)
         if len(and_parts) > 1:
             conditions = [parse_simple_condition(p) for p in and_parts]
             return ComplexCondition(conditions, ["и"] * (len(conditions) - 1))
