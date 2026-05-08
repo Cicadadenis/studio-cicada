@@ -82,14 +82,6 @@ psql -h localhost -U cicada_user -d cicada
 npm run build
 ```
 
-### Запуск backend под PM2
-```bash
-pm2 start server.mjs --name cicada-server
-pm2 save
-pm2 status
-pm2 logs cicada-server
-```
-
 ---
 
 ## 5) Порты и firewall
@@ -98,12 +90,6 @@ pm2 logs cicada-server
 sudo ufw allow 3001
 sudo ufw allow 3000
 sudo ufw status
-```
-
-Проверить, кто слушает API-порт:
-
-```bash
-lsof -i :3001
 ```
 
 ---
@@ -154,6 +140,18 @@ sudo systemctl reload nginx
 
 ```bash
 which cicada
+```
+
+### Запуск backend под PM2
+```bash
+pm2 start server.mjs --name cicada-server
+pm2 save
+pm2 status
+pm2 logs cicada-server
+```
+Проверить, кто слушает API-порт:
+```bash
+lsof -i :3001
 ```
 
 Если не найден — установите runtime и пропишите `CICADA_BIN` в `.env`.

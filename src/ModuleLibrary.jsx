@@ -1,5 +1,26 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { getCsrfTokenForRequest } from './csrf.js';
+import { getConstructorStrings } from './builderI18n.js';
+import { LIBRARY_CATEGORY_LABELS, LIBRARY_MODULE_LABELS } from './moduleLibraryBuiltinLabels.js';
+
+function normalizeUiLang(lang) {
+  const lc = String(lang || 'ru').toLowerCase();
+  return lc === 'en' || lc === 'uk' ? lc : 'ru';
+}
+
+function categoryLabelRuKey(ruCategory, lang) {
+  const lc = normalizeUiLang(lang);
+  if (lc === 'ru') return ruCategory;
+  return LIBRARY_CATEGORY_LABELS[lc]?.[ruCategory] || ruCategory;
+}
+
+function localizeBuiltinItem(mod, lang) {
+  const lc = normalizeUiLang(lang);
+  if (lc === 'ru') return mod;
+  const patch = LIBRARY_MODULE_LABELS[lc]?.[mod.id];
+  if (!patch) return mod;
+  return { ...mod, name: patch.name, desc: patch.desc };
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // БИБЛИОТЕКА ГОТОВЫХ МОДУЛЕЙ
@@ -2610,7 +2631,7 @@ const styles = {
 // ─────────────────────────────────────────────────────────────────────────────
 // КОМПОНЕНТ МОДАЛЬНОЙ БИБЛИОТЕКИ
 // ─────────────────────────────────────────────────────────────────────────────
-function ModuleLibraryModal({ onClose, onInsert, currentUser }) {
+function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructorStrings('ru'), lang = 'ru' }) {
   const [tab, setTab] = useState("builtin"); // "builtin" | "mine"
   const [activeCat, setActiveCat] = useState(MODULES[0].category);
   const [selected, setSelected] = useState(null);
@@ -2643,6 +2664,16 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser }) {
     currentUser?.subscriptionExp && currentUser.subscriptionExp > Date.now();
   const LIMIT = 3;
 
+  const localizedBuiltin = useMemo(
+    () =>
+      MODULES.map((cat) => ({
+        categoryRu: cat.category,
+        categoryDisplay: categoryLabelRuKey(cat.category, lang),
+        items: cat.items.map((mod) => localizeBuiltinItem(mod, lang)),
+      })),
+    [lang],
+  );
+
   useEffect(() => {
     const handler = () => setIsMobile(window.innerWidth < 640);
     window.addEventListener("resize", handler);
@@ -2661,7 +2692,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser }) {
   }, [tab, currentUser]);
 
   const handleCreateLib = async () => {
-    if (!newLibName.trim()) { setCreateError("Введи название"); return; }
+    if (!newLibName.trim()) { setCreateError(t.libErrName); return; }
     setCreateLoading(true); setCreateError("");
     try {
       const r = await libFetch("/libraries", {
@@ -2675,22 +2706,22 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser }) {
       setShowCreateLib(false);
       setNewLibName(""); setNewLibDesc("");
     } catch (e) {
-      setCreateError("Ошибка сети");
+      setCreateError(t.libErrNetwork);
     } finally {
       setCreateLoading(false);
     }
   };
 
   const handleDeleteLib = async (libId) => {
-    if (!confirm("Удалить библиотеку и все сниппеты?")) return;
+    if (!confirm(t.libConfirmDeleteLibrary)) return;
     await libFetch(`/libraries/${libId}`, { method: "DELETE" });
     setLibraries(prev => prev.filter(l => l.id !== libId));
     if (expandedLib === libId) setExpandedLib(null);
   };
 
   const handleAddSnippet = async () => {
-    if (!snipName.trim()) { setSnipError("Введи название"); return; }
-    if (!snipCode.trim()) { setSnipError("Введи код"); return; }
+    if (!snipName.trim()) { setSnipError(t.libErrName); return; }
+    if (!snipCode.trim()) { setSnipError(t.libErrCode); return; }
     setSnipLoading(true); setSnipError("");
     const lib = libraries.find(l => l.id === showAddSnippet);
     if (!lib) return;
@@ -2711,7 +2742,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser }) {
       setLibraries(prev => prev.map(l => l.id === lib.id ? d.library : l));
       setShowAddSnippet(null);
       setSnipName(""); setSnipDesc(""); setSnipCode("");
-    } catch { setSnipError("Ошибка сети"); }
+    } catch { setSnipError(t.libErrNetwork); }
     finally { setSnipLoading(false); }
   };
 
@@ -2729,15 +2760,15 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser }) {
   };
 
   const filtered = search.trim()
-    ? MODULES.map((cat) => ({
+    ? localizedBuiltin.map((cat) => ({
         ...cat,
         items: cat.items.filter(
           (m) =>
             m.name.toLowerCase().includes(search.toLowerCase()) ||
-            m.desc.toLowerCase().includes(search.toLowerCase())
+            (m.desc && m.desc.toLowerCase().includes(search.toLowerCase())),
         ),
       })).filter((cat) => cat.items.length > 0)
-    : MODULES.filter((cat) => cat.category === activeCat);
+    : localizedBuiltin.filter((cat) => cat.categoryRu === activeCat);
 
   const handleInsert = useCallback(() => {
     const item = selectedItem || selected;
@@ -2785,7 +2816,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser }) {
         }}>
           <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom: 10 }}>
             <div style={{ fontFamily:"Syne,system-ui", fontSize: isMobile ? 15 : 17, fontWeight:800, color:"#fff", letterSpacing:"-0.01em" }}>
-              📚 Библиотека
+              {t.libModalHeadline}
             </div>
             <button
               style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.1)", color:"rgba(255,255,255,0.6)", borderRadius:8, width:30, height:30, cursor:"pointer", fontSize:15, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}
@@ -2796,29 +2827,29 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser }) {
           {/* Tab switcher */}
           <div style={{ display:"flex", gap:6 }}>
             {[
-              { id:"builtin", label:"Встроенные", count: totalModules },
-              { id:"mine",    label:"⭐ Мои",     count: totalSnippets },
-            ].map(t => (
+              { id:"builtin", label: t.libTabBuiltin, count: totalModules },
+              { id:"mine",    label: t.libTabMine,     count: totalSnippets },
+            ].map(tb => (
               <button
-                key={t.id}
-                onClick={() => { setTab(t.id); setSelected(null); setSelectedItem(null); }}
+                key={tb.id}
+                onClick={() => { setTab(tb.id); setSelected(null); setSelectedItem(null); }}
                 style={{
                   flex:1, padding: isMobile ? "8px 6px" : "8px 14px",
-                  background: tab === t.id ? "linear-gradient(135deg,rgba(255,215,0,0.18),rgba(255,170,0,0.1))" : "rgba(255,255,255,0.04)",
-                  border: `1px solid ${tab === t.id ? "rgba(255,215,0,0.4)" : "rgba(255,255,255,0.09)"}`,
-                  borderRadius:10, color: tab === t.id ? "#ffd700" : "rgba(255,255,255,0.5)",
-                  fontSize: isMobile ? 12 : 13, fontFamily:"Syne,system-ui", fontWeight: tab === t.id ? 700 : 500,
+                  background: tab === tb.id ? "linear-gradient(135deg,rgba(255,215,0,0.18),rgba(255,170,0,0.1))" : "rgba(255,255,255,0.04)",
+                  border: `1px solid ${tab === tb.id ? "rgba(255,215,0,0.4)" : "rgba(255,255,255,0.09)"}`,
+                  borderRadius:10, color: tab === tb.id ? "#ffd700" : "rgba(255,255,255,0.5)",
+                  fontSize: isMobile ? 12 : 13, fontFamily:"Syne,system-ui", fontWeight: tab === tb.id ? 700 : 500,
                   cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:6,
                   transition:"all 0.15s",
                 }}
               >
-                {t.label}
+                {tb.label}
                 <span style={{
                   fontSize:10, minWidth:18, padding:"1px 5px", borderRadius:20, lineHeight:"16px",
-                  background: tab === t.id ? "rgba(255,215,0,0.25)" : "rgba(255,255,255,0.1)",
-                  color: tab === t.id ? "#ffd700" : "rgba(255,255,255,0.45)",
+                  background: tab === tb.id ? "rgba(255,215,0,0.25)" : "rgba(255,255,255,0.1)",
+                  color: tab === tb.id ? "#ffd700" : "rgba(255,255,255,0.45)",
                   fontWeight:700,
-                }}>{t.count}</span>
+                }}>{tb.count}</span>
               </button>
             ))}
           </div>
@@ -2829,7 +2860,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser }) {
           <div style={{ padding: isMobile ? "10px 12px" : "12px 24px", borderBottom:"1px solid rgba(255,255,255,0.06)", flexShrink:0 }}>
             <input
               style={{ width:"100%", background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:10, padding:"9px 14px", color:"#fff", fontSize:13, fontFamily:"inherit", outline:"none", boxSizing:"border-box" }}
-              placeholder="🔍 Поиск модуля..."
+              placeholder={t.libSearchPlaceholder}
               value={search}
               onChange={(e) => { setSearch(e.target.value); setSelected(null); }}
             />
@@ -2848,17 +2879,17 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser }) {
                     <span style={{ color: libraries.length >= LIMIT ? "#f87171" : "#3ecf8e", fontWeight:700 }}>
                       {libraries.length}/{LIMIT}
                     </span>
-                    {" "}библиотек (Trial)
-                    {libraries.length >= LIMIT && <span style={{ color:"#f87171" }}> — лимит достигнут</span>}
+                    {' '}{t.libTrialLibsSuffix}
+                    {libraries.length >= LIMIT && <span style={{ color:"#f87171" }}>{t.libTrialLimitNote}</span>}
                   </span>
                 )}
-                {isPro && <span style={{ color:"#3ecf8e", fontWeight:600 }}>★ Pro · без лимита</span>}
+                {isPro && <span style={{ color:"#3ecf8e", fontWeight:600 }}>{t.libProUnlimited}</span>}
               </div>
               <button
                 onClick={() => {
-                  if (!currentUser) { alert("Войди в аккаунт"); return; }
+                  if (!currentUser) { alert(t.libAlertLogin); return; }
                   if (!isPro && libraries.length >= LIMIT) {
-                    alert(`Лимит ${LIMIT} библиотеки на Trial. Перейди на Pro для безлимита.`);
+                    alert(t.libAlertTrialLimit(LIMIT));
                     return;
                   }
                   setShowCreateLib(true);
@@ -2874,24 +2905,24 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser }) {
                   whiteSpace:"nowrap",
                   opacity: (!isPro && libraries.length >= LIMIT) ? 0.5 : 1,
                 }}
-              >+ Создать библиотеку</button>
+              >{t.libCreateLibraryBtn}</button>
             </div>
 
             {/* Libraries list */}
             <div style={{ flex:1, overflowY:"auto", padding: isMobile ? "10px 12px" : "14px 20px" }}>
               {!currentUser && (
                 <div style={{ textAlign:"center", padding:"50px 20px", color:"rgba(255,255,255,0.3)", fontSize:13, fontFamily:"Syne,system-ui" }}>
-                  🔒 Войди в аккаунт чтобы создавать свои библиотеки
+                  {t.libLoginWall}
                 </div>
               )}
               {currentUser && libsLoading && (
-                <div style={{ textAlign:"center", padding:"50px 20px", color:"rgba(255,255,255,0.3)", fontSize:13 }}>⏳ Загрузка...</div>
+                <div style={{ textAlign:"center", padding:"50px 20px", color:"rgba(255,255,255,0.3)", fontSize:13 }}>{t.libLoading}</div>
               )}
               {currentUser && !libsLoading && libraries.length === 0 && (
                 <div style={{ textAlign:"center", padding:"50px 20px" }}>
                   <div style={{ fontSize:36, marginBottom:12 }}>📂</div>
-                  <div style={{ fontSize:14, color:"rgba(255,255,255,0.4)", fontFamily:"Syne,system-ui", fontWeight:600, marginBottom:6 }}>Библиотек пока нет</div>
-                  <div style={{ fontSize:12, color:"rgba(255,255,255,0.25)" }}>Создай свою первую библиотеку и добавь в неё сниппеты DSL-кода</div>
+                  <div style={{ fontSize:14, color:"rgba(255,255,255,0.4)", fontFamily:"Syne,system-ui", fontWeight:600, marginBottom:6 }}>{t.libNoLibsTitle}</div>
+                  <div style={{ fontSize:12, color:"rgba(255,255,255,0.25)" }}>{t.libNoLibsHint}</div>
                 </div>
               )}
               {libraries.map((lib) => {
@@ -2908,10 +2939,10 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser }) {
                         <div style={{ fontSize:13, fontWeight:700, color:"#fff", fontFamily:"Syne,system-ui", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{lib.name}</div>
                         {lib.description && <div style={{ fontSize:11, color:"rgba(255,255,255,0.35)", marginTop:2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{lib.description}</div>}
                       </div>
-                      <span style={{ fontSize:11, color:"rgba(255,255,255,0.3)", flexShrink:0, background:"rgba(255,255,255,0.06)", padding:"2px 8px", borderRadius:20 }}>{(lib.items||[]).length} сн.</span>
+                      <span style={{ fontSize:11, color:"rgba(255,255,255,0.3)", flexShrink:0, background:"rgba(255,255,255,0.06)", padding:"2px 8px", borderRadius:20 }}>{t.libSnippetShort((lib.items||[]).length)}</span>
                       <button onClick={(e)=>{e.stopPropagation(); handleDeleteLib(lib.id);}}
                         style={{ background:"transparent", border:"none", color:"rgba(248,113,113,0.5)", cursor:"pointer", fontSize:14, padding:"0 4px", flexShrink:0, lineHeight:1 }}
-                        title="Удалить библиотеку"
+                        title={t.libDeleteLibraryHint}
                       >✕</button>
                     </div>
 
@@ -2919,7 +2950,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser }) {
                     {isOpen && (
                       <div style={{ borderTop:"1px solid rgba(255,255,255,0.06)", padding: isMobile ? "10px 12px" : "12px 16px" }}>
                         {(lib.items||[]).length === 0 && (
-                          <div style={{ fontSize:12, color:"rgba(255,255,255,0.25)", marginBottom:10 }}>Нет сниппетов. Добавь первый ↓</div>
+                          <div style={{ fontSize:12, color:"rgba(255,255,255,0.25)", marginBottom:10 }}>{t.libNoSnippets}</div>
                         )}
                         <div style={{ display:"grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill,minmax(220px,1fr))", gap:8, marginBottom:10 }}>
                           {(lib.items||[]).map(item => {
@@ -2934,12 +2965,12 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser }) {
                                 <button
                                   onClick={(e) => { e.stopPropagation(); handleDeleteSnippet(lib.id, item.id); }}
                                   style={{ position:"absolute", top:6, right:6, background:"transparent", border:"none", color:"rgba(248,113,113,0.4)", cursor:"pointer", fontSize:12, lineHeight:1 }}
-                                  title="Удалить сниппет"
+                                  title={t.libDeleteSnippetHint}
                                 >✕</button>
                                 {isMobile && sel && (
                                   <button onClick={(e) => { e.stopPropagation(); onInsert(item.code); onClose(); }}
                                     style={{ marginTop:8, width:"100%", padding:"9px", background:"linear-gradient(135deg,#ffd700,#ffaa00)", border:"none", borderRadius:8, color:"#111", fontWeight:800, fontFamily:"Syne,system-ui", fontSize:12, cursor:"pointer" }}
-                                  >⬆️ Вставить</button>
+                                  >{t.libInsert}</button>
                                 )}
                               </div>
                             );
@@ -2948,7 +2979,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser }) {
                         <button
                           onClick={(e) => { e.stopPropagation(); setShowAddSnippet(lib.id); setSnipName(""); setSnipDesc(""); setSnipCode(""); setSnipError(""); }}
                           style={{ padding:"7px 14px", borderRadius:8, fontSize:12, fontWeight:600, fontFamily:"Syne,system-ui", background:"rgba(62,207,142,0.08)", color:"#3ecf8e", border:"1px solid rgba(62,207,142,0.2)", cursor:"pointer" }}
-                        >+ Добавить сниппет</button>
+                        >{t.libAddSnippetBtn}</button>
                       </div>
                     )}
                   </div>
@@ -2963,7 +2994,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser }) {
                 <button
                   style={{ background:"linear-gradient(135deg,#ffd700,#ffaa00)", border:"none", borderRadius:10, padding:"12px 22px", color:"#111", fontWeight:800, fontFamily:"Syne,system-ui", fontSize:13, cursor:"pointer", whiteSpace:"nowrap", boxShadow:"0 4px 16px rgba(255,215,0,0.35)", flexShrink:0 }}
                   onClick={handleInsert}
-                >⬆️ Вставить в редактор</button>
+                >{t.libInsertEditor}</button>
               </div>
             )}
           </div>
@@ -2975,22 +3006,22 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser }) {
             onClick={() => setShowCreateLib(false)}>
             <div style={{ background:"#1a1d24", border:"1px solid rgba(255,215,0,0.2)", borderRadius:18, padding:"24px", width:"100%", maxWidth:400, boxShadow:"0 20px 60px rgba(0,0,0,0.8)" }}
               onClick={e => e.stopPropagation()}>
-              <div style={{ fontSize:15, fontWeight:800, color:"#fff", fontFamily:"Syne,system-ui", marginBottom:16 }}>📂 Новая библиотека</div>
-              <label style={{ display:"block", fontSize:10, fontWeight:700, color:"rgba(255,255,255,0.35)", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:6, fontFamily:"Syne,system-ui" }}>Название *</label>
+              <div style={{ fontSize:15, fontWeight:800, color:"#fff", fontFamily:"Syne,system-ui", marginBottom:16 }}>{t.libNewLibraryTitle}</div>
+              <label style={{ display:"block", fontSize:10, fontWeight:700, color:"rgba(255,255,255,0.35)", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:6, fontFamily:"Syne,system-ui" }}>{t.libLabelNameReq}</label>
               <input value={newLibName} onChange={e=>setNewLibName(e.target.value)}
                 style={{ width:"100%", background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.15)", borderRadius:10, padding:"10px 14px", color:"#fff", fontSize:13, fontFamily:"inherit", outline:"none", boxSizing:"border-box", marginBottom:12 }}
-                placeholder="Мои утилиты" autoFocus />
-              <label style={{ display:"block", fontSize:10, fontWeight:700, color:"rgba(255,255,255,0.35)", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:6, fontFamily:"Syne,system-ui" }}>Описание</label>
+                placeholder={t.libPlaceholderLibName} autoFocus />
+              <label style={{ display:"block", fontSize:10, fontWeight:700, color:"rgba(255,255,255,0.35)", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:6, fontFamily:"Syne,system-ui" }}>{t.libLabelDesc}</label>
               <input value={newLibDesc} onChange={e=>setNewLibDesc(e.target.value)}
                 style={{ width:"100%", background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.15)", borderRadius:10, padding:"10px 14px", color:"#fff", fontSize:13, fontFamily:"inherit", outline:"none", boxSizing:"border-box", marginBottom: createError ? 8 : 16 }}
-                placeholder="Описание (необязательно)" />
+                placeholder={t.libPlaceholderLibDesc} />
               {createError && <div style={{ fontSize:12, color:"#f87171", marginBottom:12 }}>⚠ {createError}</div>}
               <div style={{ display:"flex", gap:8 }}>
                 <button onClick={() => setShowCreateLib(false)}
-                  style={{ flex:1, padding:"10px", borderRadius:10, background:"rgba(255,255,255,0.05)", color:"rgba(255,255,255,0.5)", border:"1px solid rgba(255,255,255,0.1)", cursor:"pointer", fontSize:13 }}>Отмена</button>
+                  style={{ flex:1, padding:"10px", borderRadius:10, background:"rgba(255,255,255,0.05)", color:"rgba(255,255,255,0.5)", border:"1px solid rgba(255,255,255,0.1)", cursor:"pointer", fontSize:13 }}>{t.libCancel}</button>
                 <button onClick={handleCreateLib} disabled={createLoading || !newLibName.trim()}
                   style={{ flex:2, padding:"10px", borderRadius:10, background: newLibName.trim() ? "linear-gradient(135deg,#3ecf8e,#0ea5e9)" : "rgba(255,255,255,0.05)", color: newLibName.trim() ? "#0a0a0a" : "rgba(255,255,255,0.3)", border:"none", cursor: newLibName.trim() ? "pointer" : "not-allowed", fontSize:13, fontWeight:700, fontFamily:"Syne,system-ui" }}>
-                  {createLoading ? "⏳ Создаём..." : "✓ Создать"}</button>
+                  {createLoading ? t.libCreating : t.libCreate}</button>
               </div>
             </div>
           </div>
@@ -3002,26 +3033,30 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser }) {
             onClick={() => setShowAddSnippet(null)}>
             <div style={{ background:"#1a1d24", border:"1px solid rgba(62,207,142,0.2)", borderRadius:18, padding:"24px", width:"100%", maxWidth:480, maxHeight:"90vh", overflowY:"auto", boxShadow:"0 20px 60px rgba(0,0,0,0.8)" }}
               onClick={e => e.stopPropagation()}>
-              <div style={{ fontSize:15, fontWeight:800, color:"#fff", fontFamily:"Syne,system-ui", marginBottom:16 }}>✏️ Новый сниппет</div>
-              {[["Название *","text",snipName,setSnipName,"Проверка доступа"],["Описание","text",snipDesc,setSnipDesc,"Что делает этот сниппет..."]].map(([lbl,t,val,set,ph]) => (
-                <div key={lbl} style={{marginBottom:12}}>
-                  <label style={{ display:"block", fontSize:10, fontWeight:700, color:"rgba(255,255,255,0.35)", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:6, fontFamily:"Syne,system-ui" }}>{lbl}</label>
-                  <input type={t} value={val} onChange={e=>set(e.target.value)}
-                    style={{ width:"100%", background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.15)", borderRadius:10, padding:"10px 14px", color:"#fff", fontSize:13, fontFamily:"inherit", outline:"none", boxSizing:"border-box" }}
-                    placeholder={ph} />
-                </div>
-              ))}
-              <label style={{ display:"block", fontSize:10, fontWeight:700, color:"rgba(255,255,255,0.35)", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:6, fontFamily:"Syne,system-ui" }}>DSL Код *</label>
+              <div style={{ fontSize:15, fontWeight:800, color:"#fff", fontFamily:"Syne,system-ui", marginBottom:16 }}>{t.libNewSnippetTitle}</div>
+              <div style={{marginBottom:12}}>
+                <label style={{ display:"block", fontSize:10, fontWeight:700, color:"rgba(255,255,255,0.35)", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:6, fontFamily:"Syne,system-ui" }}>{t.libLabelSnippetName}</label>
+                <input type="text" value={snipName} onChange={e=>setSnipName(e.target.value)}
+                  style={{ width:"100%", background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.15)", borderRadius:10, padding:"10px 14px", color:"#fff", fontSize:13, fontFamily:"inherit", outline:"none", boxSizing:"border-box" }}
+                  placeholder={t.libPlaceholderSnippetName} />
+              </div>
+              <div style={{marginBottom:12}}>
+                <label style={{ display:"block", fontSize:10, fontWeight:700, color:"rgba(255,255,255,0.35)", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:6, fontFamily:"Syne,system-ui" }}>{t.libLabelSnippetDesc}</label>
+                <input type="text" value={snipDesc} onChange={e=>setSnipDesc(e.target.value)}
+                  style={{ width:"100%", background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.15)", borderRadius:10, padding:"10px 14px", color:"#fff", fontSize:13, fontFamily:"inherit", outline:"none", boxSizing:"border-box" }}
+                  placeholder={t.libPlaceholderSnippetDesc} />
+              </div>
+              <label style={{ display:"block", fontSize:10, fontWeight:700, color:"rgba(255,255,255,0.35)", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:6, fontFamily:"Syne,system-ui" }}>{t.libLabelSnippetCode}</label>
               <textarea value={snipCode} onChange={e=>setSnipCode(e.target.value)}
                 style={{ width:"100%", height:160, background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.15)", borderRadius:10, padding:"10px 14px", color:"#3ecf8e", fontSize:12, fontFamily:"monospace", outline:"none", boxSizing:"border-box", resize:"vertical", lineHeight:1.6 }}
-                placeholder={"старт:\n    ответ \"Привет!\""} />
+                placeholder={t.libPlaceholderSnippetCode} />
               {snipError && <div style={{ fontSize:12, color:"#f87171", marginTop:8 }}>⚠ {snipError}</div>}
               <div style={{ display:"flex", gap:8, marginTop:14 }}>
                 <button onClick={() => setShowAddSnippet(null)}
-                  style={{ flex:1, padding:"10px", borderRadius:10, background:"rgba(255,255,255,0.05)", color:"rgba(255,255,255,0.5)", border:"1px solid rgba(255,255,255,0.1)", cursor:"pointer", fontSize:13 }}>Отмена</button>
+                  style={{ flex:1, padding:"10px", borderRadius:10, background:"rgba(255,255,255,0.05)", color:"rgba(255,255,255,0.5)", border:"1px solid rgba(255,255,255,0.1)", cursor:"pointer", fontSize:13 }}>{t.libCancel}</button>
                 <button onClick={handleAddSnippet} disabled={snipLoading || !snipName.trim() || !snipCode.trim()}
                   style={{ flex:2, padding:"10px", borderRadius:10, background: (snipName.trim() && snipCode.trim()) ? "linear-gradient(135deg,#3ecf8e,#0ea5e9)" : "rgba(255,255,255,0.05)", color: (snipName.trim() && snipCode.trim()) ? "#0a0a0a" : "rgba(255,255,255,0.3)", border:"none", cursor: (snipName.trim() && snipCode.trim()) ? "pointer" : "not-allowed", fontSize:13, fontWeight:700, fontFamily:"Syne,system-ui" }}>
-                  {snipLoading ? "⏳ Сохраняем..." : "✓ Добавить"}</button>
+                  {snipLoading ? t.libSavingSnippet : t.libAddSnippet}</button>
               </div>
             </div>
           </div>
@@ -3047,7 +3082,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser }) {
                 transition:"border-color 0.15s",
               }}
             >
-              <span style={{ color:"#ffd700" }}>{activeCat}</span>
+              <span style={{ color:"#ffd700" }}>{categoryLabelRuKey(activeCat, lang)}</span>
               <span style={{
                 fontSize:10, color:"rgba(255,255,255,0.4)",
                 transform: catDropOpen ? "rotate(180deg)" : "none",
@@ -3067,17 +3102,17 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser }) {
                 overflow:"hidden",
                 maxHeight:"55vh", overflowY:"auto",
               }}>
-                {MODULES.map((cat, idx) => {
-                  const active = activeCat === cat.category;
+                {localizedBuiltin.map((cat, idx) => {
+                  const active = activeCat === cat.categoryRu;
                   return (
                     <button
-                      key={cat.category}
-                      onClick={() => { setActiveCat(cat.category); setSelected(null); setCatDropOpen(false); }}
+                      key={cat.categoryRu}
+                      onClick={() => { setActiveCat(cat.categoryRu); setSelected(null); setCatDropOpen(false); }}
                       style={{
                         width:"100%", padding:"13px 16px",
                         textAlign:"left",
                         background: active ? "rgba(255,215,0,0.1)" : "transparent",
-                        borderBottom: idx < MODULES.length - 1 ? "1px solid rgba(255,255,255,0.05)" : "none",
+                        borderBottom: idx < localizedBuiltin.length - 1 ? "1px solid rgba(255,255,255,0.05)" : "none",
                         border:"none",
                         color: active ? "#ffd700" : "rgba(255,255,255,0.7)",
                         fontSize:13, fontFamily:"Syne,system-ui",
@@ -3087,7 +3122,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser }) {
                         transition:"background 0.1s",
                       }}
                     >
-                      <span>{cat.category}</span>
+                      <span>{cat.categoryDisplay}</span>
                       {active && <span style={{ fontSize:14, color:"#ffd700" }}>✓</span>}
                     </button>
                   );
@@ -3103,11 +3138,11 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser }) {
           {/* Sidebar — только десктоп */}
           {!search && !isMobile && (
             <div style={{ width:210, borderRight:"1px solid rgba(255,255,255,0.06)", overflowY:"auto", flexShrink:0, padding:"10px 0" }}>
-              {MODULES.map((cat) => {
-                const active = activeCat === cat.category;
+              {localizedBuiltin.map((cat) => {
+                const active = activeCat === cat.categoryRu;
                 return (
                   <button
-                    key={cat.category}
+                    key={cat.categoryRu}
                     style={{
                       width:"100%", padding:"9px 16px", textAlign:"left",
                       background: active ? "rgba(255,215,0,0.1)" : "transparent",
@@ -3116,8 +3151,8 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser }) {
                       cursor:"pointer", fontSize:12, fontFamily:"Syne,system-ui",
                       fontWeight: active ? 700 : 500, transition:"all 0.15s", lineHeight:1.4,
                     }}
-                    onClick={() => { setActiveCat(cat.category); setSelected(null); }}
-                  >{cat.category}</button>
+                    onClick={() => { setActiveCat(cat.categoryRu); setSelected(null); }}
+                  >{cat.categoryDisplay}</button>
                 );
               })}
             </div>
@@ -3127,14 +3162,14 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser }) {
           <div style={{ flex:1, overflowY:"auto", padding: isMobile ? "12px" : "14px 20px" }}>
             {filtered.length === 0 ? (
               <div style={{ textAlign:"center", padding:"60px 20px", color:"rgba(255,255,255,0.25)", fontSize:14, fontFamily:"Syne,system-ui" }}>
-                🔍 Ничего не найдено по запросу «{search}»
+                {t.libNothingFound(search)}
               </div>
             ) : (
               filtered.map((cat) => (
-                <div key={cat.category}>
+                <div key={cat.categoryRu}>
                   {search && (
                     <div style={{ fontSize:11, fontWeight:700, color:"rgba(255,255,255,0.2)", textTransform:"uppercase", letterSpacing:"0.1em", padding:"14px 0 6px", fontFamily:"Syne,system-ui" }}>
-                      {cat.category}
+                      {cat.categoryDisplay}
                     </div>
                   )}
                   <div style={{
@@ -3172,7 +3207,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser }) {
                                 fontWeight:800, fontFamily:"Syne,system-ui", fontSize:13,
                                 cursor:"pointer",
                               }}
-                            >⬆️ Вставить в редактор</button>
+                            >{t.libInsertEditor}</button>
                           )}
                         </div>
                       );
@@ -3209,7 +3244,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser }) {
                 boxShadow:"0 4px 16px rgba(255,215,0,0.35)", flexShrink:0,
               }}
               onClick={handleInsert}
-            >⬆️ Вставить в редактор</button>
+            >{t.libInsertEditor}</button>
           </div>
         )}
       </div>
@@ -3228,7 +3263,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser }) {
 //     // setStacks(prev => [...prev, ...parseDSL(code)])
 //   }} />
 // ─────────────────────────────────────────────────────────────────────────────
-export function ModuleLibraryButton({ onInsert, currentUser }) {
+export function ModuleLibraryButton({ onInsert, currentUser, t = getConstructorStrings('ru'), lang = 'ru' }) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -3236,13 +3271,15 @@ export function ModuleLibraryButton({ onInsert, currentUser }) {
       <button
         className="tb-btn tb-btn-ghost"
         onClick={() => setOpen(true)}
-        title="Библиотека готовых модулей"
+        title={t.libButtonTooltip}
       >
-        📚 Библиотека
+        {t.moduleLibrary}
       </button>
 
       {open && (
         <ModuleLibraryModal
+          t={t}
+          lang={lang}
           currentUser={currentUser}
           onClose={() => setOpen(false)}
           onInsert={onInsert}

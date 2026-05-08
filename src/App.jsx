@@ -1,6 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import cicadaLogo from './cicada-logo_1778117072446.jpeg';
 import { ModuleLibraryButton, ModuleLibraryModal } from './ModuleLibrary';
+import InstructionsModal from './InstructionsModal.jsx';
 import { collectDSLFixes } from '../core/validator/fixes.js';
 import { lintDSLSchema, formatDSLDiagnostic } from '../core/validator/schema.js';
 import {
@@ -3898,6 +3899,11 @@ const EXAMPLE_FULL = `версия "1.0"
   const [botDebugOpen, setBotDebugOpen] = useState(false);
   const [botDebugLogs, setBotDebugLogs] = useState('');
   const botDebugScrollRef = useRef(null);
+  const prevBotRunningRef = useRef(isBotRunning);
+  useEffect(() => {
+    if (prevBotRunningRef.current && !isBotRunning) setBotDebugOpen(false);
+    prevBotRunningRef.current = isBotRunning;
+  }, [isBotRunning]);
 
   // Start countdown from remaining seconds (server handles actual kill)
   const startCountdown = useCallback((secondsLeft) => {
@@ -4182,6 +4188,7 @@ const EXAMPLE_FULL = `версия "1.0"
 
   // Stop bot
   const stopBot = useCallback(async () => {
+    setBotDebugOpen(false);
     setIsStoppingBot(true);
     setStopBotError(null);
     try {
@@ -4786,7 +4793,7 @@ const EXAMPLE_FULL = `версия "1.0"
         display: 'flex', alignItems: 'center', padding: isMobileView ? '0 12px' : '0 16px', gap: isMobileView ? 8 : 8,
         flexShrink: 0, height: isMobileView ? 52 : 60,
         overflowX: isMobileView ? 'auto' : 'visible',
-        position: 'relative', zIndex: 10,
+        position: 'relative', zIndex: 90,
       }}>
         {/* Left neon accent line */}
         <div style={{ position:'absolute', left:0, top:0, bottom:0, width:3, background:'linear-gradient(180deg, #f97316, #6366f1)', borderRadius:'0 2px 2px 0', opacity:0.9 }} />
@@ -4858,11 +4865,11 @@ const EXAMPLE_FULL = `версия "1.0"
                 </>
               )}
             </div>
-            <ModuleLibraryButton currentUser={currentUser} onInsert={(code) => {
+            <ModuleLibraryButton t={builderUi} lang={uiLang} currentUser={currentUser} onInsert={(code) => {
               const parsed = parseDSL(code);
               if (parsed) {
                 setStacks(prev => [...prev, ...parsed]);
-                showToast('✅ Модуль добавлен в проект', 'success');
+                showToast(builderUi.libInsertSuccess, 'success');
               }
             }} />
             <button
@@ -5180,13 +5187,15 @@ const EXAMPLE_FULL = `версия "1.0"
 
       {showLibrary && (
         <ModuleLibraryModal
+          t={builderUi}
+          lang={uiLang}
           currentUser={currentUser}
           onClose={() => setShowLibrary(false)}
           onInsert={(code) => {
             const parsed = parseDSL(code);
             if (parsed) {
               setStacks(prev => [...prev, ...parsed]);
-              showToast('✅ Модуль добавлен в проект', 'success');
+              showToast(builderUi.libInsertSuccess, 'success');
             }
             setShowLibrary(false);
           }}
@@ -5503,7 +5512,7 @@ const EXAMPLE_FULL = `версия "1.0"
         </div>
       )}
       {showInstructions && (
-          <InstructionsModal onClose={() => setShowInstructions(false)} />
+          <InstructionsModal lang={uiLang} onClose={() => setShowInstructions(false)} />
         )}
 
       {/* Справка по блоку — кнопка «i» на пазле */}
@@ -5523,7 +5532,7 @@ const EXAMPLE_FULL = `версия "1.0"
           borderRight: isMobileView ? 'none' : '1px solid rgba(99,102,241,0.2)',
           display:'flex', flexDirection:'column', overflow:'hidden',
           boxShadow: isMobileView ? 'none' : '4px 0 24px rgba(0,0,0,0.4)',
-          ...(isMobileView ? { gridColumn: '1', position: 'absolute', top: 0, left: 0, right: 0, bottom: 56, zIndex: 10 } : {}),
+          ...(isMobileView ? { gridColumn: '1', position: 'absolute', top: 0, left: 0, right: 0, bottom: 56, zIndex: 6 } : {}),
         }}
         data-tour={!isMobileView ? 'sidebar-desktop' : undefined}>
           <div style={{
@@ -5825,7 +5834,7 @@ const EXAMPLE_FULL = `версия "1.0"
           borderLeft: isMobileView ? 'none' : '1px solid rgba(99,102,241,0.2)', overflow:'hidden',
           background: 'linear-gradient(180deg, #0d0920 0%, #080618 100%)',
           boxShadow: isMobileView ? 'none' : '-4px 0 24px rgba(0,0,0,0.4)',
-          ...(isMobileView ? { gridColumn: '1', position: 'absolute', top: 0, left: 0, right: 0, bottom: 56, zIndex: 10 } : {}),
+          ...(isMobileView ? { gridColumn: '1', position: 'absolute', top: 0, left: 0, right: 0, bottom: 56, zIndex: 6 } : {}),
         }}
         data-tour={!isMobileView ? 'props-panel-desktop' : undefined}>
           {(!isMobileView || mobileTab === 'props') && (
@@ -8705,326 +8714,4 @@ ${supportMessage.trim()}`;
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// INSTRUCTIONS CONTENT COMPONENT
-// ═══════════════════════════════════════════════════════════════════════════
-// ─── INSTRUCTIONS MODAL ──────────────────────────────────────────────────────
-  const INSTR_SECTIONS = [
-    {
-      id: 'intro', emoji: '🚀', color: '#ffd700', glow: 'rgba(255,215,0,0.2)',
-      label: 'Начало', title: 'Как пользоваться Cicada Studio',
-      subtitle: 'Собирай Telegram-бота как из пазлов 🧩',
-      content: () => (
-        <>
-          <p style={pStyle}>Cicada Studio — визуальный конструктор Telegram-ботов. Вместо кода ты работаешь с блоками: перетаскиваешь их на холст, соединяешь и запускаешь бота в один клик.</p>
-          <ICard icon="💡">Начни с блоков <ICode>Версия</ICode> → <ICode>Бот</ICode> → <ICode>Старт</ICode> — это минимальный рабочий бот.</ICard>
-        </>
-      ),
-    },
-    {
-      id: 'blocks', emoji: '🧩', color: '#a78bfa', glow: 'rgba(167,139,250,0.2)',
-      label: 'Блоки', title: '1. Добавь блоки',
-      subtitle: 'Перетащи блоки из левой панели на холст.',
-      content: () => (
-        <>
-          <IList color="#a78bfa" title="👉 Начни с:" items={[
-            { icon: '📌', text: 'Версия' },
-            { icon: '🤖', text: 'Бот — обязательно укажи токен' },
-            { icon: '▶', text: 'Старт' },
-          ]} />
-          <p style={pStyle}>Каждый блок — отдельная инструкция. Блоки бывают настроечные (версия, бот) и событийные (старт, команда, при нажатии).</p>
-          <ICard icon="🔍">Используй поиск в библиотеке блоков, чтобы быстро найти нужный.</ICard>
-        </>
-      ),
-    },
-    {
-      id: 'connect', emoji: '🔗', color: '#34d399', glow: 'rgba(52,211,153,0.2)',
-      label: 'Соединение', title: '2. Соединяй блоки',
-      subtitle: 'Соединяй их сверху вниз — как конструктор.',
-      content: () => (
-        <>
-          <p style={pStyle}>Порядок блоков в стеке определяет логику бота. Верхний блок — триггер, нижние — реакции.</p>
-          <IExample steps={[
-            { icon: '▶', color: '#3ecf8e', text: 'Старт' },
-            { icon: '✉', color: '#5b7cf6', text: 'Ответ → Привет!' },
-            { icon: '⊞', color: '#a78bfa', text: 'Кнопки → [Меню] [Помощь]' },
-          ]} />
-          <ICard icon="⚡">Блоки внутри одного стека выполняются последовательно, сверху вниз.</ICard>
-        </>
-      ),
-    },
-    {
-      id: 'settings', emoji: '✏️', color: '#60a5fa', glow: 'rgba(96,165,250,0.2)',
-      label: 'Настройки', title: '3. Настрой блок',
-      subtitle: 'Нажми на блок и задай параметры.',
-      content: () => (
-        <>
-          <IList color="#60a5fa" title="Что можно задать:" items={[
-            { icon: '📝', text: 'Текст сообщения' },
-            { icon: '⌨', text: 'Команду (например /help)' },
-            { icon: '📦', text: 'Переменные {{имя}}' },
-          ]} />
-          <ICard icon="💡">Используй переменную <ICode>{'{{имя}}'}</ICode> в тексте для подстановки данных.</ICard>
-        </>
-      ),
-    },
-    {
-      id: 'logic', emoji: '⚡', color: '#fb923c', glow: 'rgba(251,146,60,0.2)',
-      label: 'Логика', title: '4. Добавь логику',
-      subtitle: 'Ветвление, циклы и переменные.',
-      content: () => (
-        <>
-          <IList color="#fb923c" title="Блоки логики:" items={[
-            { icon: '🔀', text: 'Если — проверка условия' },
-            { icon: '❓', text: 'Спросить — ввод от пользователя' },
-            { icon: '💾', text: 'Сохранить — запись в память' },
-            { icon: '⏱', text: 'Задержка — пауза в секундах' },
-          ]} />
-          <ICard icon="🎯">Значения переменных сохраняются между шагами одного сценария.</ICard>
-        </>
-      ),
-    },
-    {
-      id: 'run', emoji: '▶', color: '#3ecf8e', glow: 'rgba(62,207,142,0.2)',
-      label: 'Запуск', title: '5. Запусти бота',
-      subtitle: 'Проверь, сгенерируй и скачай .ccd файл.',
-      content: () => (
-        <>
-          <IList color="#3ecf8e" title="Шаги:" items={[
-            { icon: '1️⃣', text: 'Проверь ошибки (кнопка ✔ Проверить)' },
-            { icon: '2️⃣', text: 'Нажми «Генерировать»' },
-            { icon: '3️⃣', text: 'Скачай .ccd кнопкой ↓' },
-            { icon: '4️⃣', text: 'Запусти: cicada bot.ccd' },
-          ]} />
-          <ICodeBlock lines={[
-            { c: '#94a3b8', t: '# Установка' },
-            { c: '#e2e8f0', t: 'pip install cicada-tg' },
-            { c: '#94a3b8', t: '# Запуск' },
-            { c: '#3ecf8e', t: 'cicada bot.ccd' },
-          ]} />
-        </>
-      ),
-    },
-    {
-      id: 'install', emoji: '🖥️', color: '#38bdf8', glow: 'rgba(56,189,248,0.2)',
-      label: 'Установка', title: '6. Установка на ПК',
-      subtitle: 'Python 3.10+ и pip — всё что нужно.',
-      content: () => (
-        <>
-          <IList color="#38bdf8" title="Требования:" items={[
-            { icon: '🐍', text: 'Python 3.10+ (python.org)' },
-            { icon: '📦', text: 'pip (входит в Python)' },
-            { icon: '🤖', text: 'Telegram Bot Token от @BotFather' },
-          ]} />
-          <p style={{ ...pStyle, color: '#38bdf8', fontSize: 12, marginBottom: 6 }}>🪟 Windows (cmd / PowerShell):</p>
-          <ICodeBlock lines={[{ c: '#e2e8f0', t: 'pip install cicada-tg' }]} />
-          <p style={{ ...pStyle, color: '#38bdf8', fontSize: 12, marginBottom: 6 }}>🐧 Linux / macOS:</p>
-          <ICodeBlock lines={[{ c: '#e2e8f0', t: 'pip install cicada-tg --break-system-packages' }]} />
-          <ICard icon="⚠️">На Windows при установке Python поставь галочку «Add Python to PATH».</ICard>
-        </>
-      ),
-    },
-    {
-      id: 'tips', emoji: '⭐', color: '#f472b6', glow: 'rgba(244,114,182,0.2)',
-      label: 'Важно', title: '7. Важные правила',
-      subtitle: 'Без этого бот не запустится.',
-      content: () => (
-        <>
-          <IList color="#ef4444" title="⚠️ Обязательно:" items={[
-            { icon: '🔗', text: 'Блоки должны быть соединены в стек' },
-            { icon: '▶', text: 'Должен быть блок Старт' },
-            { icon: '🤖', text: 'В блоке Бот нужен токен' },
-          ]} />
-          <p style={{ ...pStyle, textAlign: 'center', color: '#ffd700', fontSize: 16, marginTop: 20 }}>🎉 Готово! Собирай своего бота!</p>
-        </>
-      ),
-    },
-  ];
-
-  const pStyle = { fontSize: 13.5, lineHeight: 1.7, color: 'rgba(232,234,240,0.75)', margin: '0 0 12px 0' };
-
-  function ICode({ children }) {
-    return (
-      <code style={{ background: 'rgba(255,255,255,0.09)', padding: '2px 6px', borderRadius: 4, fontFamily: 'monospace', fontSize: 12, color: '#3ecf8e' }}>{children}</code>
-    );
-  }
-
-  function ICard({ icon, children }) {
-    return (
-      <div style={{ display: 'flex', gap: 10, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, padding: '10px 14px', marginTop: 12 }}>
-        <span style={{ fontSize: 15, flexShrink: 0 }}>{icon}</span>
-        <p style={{ fontSize: 12.5, color: 'rgba(232,234,240,0.6)', margin: 0, lineHeight: 1.6 }}>{children}</p>
-      </div>
-    );
-  }
-
-  function IList({ color, title, items }) {
-    return (
-      <div style={{ marginBottom: 14 }}>
-        {title && <p style={{ fontSize: 12, fontWeight: 700, color, margin: '0 0 8px 0', letterSpacing: '0.03em' }}>{title}</p>}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {items.map((item, i) => (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={{ width: 28, height: 28, borderRadius: 6, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.09)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, flexShrink: 0 }}>{item.icon}</span>
-              <span style={{ fontSize: 13.5, color: 'rgba(232,234,240,0.85)' }}>{item.text}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  function IExample({ steps }) {
-    return (
-      <div style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 8, padding: '12px 14px', marginBottom: 14 }}>
-        <p style={{ fontSize: 10, color: 'rgba(232,234,240,0.35)', margin: '0 0 10px 0', letterSpacing: '0.1em', textTransform: 'uppercase' }}>Пример:</p>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {steps.map((step, i) => (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ width: 26, height: 26, borderRadius: 5, background: step.color + '20', border: `1px solid ${step.color}50`, color: step.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, flexShrink: 0 }}>{step.icon}</span>
-              <span style={{ fontSize: 13, color: 'rgba(232,234,240,0.8)', fontFamily: 'monospace' }}>{step.text}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  function ICodeBlock({ lines }) {
-    return (
-      <div style={{ background: '#0d0f16', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, padding: '12px 14px', marginBottom: 12, fontFamily: 'monospace', fontSize: 12.5, lineHeight: 2 }}>
-        {lines.map((l, i) => <div key={i} style={{ color: l.c }}>{l.t}</div>)}
-      </div>
-    );
-  }
-
-  function InstructionsModal({ onClose }) {
-    const [active, setActive] = React.useState(0);
-    const [animKey, setAnimKey] = React.useState(0);
-    const [dir, setDir] = React.useState(1);
-    const contentRef = React.useRef(null);
-    const s = INSTR_SECTIONS[active];
-
-    React.useEffect(() => {
-      const handler = (e) => { if (e.key === 'Escape') onClose(); };
-      window.addEventListener('keydown', handler);
-      return () => window.removeEventListener('keydown', handler);
-    }, [onClose]);
-
-    React.useEffect(() => {
-      if (contentRef.current) contentRef.current.scrollTop = 0;
-    }, [active]);
-
-    const goTo = (idx) => {
-      if (idx === active) return;
-      setDir(idx > active ? 1 : -1);
-      setAnimKey(k => k + 1);
-      setActive(idx);
-    };
-
-    const Content = s.content;
-
-    return (
-      <div
-        style={{ position: 'fixed', inset: 0, zIndex: 12000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, background: 'rgba(0,0,0,0.82)', backdropFilter: 'blur(8px)' }}
-        onClick={onClose}
-      >
-        <style>{`
-          @keyframes instrSlideR { from { opacity:0; transform:translateX(16px); } to { opacity:1; transform:translateX(0); } }
-          @keyframes instrSlideL { from { opacity:0; transform:translateX(-16px); } to { opacity:1; transform:translateX(0); } }
-          @keyframes instrFadeIn { from { opacity:0; transform:scale(0.97) translateY(10px); } to { opacity:1; transform:scale(1) translateY(0); } }
-          .instr-nav-btn:hover { background: rgba(255,255,255,0.04) !important; }
-          .instr-close:hover { background: rgba(239,68,68,0.12) !important; border-color: #ef4444 !important; color: #ef4444 !important; }
-          .instr-scroll::-webkit-scrollbar { width: 5px; }
-          .instr-scroll::-webkit-scrollbar-track { background: transparent; }
-          .instr-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
-          .instr-footer-btn:hover { opacity: 0.85; }
-        `}</style>
-
-        <div
-          style={{ width: '100%', maxWidth: 820, maxHeight: '88vh', display: 'flex', flexDirection: 'column', background: '#12131a', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 14, overflow: 'hidden', boxShadow: '0 40px 100px rgba(0,0,0,0.75), 0 0 0 1px rgba(255,255,255,0.03)', animation: 'instrFadeIn 0.25s cubic-bezier(0.34,1.3,0.64,1) forwards' }}
-          onClick={e => e.stopPropagation()}
-        >
-          {/* Top accent line */}
-          <div style={{ height: 2, background: `linear-gradient(to right, transparent, ${s.color}, transparent)`, transition: 'background 0.35s', flexShrink: 0 }} />
-
-          {/* Header */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '13px 20px', borderBottom: '1px solid rgba(255,255,255,0.06)', background: 'rgba(0,0,0,0.15)', flexShrink: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div style={{ width: 9, height: 9, borderRadius: 3, background: '#f97316', boxShadow: '0 0 8px rgba(249,115,22,0.7)', flexShrink: 0 }} />
-              <span style={{ fontSize: 14, fontWeight: 700, color: 'rgba(232,234,240,0.9)', fontFamily: 'system-ui' }}>
-                Инструкция{' '}
-                <span style={{ color: s.color, transition: 'color 0.3s' }}>Cicada Studio</span>
-              </span>
-            </div>
-            <button
-              className="instr-close"
-              onClick={onClose}
-              style={{ width: 28, height: 28, borderRadius: 6, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(232,234,240,0.4)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, transition: 'all 0.15s', fontFamily: 'system-ui' }}
-            >✕</button>
-          </div>
-
-          {/* Body */}
-          <div style={{ display: 'flex', flex: 1, overflow: 'hidden', minHeight: 0 }}>
-            {/* Sidebar */}
-            <div style={{ width: 170, flexShrink: 0, borderRight: '1px solid rgba(255,255,255,0.06)', background: 'rgba(0,0,0,0.12)', display: 'flex', flexDirection: 'column', padding: '6px 0', overflowY: 'auto' }}>
-              {INSTR_SECTIONS.map((sec, i) => {
-                const isAct = active === i;
-                return (
-                  <button
-                    key={sec.id}
-                    className="instr-nav-btn"
-                    onClick={() => goTo(i)}
-                    style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 9, padding: '9px 13px', background: isAct ? 'rgba(255,255,255,0.05)' : 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', transition: 'background 0.15s', width: '100%' }}
-                  >
-                    {isAct && <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 2, background: sec.color, boxShadow: `0 0 8px ${sec.color}`, borderRadius: '0 2px 2px 0' }} />}
-                    <span style={{ fontSize: 16 }}>{sec.emoji}</span>
-                    <span style={{ fontSize: 12, fontWeight: isAct ? 700 : 500, color: isAct ? 'rgba(232,234,240,0.95)' : 'rgba(232,234,240,0.38)', lineHeight: 1.3, transition: 'color 0.15s', fontFamily: 'system-ui' }}>{sec.label}</span>
-                  </button>
-                );
-              })}
-              {/* Progress dots */}
-              <div style={{ marginTop: 'auto', padding: '12px 0', display: 'flex', gap: 4, justifyContent: 'center', flexWrap: 'wrap' }}>
-                {INSTR_SECTIONS.map((sec, i) => (
-                  <div key={i} onClick={() => goTo(i)} style={{ width: i === active ? 14 : 5, height: 5, borderRadius: 3, background: i === active ? s.color : 'rgba(255,255,255,0.1)', cursor: 'pointer', transition: 'all 0.25s', boxShadow: i === active ? `0 0 7px ${s.color}` : 'none' }} />
-                ))}
-              </div>
-            </div>
-
-            {/* Content area */}
-            <div ref={contentRef} className="instr-scroll" style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
-              <div key={animKey} style={{ animation: `${dir > 0 ? 'instrSlideR' : 'instrSlideL'} 0.2s ease forwards` }}>
-                {/* Section header */}
-                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, marginBottom: 18 }}>
-                  <div style={{ width: 50, height: 50, borderRadius: 12, flexShrink: 0, background: s.glow, border: `1.5px solid ${s.color}55`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, boxShadow: `0 0 18px ${s.glow}` }}>{s.emoji}</div>
-                  <div>
-                    <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: s.color, textShadow: `0 0 12px ${s.glow}`, transition: 'color 0.3s', fontFamily: 'system-ui' }}>{s.title}</h2>
-                    <p style={{ margin: '4px 0 0', fontSize: 12.5, color: 'rgba(232,234,240,0.45)', lineHeight: 1.5, fontFamily: 'system-ui' }}>{s.subtitle}</p>
-                  </div>
-                </div>
-                <div style={{ height: 1, background: `linear-gradient(to right, ${s.color}50, transparent)`, marginBottom: 18 }} />
-                <Content />
-              </div>
-            </div>
-          </div>
-
-          {/* Footer */}
-          <div style={{ flexShrink: 0, padding: '10px 20px', borderTop: '1px solid rgba(255,255,255,0.06)', background: 'rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <button
-              className="instr-footer-btn"
-              onClick={() => goTo(Math.max(0, active - 1))}
-              disabled={active === 0}
-              style={{ padding: '6px 16px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: active === 0 ? 'not-allowed' : 'pointer', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', color: active === 0 ? 'rgba(232,234,240,0.2)' : 'rgba(232,234,240,0.65)', transition: 'all 0.15s', fontFamily: 'system-ui' }}
-            >← Назад</button>
-            <span style={{ fontSize: 11, color: 'rgba(232,234,240,0.3)', fontFamily: 'monospace' }}>{active + 1} / {INSTR_SECTIONS.length}</span>
-            <button
-              className="instr-footer-btn"
-              onClick={() => { if (active === INSTR_SECTIONS.length - 1) onClose(); else goTo(active + 1); }}
-              style={{ padding: '6px 16px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', background: active === INSTR_SECTIONS.length - 1 ? s.color + '20' : 'rgba(255,255,255,0.05)', border: `1px solid ${active === INSTR_SECTIONS.length - 1 ? s.color + '60' : 'rgba(255,255,255,0.1)'}`, color: active === INSTR_SECTIONS.length - 1 ? s.color : 'rgba(232,234,240,0.7)', transition: 'all 0.15s', fontFamily: 'system-ui' }}
-            >{active === INSTR_SECTIONS.length - 1 ? '✓ Понятно!' : 'Далее →'}</button>
-          </div>
-        </div>
-      </div>
-    );
-  }
   
