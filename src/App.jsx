@@ -160,11 +160,35 @@ async function postJsonWithCsrf(url, body) {
 async function fetchOauthBootstrapUser() {
   const r = await fetch('/api/auth/oauth-bootstrap', { credentials: 'include' });
   const data = await r.json().catch(() => ({}));
+  if (data?.twofaRequired && data?.user) {
+    const e = new Error('Требуется код 2FA');
+    e.twofaRequired = true;
+    e.user = data.user;
+    throw e;
+  }
   if (data?.ok && data.token && data.user) {
     storeJwt(data.token);
     return data.user;
   }
   return null;
+}
+
+async function completeOauth2FA(totp = '') {
+  const res = await fetch('/api/auth/oauth-2fa/complete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ totp }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (data?.twofaRequired) {
+    const e = new Error(data.error || 'Неверный код 2FA');
+    e.twofaRequired = true;
+    throw e;
+  }
+  if (data?.error) throw new Error(data.error);
+  if (data.token) storeJwt(data.token);
+  return data.user;
 }
 
 async function registerUser(name, email, password) {
@@ -2761,6 +2785,7 @@ export default function App() {
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [authTab, setAuthTab] = useState('login'); // 'login' | 'register'
+  const [oauth2faPending, setOauth2faPending] = useState(false);
   const [userProjects, setUserProjects] = useState([]);
   const [projectName, setProjectName] = useState('');
   const [showExamples, setShowExamples] = useState(false);
@@ -3995,7 +4020,13 @@ const EXAMPLE_FULL = `версия "1.0"
               setShowAuthModal(true);
             }
           })
-          .catch(() => {
+          .catch((err) => {
+            if (err?.twofaRequired) {
+              setOauth2faPending(true);
+              setAuthTab('login');
+              setShowAuthModal(true);
+              return;
+            }
             clearSession();
             setCurrentUser(null);
             setShowAuthModal(true);
@@ -4015,7 +4046,15 @@ const EXAMPLE_FULL = `версия "1.0"
             setShowAuthModal(false);
           }
         })
-        .catch(() => setShowAuthModal(false));
+        .catch((err) => {
+          if (err?.twofaRequired) {
+            setOauth2faPending(true);
+            setAuthTab('login');
+            setShowAuthModal(true);
+            return;
+          }
+          setShowAuthModal(false);
+        });
     }
 
     // Check if bot is already running on server after page refresh
@@ -4232,7 +4271,9 @@ const EXAMPLE_FULL = `версия "1.0"
       onClose={() => setShowAuthModal(false)}
       onLogin={async (email, password, totp, tgData, passkeyMode = false) => {
         let user;
-        if (tgData) {
+        if (oauth2faPending) {
+          user = await completeOauth2FA(totp);
+        } else if (tgData) {
           user = await telegramAuth(tgData);
         } else if (passkeyMode) {
           user = await loginWithPasskey(email);
@@ -4241,10 +4282,12 @@ const EXAMPLE_FULL = `версия "1.0"
         }
         saveSession(user);
         setCurrentUser(user);
+        setOauth2faPending(false);
         await loadUserProjects(user.id);
         setShowAuthModal(false);
         showToast('Вход выполнен!', 'success');
       }}
+      oauth2faPending={oauth2faPending}
       onRegister={async (name, email, password) => {
         const result = await registerUser(name, email, password);
         if (result.needVerify) {
@@ -7249,7 +7292,7 @@ function TwoFASettingsCard({ user, onUpdateUser, showToast }) {
   </div>);
 }
 
-function AuthModal({ tab, setTab, onClose, onLogin, onRegister, canClose = true }) {
+function AuthModal({ tab, setTab, onClose, onLogin, onRegister, canClose = true, oauth2faPending = false }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -7277,8 +7320,10 @@ function AuthModal({ tab, setTab, onClose, onLogin, onRegister, canClose = true 
 
   const validate = () => {
     const e = {};
-    if (!email || !email.includes('@')) e.email = 'Введите корректный email';
-    if (!password || password.length < 6) e.password = 'Минимум 6 символов';
+    if (!(oauth2faPending && tab === 'login')) {
+      if (!email || !email.includes('@')) e.email = 'Введите корректный email';
+      if (!password || password.length < 6) e.password = 'Минимум 6 символов';
+    }
     if (tab === 'register' && !name.trim()) e.name = 'Введите имя';
     if (tab === 'register' && password !== confirmPassword) e.confirmPassword = 'Пароли не совпадают';
     setErrors(e);
@@ -7292,6 +7337,7 @@ function AuthModal({ tab, setTab, onClose, onLogin, onRegister, canClose = true 
     setLoading(true);
     try {
       if (tab === 'login') {
+        if (oauth2faPending) setTotpRequired(true);
         await onLogin(email, password, totpCode);
       } else {
         const result = await onRegister(name, email, password);

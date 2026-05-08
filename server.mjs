@@ -2535,6 +2535,38 @@ app.get('/api/admin/system', (req, res) => {
   });
 });
 
+app.get('/api/admin/update-status', (req, res) => {
+  if (!isAdminAuthed(req)) return res.status(403).json({ error: 'Forbidden' });
+  const root = path.resolve(process.cwd());
+  const fetchRes = spawnSync('git', ['-C', root, 'fetch', '--quiet'], { encoding: 'utf8', timeout: 30_000 });
+  if (fetchRes.error) return res.status(500).json({ error: `git fetch: ${fetchRes.error.message}` });
+  const localRes = spawnSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' });
+  const remoteRes = spawnSync('git', ['-C', root, 'rev-parse', '@{u}'], { encoding: 'utf8' });
+  if (localRes.status !== 0 || remoteRes.status !== 0) return res.status(500).json({ error: 'Не удалось получить состояние Git (проверьте upstream ветки).' });
+  const local = String(localRes.stdout || '').trim();
+  const remote = String(remoteRes.stdout || '').trim();
+  return res.json({ success: true, hasUpdate: Boolean(local && remote && local !== remote), local, remote });
+});
+
+app.post('/api/admin/update-apply', (req, res) => {
+  if (!isAdminAuthed(req)) return res.status(403).json({ error: 'Forbidden' });
+  const root = path.resolve(process.cwd());
+  const pullRes = spawnSync('git', ['-C', root, 'pull', '--ff-only'], { encoding: 'utf8', timeout: 120_000 });
+  if (pullRes.error || pullRes.status !== 0) {
+    return res.status(500).json({ error: `git pull: ${pullRes.error?.message || pullRes.stderr || 'ошибка'}` });
+  }
+  const buildRes = spawnSync('npm', ['run', 'build'], { cwd: root, encoding: 'utf8', timeout: 10 * 60_000 });
+  if (buildRes.error || buildRes.status !== 0) {
+    return res.status(500).json({ error: `npm run build: ${buildRes.error?.message || buildRes.stderr || 'ошибка'}` });
+  }
+  const pm2Res = spawnSync('pm2', ['restart', 'server.mjs', '--name', 'cicada-server'], { cwd: root, encoding: 'utf8', timeout: 60_000 });
+  if (pm2Res.error || pm2Res.status !== 0) {
+    return res.status(500).json({ error: `pm2 restart: ${pm2Res.error?.message || pm2Res.stderr || 'ошибка'}` });
+  }
+  recordAdminAction(req, 'system_update_apply', null, { ok: true });
+  return res.json({ success: true, message: 'Обновление установлено и сервер перезапущен.' });
+});
+
 function buildCicadaSourceArchiveBuffer() {
   const root = path.resolve(process.cwd());
   const gitDir = path.join(root, '.git');
