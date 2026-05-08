@@ -1778,7 +1778,7 @@ function decodeCborFirst(buf) {
   return readItem();
 }
 
-function coseEc2ToPem(coseKey) {
+function cosePublicKeyToPem(coseKey) {
   const kty = coseKey.get(1);
   const alg = coseKey.get(3);
   const crv = coseKey.get(-1);
@@ -1921,7 +1921,7 @@ app.post('/api/admin/passkey/register-options', adminLoginRateLimit, (req, res) 
       challenge: base.challenge,
       rp: { name: ADMIN_WEBAUTHN_RP_NAME, id: base.rpId },
       user: { id: b64url(Buffer.from('admin')), name: 'admin', displayName: 'Cicada Admin' },
-      pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+      pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
       timeout: 60000,
       authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'required', requireResidentKey: true },
       attestation: 'none',
@@ -1956,7 +1956,7 @@ app.post('/api/admin/passkey/register', adminLoginRateLimit, (req, res) => {
     res.json({ ok: true, count: credentials.length });
   } catch (err) {
     recordAuthError('admin_passkey_register', req, null, err.message);
-    res.status(400).json({ error: 'Не удалось зарегистрировать passkey' });
+    res.status(400).json({ error: err.message || 'Не удалось зарегистрировать passkey' });
   }
 });
 
