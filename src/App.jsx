@@ -7307,6 +7307,12 @@ function TwoFASettingsCard({ user, onUpdateUser, showToast }) {
 }
 
 function AuthModal({ tab, setTab, onClose, onLogin, onRegister, canClose = true, oauth2faPending = false }) {
+  const uiLang = React.useMemo(() => {
+    const lang = (typeof navigator !== 'undefined' ? navigator.language : 'ru').toLowerCase();
+    if (lang.startsWith('en')) return 'en';
+    if (lang.startsWith('uk')) return 'uk';
+    return 'ru';
+  }, []);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
