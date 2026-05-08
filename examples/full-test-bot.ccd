@@ -116,13 +116,13 @@
     использовать full_test_меню
 
 блок full_test_api:
-    запомни payload = {"source":"Full Test","ok":true}
-    http_заголовки payload
     http_get "https://jsonplaceholder.typicode.com/todos/1" → api_get
-    http_post "https://jsonplaceholder.typicode.com/posts" json payload → api_post
+    http_post "https://jsonplaceholder.typicode.com/posts" с "source=Full Test" → api_post
     http_patch "https://jsonplaceholder.typicode.com/posts/1" с "title=Full Test" → api_patch
-    http_put "https://jsonplaceholder.typicode.com/posts/1" json payload → api_put
+    http_put "https://jsonplaceholder.typicode.com/posts/1" с "source=Full Test" → api_put
     http_delete "https://jsonplaceholder.typicode.com/posts/1" → api_delete
+    запомни rows = "SQL demo"
+    запомни намерение = "other"
     запрос_бд "select 1 as full_test" → rows
     классифицировать ["support", "sales", "other"] → намерение
     ответ "🌐 API проверены. GET: {api_get}\nPOST: {api_post}\nPATCH: {api_patch}\nPUT: {api_put}\nDELETE: {api_delete}\nSQL: {rows}\nIntent: {намерение}"
