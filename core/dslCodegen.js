@@ -246,11 +246,11 @@ function emitMenu(p) {
     .split('\n')
     .map((l) => l.trim())
     .filter(Boolean);
-  if (!title && !items.length) return '# меню: (пустой блок)';
-  const head = title ? `меню ${q(title)}:` : 'меню "":';
-  if (!items.length) return head;
-  // В parser.py тело «меню» не разбирается — пункты сохраняем в комментариях.
-  return [head, ...items.map((it) => `# меню пункт: ${q(it)}`)].join('\n');
+  if (!title && !items.length) return 'ответ ""';
+  const out = [];
+  if (title) out.push(`ответ ${q(title)}`);
+  if (items.length) out.push(`кнопки ${items.map((it) => q(it)).join(' ')}`);
+  return out.join('\n');
 }
 
 function quoteListLines(value) {
