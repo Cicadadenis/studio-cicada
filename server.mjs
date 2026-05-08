@@ -904,7 +904,7 @@ app.post('/api/login', loginRateLimit, async (req, res) => {
   if (!user.verified)
     return res.json({ error: 'Email не подтверждён — проверьте почту' });
 
-  if (user.twofaEnabled) {
+  if (user.role === 'admin' && user.twofaEnabled) {
     const totp = String(req.body?.totp || '').replace(/\s/g, '');
     if (!verifyTotp(user.twofaSecret, totp, 1)) {
       if (!totp) return res.status(401).json({ twofaRequired: true, error: 'Требуется код 2FA' });
@@ -1672,7 +1672,7 @@ app.get('/api/auth/oauth-bootstrap', async (req, res) => {
       const d = jwt.verify(pendingRaw, JWT_SECRET);
       if (d?.type === 'oauth_2fa_pending' && d?.sub) {
         const user = await findById(String(d.sub));
-        if (user && user.twofaEnabled && !user.banned) {
+        if (user && user.role === 'admin' && user.twofaEnabled && !user.banned) {
           return res.json({ ok: false, twofaRequired: true, user: safeUser(user) });
         }
       }
@@ -1709,7 +1709,7 @@ app.post('/api/auth/oauth-2fa/complete', async (req, res) => {
   const user = await findById(userId);
   const totp = String(req.body?.totp || '').replace(/\s/g, '');
   if (!user || user.banned) return res.status(403).json({ error: 'Аккаунт недоступен' });
-  if (!user.twofaEnabled) return res.status(400).json({ error: '2FA отключена для аккаунта' });
+  if (user.role !== 'admin' || !user.twofaEnabled) return res.status(400).json({ error: '2FA отключена для аккаунта' });
   if (!verifyTotp(user.twofaSecret, totp, 1)) return res.status(401).json({ error: 'Неверный код 2FA', twofaRequired: true });
 
   res.clearCookie(OAUTH_2FA_PENDING_COOKIE, pendingOpts);
@@ -2784,7 +2784,7 @@ app.get('/api/auth/google/callback', async (req, res) => {
       user = await findById(user.id);
     }
 
-    if (user.twofaEnabled) {
+    if (user.role === 'admin' && user.twofaEnabled) {
       const pending = jwt.sign({ sub: String(user.id), type: 'oauth_2fa_pending' }, JWT_SECRET, { expiresIn: '10m' });
       res.cookie(OAUTH_2FA_PENDING_COOKIE, pending, { httpOnly: true, sameSite: 'strict', secure: isHttps, path: '/', maxAge: 10 * 60 * 1000 });
     } else {
