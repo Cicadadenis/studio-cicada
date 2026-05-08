@@ -1448,7 +1448,20 @@ class Executor:
         self.tg.send_poll(ctx.chat_id, stmt.question, stmt.options)
 
     def _exec_send_invoice(self, stmt: SendInvoice, ctx):
-        self.tg.send_invoice(ctx.chat_id, stmt.title, stmt.description, stmt.amount)
+        try:
+            self.tg.send_invoice(ctx.chat_id, stmt.title, stmt.description, stmt.amount)
+        except requests.exceptions.HTTPError as e:
+            details = ""
+            try:
+                payload = e.response.json()
+                details = payload.get("description", "")
+            except Exception:
+                details = str(e)
+            raise CicadaRuntimeError(
+                "Ошибка оплаты Telegram: не настроен provider token или подключён неверный платёжный провайдер. "
+                f"Telegram ответил: {details}",
+                stmt,
+            )
 
     def _exec_send_game(self, stmt: SendGame, ctx):
         self.tg.send_game(ctx.chat_id, stmt.short_name)
