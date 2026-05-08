@@ -8873,7 +8873,6 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onLoadP
                         {[
                           { icon: '🔒', title: t.changePassword, sub: t.passwordChangedAgo },
                           { icon: '🫆', title: 'Passkey / отпечаток', sub: passkeyCount == null ? 'Быстрый вход без пароля' : `Активно: ${passkeyCount}`, subGreen: passkeyCount > 0 ? 'Включено' : null },
-                          { icon: '🛡', title: t.twoFactor, sub: user.twofaEnabled ? null : t.disabled, subGreen: user.twofaEnabled ? t.enabled : null },
                         ].map(({ icon, title, sub, subGreen }) => (
                           <div
                             key={title}
