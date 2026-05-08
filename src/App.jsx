@@ -144,12 +144,14 @@ async function apiFetch(url, options = {}, retryCsrf = true) {
 
 async function postJsonWithCsrf(url, body) {
   const token = await getCsrfTokenForRequest();
+  const jwt = getStoredJwt();
   return fetch(url, {
     method: 'POST',
     credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
       'x-csrf-token': token,
+      ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
     },
     body: JSON.stringify(body ?? {}),
   });
@@ -4228,10 +4230,12 @@ const EXAMPLE_FULL = `версия "1.0"
       setTab={setAuthTab}
       canClose={!!currentUser}
       onClose={() => setShowAuthModal(false)}
-      onLogin={async (email, password, totp, tgData) => {
+      onLogin={async (email, password, totp, tgData, passkeyMode = false) => {
         let user;
         if (tgData) {
           user = await telegramAuth(tgData);
+        } else if (passkeyMode) {
+          user = await loginWithPasskey(email);
         } else {
           user = await loginUser(email, password, totp);
         }
@@ -6724,6 +6728,68 @@ async function telegramAuth(tgData) {
   return data.user;
 }
 
+
+function webauthnB64urlToBuffer(value) {
+  let s = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
+  while (s.length % 4) s += '=';
+  const bin = atob(s);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+  return bytes.buffer;
+}
+
+function webauthnBufferToB64url(buffer) {
+  const bytes = new Uint8Array(buffer || new ArrayBuffer(0));
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 1) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function prepareWebauthnOptions(options) {
+  const publicKey = { ...(options || {}) };
+  if (publicKey.challenge) publicKey.challenge = webauthnB64urlToBuffer(publicKey.challenge);
+  ['allowCredentials', 'excludeCredentials'].forEach((key) => {
+    if (Array.isArray(publicKey[key])) {
+      publicKey[key] = publicKey[key].map((c) => ({ ...c, id: webauthnB64urlToBuffer(c.id) }));
+    }
+  });
+  if (publicKey.user?.id) publicKey.user = { ...publicKey.user, id: webauthnB64urlToBuffer(publicKey.user.id) };
+  return publicKey;
+}
+
+function serializeWebauthnCredential(credential, challenge) {
+  const out = { id: credential.id, rawId: webauthnBufferToB64url(credential.rawId), type: credential.type, challenge, response: {} };
+  ['clientDataJSON', 'attestationObject', 'authenticatorData', 'signature', 'userHandle'].forEach((key) => {
+    if (credential.response?.[key]) out.response[key] = webauthnBufferToB64url(credential.response[key]);
+  });
+  return out;
+}
+
+async function loginWithPasskey(email) {
+  if (!window.PublicKeyCredential) throw new Error('Этот браузер не поддерживает passkey');
+  const optionsRes = await postJsonWithCsrf('/api/passkey/login-options', { email });
+  const options = await optionsRes.json().catch(() => ({}));
+  if (!optionsRes.ok) throw new Error(options.error || 'Passkey не найден');
+  const credential = await navigator.credentials.get({ publicKey: prepareWebauthnOptions(options.publicKey) });
+  const verifyRes = await postJsonWithCsrf('/api/passkey/login', serializeWebauthnCredential(credential, options.challenge));
+  const data = await verifyRes.json().catch(() => ({}));
+  if (!verifyRes.ok || data.error) throw new Error(data.error || 'Не удалось войти по passkey');
+  if (data.token) storeJwt(data.token);
+  return data.user;
+}
+
+async function registerProfilePasskey() {
+  if (!window.PublicKeyCredential) throw new Error('Этот браузер не поддерживает passkey');
+  const optionsRes = await postJsonWithCsrf('/api/passkey/register-options', {});
+  const options = await optionsRes.json().catch(() => ({}));
+  if (!optionsRes.ok) throw new Error(options.error || 'Не удалось подготовить passkey');
+  const credential = await navigator.credentials.create({ publicKey: prepareWebauthnOptions(options.publicKey) });
+  const verifyRes = await postJsonWithCsrf('/api/passkey/register', serializeWebauthnCredential(credential, options.challenge));
+  const data = await verifyRes.json().catch(() => ({}));
+  if (!verifyRes.ok || data.error) throw new Error(data.error || 'Не удалось сохранить passkey');
+  return data.passkeys || [];
+}
+
 const TG_BOT_NAME = import.meta.env.VITE_TG_BOT_NAME || '';
 
 /** Абсолютный URL callback для виджета (тот же хост, что и API). */
@@ -7198,6 +7264,23 @@ function AuthModal({ tab, setTab, onClose, onLogin, onRegister, canClose = true 
     }
   };
 
+
+  const handlePasskeyLogin = async () => {
+    setServerError('');
+    if (!email || !email.includes('@')) {
+      setErrors({ email: 'Введите email, к которому привязан passkey' });
+      return;
+    }
+    setLoading(true);
+    try {
+      await onLogin(email, null, '', null, true);
+    } catch (err) {
+      setServerError(translateServerError(err.message));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleForgot = async (e) => {
     e.preventDefault();
     setServerError('');
@@ -7308,6 +7391,10 @@ function AuthModal({ tab, setTab, onClose, onLogin, onRegister, canClose = true 
         .am-input-wrap input::placeholder { color: rgba(255,255,255,0.28); }
         .am-input-wrap input { caret-color: #f97316; }
         .am-social-btn { flex:1; display:flex; align-items:center; justify-content:center; gap:9px; padding:13px 14px; border-radius:12px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.04); color:rgba(255,255,255,0.85); font-family:inherit; font-weight:500; font-size:14px; cursor:pointer; transition:all .2s; }
+        @keyframes passkeyFingerprintPulse { 0%,100%{transform:scale(1);filter:drop-shadow(0 0 2px rgba(255,255,255,.25))} 50%{transform:scale(1.15);filter:drop-shadow(0 0 10px rgba(62,207,142,.85))} }
+        @keyframes passkeyRingScan { 0%{transform:scale(.65);opacity:.75} 100%{transform:scale(1.7);opacity:0} }
+        .passkey-mobile-login { display:none; }
+        @media (max-width: 640px) { .passkey-mobile-login { display:flex; } }
         .am-social-btn:hover { background:rgba(255,255,255,0.08); border-color:rgba(255,255,255,0.2); transform:translateY(-1px); }
         .am-tg-btn { background:rgba(33,150,243,0.07) !important; border-color:rgba(33,150,243,0.25) !important; }
         .am-tg-btn:hover { background:rgba(33,150,243,0.14) !important; border-color:rgba(33,150,243,0.45) !important; }
@@ -7596,6 +7683,20 @@ function AuthModal({ tab, setTab, onClose, onLogin, onRegister, canClose = true 
                 : (tab === 'login' ? '→ Войти в аккаунт' : '✦ Создать аккаунт')
               }
             </button>
+
+            {tab === 'login' && (
+              <button
+                type="button"
+                className="passkey-mobile-login"
+                onClick={handlePasskeyLogin}
+                disabled={loading}
+                style={{ width: '100%', padding: '14px 18px', fontSize: 15, fontWeight: 800, fontFamily: 'Syne,system-ui', background: 'linear-gradient(135deg,#7c3aed,#2563eb)', color: '#fff', border: 'none', borderRadius: 12, cursor: loading ? 'not-allowed' : 'pointer', boxShadow: '0 8px 24px rgba(37,99,235,0.32)', alignItems: 'center', justifyContent: 'center', gap: 10, letterSpacing: '0.12em', position: 'relative', overflow: 'hidden', opacity: loading ? 0.65 : 1 }}
+              >
+                <span style={{ position: 'absolute', width: 42, height: 42, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.25)', animation: 'passkeyRingScan 1.5s ease-out infinite' }} />
+                <span style={{ fontSize: 21, lineHeight: 1, animation: 'passkeyFingerprintPulse 1.4s ease-in-out infinite', zIndex: 1 }}>🫆</span>
+                <span style={{ zIndex: 1 }}>ВОЙТИ</span>
+              </button>
+            )}
 
             {tab === 'login' && (
               <div style={{ textAlign: 'center', fontSize: 13, color: 'rgba(255,255,255,0.3)' }}>
@@ -8109,6 +8210,15 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onLoadP
     setTestToken(user.test_token || '');
   }, [user.test_token]);
 
+
+  React.useEffect(() => {
+    let cancelled = false;
+    apiFetch('/api/passkeys')
+      .then((data) => { if (!cancelled) setPasskeyCount(Array.isArray(data.passkeys) ? data.passkeys.length : 0); })
+      .catch(() => { if (!cancelled) setPasskeyCount(null); });
+    return () => { cancelled = true; };
+  }, [user.id]);
+
   // Email change flow: 'idle' | 'sending' | 'code-sent' | 'confirming'
   const [emailChangeStep, setEmailChangeStep] = useState('idle');
   const [emailChangeCode, setEmailChangeCode] = useState('');
@@ -8117,6 +8227,9 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onLoadP
   const [supportFrom, setSupportFrom] = useState(user.email || user.name || '');
   const [supportSubject, setSupportSubject] = useState('');
   const [supportMessage, setSupportMessage] = useState('');
+  const [supportSending, setSupportSending] = useState(false);
+  const [passkeySaving, setPasskeySaving] = useState(false);
+  const [passkeyCount, setPasskeyCount] = useState(null);
 
   const handleUpdateProfile = async () => {
     const nameChanged = newName !== user.name;
@@ -8247,21 +8360,42 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onLoadP
     } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
   };
 
-  const handleSupportSubmit = () => {
+  const handleSupportSubmit = async () => {
     if (!supportFrom.trim() || !supportSubject.trim() || !supportMessage.trim()) {
       showToast('Заполните поля: кто, тема и суть вопроса', 'error');
       return;
     }
-    const payload =
-`📩 Новое обращение в поддержку
+    setSupportSending(true);
+    try {
+      const res = await postJsonWithCsrf('/api/support/requests', {
+        from: supportFrom.trim(),
+        email: user.email || supportFrom.trim(),
+        subject: supportSubject.trim(),
+        message: supportMessage.trim(),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) throw new Error(data.error || 'Не удалось отправить обращение');
+      setSupportSubject('');
+      setSupportMessage('');
+      showToast('✅ Обращение отправлено в поддержку', 'success');
+    } catch (e) {
+      showToast('Ошибка: ' + (e.message || 'не удалось отправить обращение'), 'error');
+    } finally {
+      setSupportSending(false);
+    }
+  };
 
-👤 От: ${supportFrom.trim()}
-📝 Тема: ${supportSubject.trim()}
-💬 Суть:
-${supportMessage.trim()}`;
-    const tgUrl = `https://t.me/satanasat?text=${encodeURIComponent(payload)}`;
-    window.open(tgUrl, '_blank', 'noopener,noreferrer');
-    showToast('Открыт Telegram для отправки сообщения', 'success');
+  const handleRegisterPasskey = async () => {
+    setPasskeySaving(true);
+    try {
+      const passkeys = await registerProfilePasskey();
+      setPasskeyCount(passkeys.length);
+      showToast('✅ Passkey добавлен для входа', 'success');
+    } catch (e) {
+      showToast('Ошибка passkey: ' + (e.message || 'не удалось добавить passkey'), 'error');
+    } finally {
+      setPasskeySaving(false);
+    }
   };
 
   const formatDate = (dateString) => new Date(dateString).toLocaleDateString('ru-RU', {
@@ -8618,6 +8752,7 @@ ${supportMessage.trim()}`;
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                         {[
                           { icon: '🔒', title: t.changePassword, sub: t.passwordChangedAgo },
+                          { icon: '🫆', title: 'Passkey / отпечаток', sub: passkeyCount == null ? 'Быстрый вход без пароля' : `Активно: ${passkeyCount}`, subGreen: passkeyCount > 0 ? 'Включено' : null },
                           { icon: '🛡', title: t.twoFactor, sub: user.twofaEnabled ? null : t.disabled, subGreen: user.twofaEnabled ? t.enabled : null },
                         ].map(({ icon, title, sub, subGreen }) => (
                           <div
@@ -8776,6 +8911,15 @@ ${supportMessage.trim()}`;
                     <div style={{ flex: 1, height: 1, background: 'rgba(96,165,250,0.15)' }} />
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    <div style={{ padding: '12px 14px', borderRadius: 12, background: 'rgba(124,58,237,0.08)', border: '1px solid rgba(124,58,237,0.24)' }}>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: '#ddd6fe', fontFamily: 'Syne, system-ui', marginBottom: 6 }}>🫆 Авторизация по passkey</div>
+                      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', lineHeight: 1.55, marginBottom: 10 }}>
+                        Добавьте отпечаток, Face ID или PIN устройства для быстрого входа без пароля. {passkeyCount == null ? '' : `Активно: ${passkeyCount}`}
+                      </div>
+                      <button onClick={handleRegisterPasskey} disabled={passkeySaving} style={{ padding: '10px 14px', fontSize: 12, fontWeight: 800, fontFamily: 'Syne, system-ui', background: 'linear-gradient(135deg,#7c3aed,#2563eb)', color: '#fff', border: 'none', borderRadius: 10, cursor: passkeySaving ? 'not-allowed' : 'pointer', opacity: passkeySaving ? 0.65 : 1 }}>
+                        {passkeySaving ? '⏳ Ожидаем устройство...' : 'Добавить passkey'}
+                      </button>
+                    </div>
                     <div>
                       <label style={{ display: 'block', fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8, fontFamily: 'Syne, system-ui' }}>Текущий пароль</label>
                       <input type="password" value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} onFocus={() => setFocusedField('curPass')} onBlur={() => setFocusedField(null)} style={inputBase('curPass')} placeholder="••••••••" autoComplete="current-password" />
@@ -8810,7 +8954,7 @@ ${supportMessage.trim()}`;
                 <div style={{ background: 'rgba(16,185,129,0.05)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: 14, padding: 16 }}>
                   <div style={{ fontSize: 16, fontWeight: 800, color: '#e5e7eb', fontFamily: 'Syne, system-ui', marginBottom: 6 }}>Поддержка</div>
                   <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)', lineHeight: 1.6 }}>
-                    Заполните форму, затем откроется Telegram с готовым текстом для отправки в <strong>@satanasat</strong>.
+                    Заполните форму — обращение появится в админ-панели во вкладке <strong>Обращения</strong>.
                   </div>
                 </div>
 
@@ -8852,9 +8996,10 @@ ${supportMessage.trim()}`;
                   </div>
                   <button
                     onClick={handleSupportSubmit}
-                    style={{ alignSelf: 'flex-start', padding: '12px 16px', fontSize: 13, fontWeight: 700, fontFamily: 'Syne, system-ui', background: 'linear-gradient(135deg,#3ecf8e,#0ea5e9)', color: '#111', border: 'none', borderRadius: 12, cursor: 'pointer' }}
+                    disabled={supportSending}
+                    style={{ alignSelf: 'flex-start', padding: '12px 16px', fontSize: 13, fontWeight: 700, fontFamily: 'Syne, system-ui', background: 'linear-gradient(135deg,#3ecf8e,#0ea5e9)', color: '#111', border: 'none', borderRadius: 12, cursor: supportSending ? 'not-allowed' : 'pointer', opacity: supportSending ? 0.65 : 1 }}
                   >
-                    Отправить в Telegram @satanasat
+                    {supportSending ? '⏳ Отправляем...' : 'Отправить в поддержку'}
                   </button>
                 </div>
               </div>

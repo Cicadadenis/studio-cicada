@@ -659,6 +659,11 @@
     .btn-grant-sub:disabled { opacity: 0.4; cursor: not-allowed; }
 
     .mobile-only-passkey { display: none; }
+    .admin-passkey-animated { position: relative; overflow: hidden; align-items: center; justify-content: center; gap: 10px; letter-spacing: 0.14em; }
+    .passkey-fingerprint { position: relative; z-index: 1; font-size: 20px; animation: adminFingerprintPulse 1.35s ease-in-out infinite; }
+    .passkey-scan-ring { position: absolute; width: 42px; height: 42px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.28); animation: adminPasskeyRingScan 1.45s ease-out infinite; }
+    @keyframes adminFingerprintPulse { 0%,100%{transform:scale(1);filter:drop-shadow(0 0 2px rgba(255,255,255,.2))} 50%{transform:scale(1.16);filter:drop-shadow(0 0 10px rgba(62,207,142,.9))} }
+    @keyframes adminPasskeyRingScan { 0%{transform:scale(.65);opacity:.75} 100%{transform:scale(1.75);opacity:0} }
 
     /* ── Responsive ── */
     @media (max-width: 640px) {
@@ -764,9 +769,10 @@
           <span>→</span>
           <span>ВОЙТИ</span>
         </button>
-        <button class="btn-primary mobile-only-passkey" id="passkey-login-btn" onclick="tryPasskeyLogin()" style="display:none;margin-top:10px;background:linear-gradient(135deg,#7c3aed,#2563eb)">
-          <span>🔐</span>
-          <span>ВОЙТИ ПО ОТПЕЧАТКУ</span>
+        <button class="btn-primary mobile-only-passkey admin-passkey-animated" id="passkey-login-btn" onclick="tryPasskeyLogin()" style="display:none;margin-top:10px;background:linear-gradient(135deg,#7c3aed,#2563eb)">
+          <span class="passkey-scan-ring"></span>
+          <span class="passkey-fingerprint">🫆</span>
+          <span>ВОЙТИ</span>
         </button>
 
         <div class="error-msg" id="login-error">⚠ Неверный ключ, код или отпечаток</div>
@@ -1095,7 +1101,7 @@
       var errEl = document.getElementById('login-error');
       errEl.textContent = '⚠ ' + (e.message || 'Не удалось войти по отпечатку / Face ID');
       errEl.style.display = 'flex';
-      if (btn) { btn.disabled = false; btn.innerHTML = '<span>🔐</span><span>ВОЙТИ ПО ОТПЕЧАТКУ</span>'; }
+      if (btn) { btn.disabled = false; btn.innerHTML = '<span class="passkey-scan-ring"></span><span class="passkey-fingerprint">🫆</span><span>ВОЙТИ</span>'; }
     }
   }
 
