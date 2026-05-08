@@ -650,7 +650,7 @@ def parse_expr(raw: str):
       8. унарный -
       9. атом: literal, variable, func(), (expr)
     """
-    tokens = _tokenize_expr(raw.strip())
+    tokens = _tokenize_expr(_normalize_expr_operators(raw.strip()))
     if not tokens:
         return Literal("")
     ep = _ExprParser(tokens)
@@ -659,6 +659,40 @@ def parse_expr(raw: str):
         remaining = " ".join(str(t) for t in tokens[ep.pos:])
         raise SyntaxError(f"Непарсированный остаток выражения: {remaining!r}")
     return node
+
+
+def _normalize_expr_operators(src: str) -> str:
+    """Приводит JS-операторы логики к DSL-вариантам вне строковых литералов."""
+    out = []
+    i = 0
+    in_single = False
+    in_double = False
+
+    while i < len(src):
+        ch = src[i]
+        if ch == "'" and not in_double:
+            in_single = not in_single
+            out.append(ch)
+            i += 1
+            continue
+        if ch == '"' and not in_single:
+            in_double = not in_double
+            out.append(ch)
+            i += 1
+            continue
+        if not in_single and not in_double:
+            if src.startswith("&&", i):
+                out.append(" и ")
+                i += 2
+                continue
+            if src.startswith("||", i):
+                out.append(" или ")
+                i += 2
+                continue
+        out.append(ch)
+        i += 1
+
+    return "".join(out)
 
 
 def _tokenize_expr(src: str) -> list:
