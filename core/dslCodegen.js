@@ -311,16 +311,22 @@ export function emitBlockText(block) {
     case 'on_text':
       return 'при тексте:';
     case 'on_photo':
+    case 'photo_received':
       return 'при фото:';
     case 'on_voice':
+    case 'voice_received':
       return 'при голосовом:';
     case 'on_document':
+    case 'document_received':
       return 'при документе:';
     case 'on_sticker':
+    case 'sticker_received':
       return 'при стикере:';
     case 'on_location':
+    case 'location_received':
       return 'при геолокации:';
     case 'on_contact':
+    case 'contact_received':
       return 'при контакте:';
     case 'scenario':
       return `сценарий ${p.name}:`;
@@ -338,6 +344,8 @@ export function emitBlockText(block) {
       return p.md ? `ответ_md ${q(p.text || '')}` : `ответ ${q(p.text || '')}`;
     case 'use':
       return `использовать ${p.blockname || ''}`;
+    case 'run':
+      return `запустить ${p.name || p.scenario || p.target || ''}`;
     case 'ask':
       return `спросить ${q(p.question || '')} ${ARROW} ${p.varname || 'var'}`;
     case 'remember':
@@ -357,6 +365,7 @@ export function emitBlockText(block) {
     case 'call_block':
       return `вызвать ${q(p.blockname || '')} ${ARROW} ${p.varname || 'var'}`;
     case 'delay':
+    case 'pause':
       return `подождать ${p.seconds || '1'}с`;
     case 'typing':
       return `печатает ${p.seconds || '1'}с`;
@@ -444,7 +453,7 @@ export function emitBlockText(block) {
     case 'sticker':
       return `стикер ${q(p.file_id || '')}`;
     case 'role':
-      return unsupportedComment(type, p);
+      return `получить ${q(p.key || 'role_{chat_id}')} ${ARROW} ${p.varname || 'роль'}`;
     default:
       return unsupportedComment(type, p);
   }
@@ -453,48 +462,67 @@ export function emitBlockText(block) {
 /**
  * Линейные стеки с «если … иначе» — добавляем отступы тел как в parser.py.
  */
-function stackToDSLWithBranches(blocks) {
+function stackToDSLStructured(blocks) {
   const out = [];
+  const rootType = blocks[0]?.type || '';
   let i = 0;
-  let isFirst = true;
-  const n = blocks.length;
+  let insideScenarioStep = false;
 
-  while (i < n) {
-    const b = blocks[i];
-    if (b.type === 'condition') {
-      const linePrefix = isFirst ? '' : '    ';
-      for (const line of emitBlockText(b).split('\n')) {
-        out.push(linePrefix + line);
-      }
+  const baseIndentFor = (block, index) => {
+    if (index === 0) return 0;
+    if (rootType !== 'scenario') return 1;
+    if (block?.type === 'step') return 1;
+    return insideScenarioStep ? 2 : 1;
+  };
+
+  const isBoundary = (block) => {
+    if (!block) return true;
+    if (block.type === 'condition' || block.type === 'else') return true;
+    if (rootType === 'scenario' && block.type === 'step') return true;
+    return false;
+  };
+
+  const pushBlock = (block, indent) => {
+    for (const line of emitBlockText(block).split('\n')) {
+      out.push(`${'    '.repeat(indent)}${line}`);
+    }
+  };
+
+  while (i < blocks.length) {
+    const block = blocks[i];
+    const baseIndent = baseIndentFor(block, i);
+
+    if (block.type === 'step') insideScenarioStep = true;
+
+    if (block.type === 'condition') {
+      pushBlock(block, baseIndent);
       i += 1;
-      const inner = linePrefix + '    ';
-      while (i < n && blocks[i].type !== 'else') {
-        for (const line of emitBlockText(blocks[i]).split('\n')) {
-          out.push(inner + line);
-        }
+      while (i < blocks.length && blocks[i].type !== 'else' && !isBoundary(blocks[i])) {
+        pushBlock(blocks[i], baseIndent + 1);
         i += 1;
       }
-      if (i < n && blocks[i].type === 'else') {
-        for (const line of emitBlockText(blocks[i]).split('\n')) {
-          out.push(linePrefix + line);
-        }
+      if (i < blocks.length && blocks[i].type === 'else') {
+        pushBlock(blocks[i], baseIndent);
         i += 1;
-        while (i < n && blocks[i].type !== 'condition') {
-          for (const line of emitBlockText(blocks[i]).split('\n')) {
-            out.push(inner + line);
-          }
+        while (i < blocks.length && !isBoundary(blocks[i])) {
+          pushBlock(blocks[i], baseIndent + 1);
           i += 1;
         }
       }
-      isFirst = false;
       continue;
     }
 
-    const indent = isFirst ? '' : '    ';
-    for (const line of emitBlockText(b).split('\n')) {
-      out.push(indent + line);
+    if (block.type === 'else') {
+      pushBlock(block, baseIndent);
+      i += 1;
+      while (i < blocks.length && !isBoundary(blocks[i])) {
+        pushBlock(blocks[i], baseIndent + 1);
+        i += 1;
+      }
+      continue;
     }
-    isFirst = false;
+
+    pushBlock(block, baseIndent);
     i += 1;
   }
   return out.join('\n');
@@ -503,18 +531,7 @@ function stackToDSLWithBranches(blocks) {
 export function stackToDSL(stack) {
   const blocks = stack?.blocks || [];
   if (!blocks.length) return '';
-  if (blocks.some((b) => b.type === 'condition')) {
-    return stackToDSLWithBranches(blocks);
-  }
-  const out = [];
-  for (let i = 0; i < blocks.length; i += 1) {
-    const indent = i === 0 ? '' : '    ';
-    const text = emitBlockText(blocks[i]);
-    for (const line of text.split('\n')) {
-      out.push(indent + line);
-    }
-  }
-  return out.join('\n');
+  return stackToDSLStructured(blocks);
 }
 
 export function generateDSLFromStacks(stacks) {

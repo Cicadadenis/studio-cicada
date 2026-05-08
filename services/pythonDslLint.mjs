@@ -32,6 +32,50 @@ function pythonCmd() {
   return 'python3';
 }
 
+
+function findUnsupportedBlockComment(line) {
+  let inQuote = false;
+  let escaped = false;
+  const text = String(line || '');
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\') {
+      escaped = inQuote;
+      continue;
+    }
+    if (ch === '"') {
+      inQuote = !inQuote;
+      continue;
+    }
+    if (!inQuote && text.slice(i).match(/^#\s*блок\s+/)) return i;
+  }
+  return -1;
+}
+
+function unsupportedBlockCommentDiagnostics(code) {
+  return String(code || '')
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line, idx) => ({ line, idx, col: findUnsupportedBlockComment(line) }))
+    .filter((row) => row.col !== -1)
+    .map((row) => ({
+      type: 'UnsupportedBlockComment',
+      code: 'DSL-UNSUPPORTED-BLOCK-COMMENT',
+      severity: 'error',
+      line: row.idx + 1,
+      column: row.col + 1,
+      offset: row.col + 1,
+      message: 'Неподдерживаемый блок сгенерирован как комментарий «# блок ...» и не будет выполняться ботом.',
+      sourceLine: row.line,
+      help: 'Замените комментарий на реальную инструкцию DSL, например «запустить имя_сценария», или пересоберите блоки в конструкторе.',
+      suggestions: [],
+    }));
+}
+
 /**
  * Запускает Python-парсер Cicada для проверки DSL-кода.
  *
@@ -55,6 +99,16 @@ export function lintCicadaWithPython(opts) {
       available: false,
       diagnostics: [],
       error: `Lint-скрипт не найден: ${script}. Убедитесь, что vendor/cicada-dsl-parser/lint_cicada.py существует.`,
+    };
+  }
+
+  const unsupportedCommentDiags = unsupportedBlockCommentDiagnostics(code);
+  if (unsupportedCommentDiags.length) {
+    return {
+      ok: false,
+      available: true,
+      diagnostics: unsupportedCommentDiags,
+      error: 'DSL содержит неподдерживаемые комментарии «# блок ...» вместо исполняемых инструкций.',
     };
   }
 
