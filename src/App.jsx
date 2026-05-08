@@ -429,7 +429,7 @@ const CAN_STACK_BELOW = {
   middleware: [...FLOW_CHILDREN],
   message:    [...FLOW_CHILDREN, 'buttons', 'inline'],  // кнопки и inline — только после текста
   buttons:    [...FLOW_CHILDREN],                        // после кнопок нельзя снова кнопки/inline
-  menu:       ['message','typing','delay','condition','stop','goto'],
+  menu:       ['message','buttons','inline','typing','delay','condition','stop','goto'],
   condition:  [...FLOW_CHILDREN],
   else:       [...FLOW_CHILDREN],
   switch:     [...FLOW_CHILDREN],
