@@ -1812,7 +1812,7 @@ function extractRegistrationCredential(attestationObject) {
   o += 2;
   const credentialId = authData.subarray(o, o + credIdLen);
   o += credIdLen;
-  const publicKey = coseEc2ToPem(decodeCborFirst(authData.subarray(o)));
+  const publicKey = cosePublicKeyToPem(decodeCborFirst(authData.subarray(o)));
   return { credentialId: b64url(credentialId), publicKey, signCount: parsed.signCount };
 }
 
@@ -1879,7 +1879,7 @@ app.get('/api/admin/login-config', adminLoginRateLimit, (req, res) => {
 
 app.post('/api/admin/passkey/login-options', adminLoginRateLimit, (req, res) => {
   const credentials = loadAdminPasskeys();
-  if (!credentials.length) return res.status(404).json({ error: 'Passkey для админки ещё не зарегистрирован' });
+  if (!credentials.length) return res.status(404).json({ error: 'Отпечаток / Face ID для админки ещё не зарегистрирован' });
   const base = buildAdminPasskeyOptions(req, 'login');
   res.json({
     publicKey: {
@@ -1895,7 +1895,7 @@ app.post('/api/admin/passkey/login-options', adminLoginRateLimit, (req, res) => 
 app.post('/api/admin/passkey/login', adminLoginRateLimit, (req, res) => {
   try {
     const credential = loadAdminPasskeys().find((c) => c.credentialId === req.body?.id);
-    if (!credential) throw new Error('Passkey не найден');
+    if (!credential) throw new Error('Отпечаток / Face ID не найден');
     const signCount = verifyAdminPasskeyAssertion(req, credential);
     const credentials = loadAdminPasskeys().map((c) => (
       c.credentialId === credential.credentialId
@@ -1921,9 +1921,9 @@ app.post('/api/admin/passkey/register-options', adminLoginRateLimit, (req, res) 
       challenge: base.challenge,
       rp: { name: ADMIN_WEBAUTHN_RP_NAME, id: base.rpId },
       user: { id: b64url(Buffer.from('admin')), name: 'admin', displayName: 'Cicada Admin' },
-      pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+      pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
       timeout: 60000,
-      authenticatorSelection: { userVerification: 'required', residentKey: 'preferred' },
+      authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'required', requireResidentKey: true },
       attestation: 'none',
       excludeCredentials: credentials.map((c) => ({ type: 'public-key', id: c.credentialId })),
     },
@@ -2173,7 +2173,7 @@ app.get('/api/admin/security', (req, res) => {
     adminWebAuthnRpId: resolveAdminWebAuthnRpId(req),
     adminAuth:
       loadAdminPasskeys().length > 0
-        ? 'Passkey/WebAuthn или ADMIN_KEY' + (ADMIN_TOTP_SECRET ? ' + TOTP' : '') + ', затем JWT в cookie admin_session'
+        ? 'Отпечаток/Face ID (Passkey/WebAuthn) или ADMIN_KEY' + (ADMIN_TOTP_SECRET ? ' + TOTP' : '') + ', затем JWT в cookie admin_session'
         : (ADMIN_TOTP_SECRET != null
             ? 'ADMIN_KEY + TOTP (RFC 6238), затем JWT в cookie admin_session'
             : 'ADMIN_KEY, затем JWT в httpOnly cookie admin_session (stateless)'),

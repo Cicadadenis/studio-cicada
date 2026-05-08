@@ -762,10 +762,10 @@
         </button>
         <button class="btn-primary" id="passkey-login-btn" onclick="tryPasskeyLogin()" style="display:none;margin-top:10px;background:linear-gradient(135deg,#7c3aed,#2563eb)">
           <span>🔐</span>
-          <span>ВОЙТИ PASSKEY</span>
+          <span>ВОЙТИ ПО ОТПЕЧАТКУ</span>
         </button>
 
-        <div class="error-msg" id="login-error">⚠ Неверный ключ, код или passkey</div>
+        <div class="error-msg" id="login-error">⚠ Неверный ключ, код или отпечаток</div>
 
         <p class="login-hint">NEON PROTOCOL • SECURE</p>
       </div>
@@ -1055,47 +1055,47 @@
 
   async function tryPasskeyLogin() {
     if (!window.PublicKeyCredential) {
-      showToast('Этот браузер не поддерживает Passkeys/WebAuthn', 'var(--red)');
+      showToast('Этот браузер не поддерживает вход по отпечатку / Face ID', 'var(--red)');
       return;
     }
     var btn = document.getElementById('passkey-login-btn');
-    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin-icon">⟳</span> Passkey...'; }
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin-icon">⟳</span> Отпечаток...'; }
     try {
       var optionsRes = await apiPostJson(API + '/api/admin/passkey/login-options', {});
       var options = await optionsRes.json().catch(function() { return {}; });
-      if (!optionsRes.ok) throw new Error(options.error || 'Passkey не настроен');
+      if (!optionsRes.ok) throw new Error(options.error || 'Отпечаток / Face ID ещё не настроен');
       var challenge = options.publicKey.challenge;
       var credential = await navigator.credentials.get({ publicKey: preparePasskeyOptions(options) });
       var verifyRes = await apiPostJson(API + '/api/admin/passkey/login', serializePasskeyCredential(credential, challenge));
-      if (!verifyRes.ok) throw new Error('Passkey не принят сервером');
+      if (!verifyRes.ok) throw new Error('Отпечаток / Face ID не принят сервером');
       adminKey = '__passkey__';
       loadUsers();
     } catch (e) {
       var errEl = document.getElementById('login-error');
-      errEl.textContent = '⚠ ' + (e.message || 'Не удалось войти по passkey');
+      errEl.textContent = '⚠ ' + (e.message || 'Не удалось войти по отпечатку / Face ID');
       errEl.style.display = 'flex';
-      if (btn) { btn.disabled = false; btn.innerHTML = '<span>🔐</span><span>ВОЙТИ PASSKEY</span>'; }
+      if (btn) { btn.disabled = false; btn.innerHTML = '<span>🔐</span><span>ВОЙТИ ПО ОТПЕЧАТКУ</span>'; }
     }
   }
 
   async function registerAdminPasskey() {
     if (!window.PublicKeyCredential) {
-      showToast('Этот браузер не поддерживает Passkeys/WebAuthn', 'var(--red)');
+      showToast('Этот браузер не поддерживает вход по отпечатку / Face ID', 'var(--red)');
       return;
     }
     try {
       var optionsRes = await apiPostJson(API + '/api/admin/passkey/register-options', {});
       var options = await optionsRes.json().catch(function() { return {}; });
-      if (!optionsRes.ok) throw new Error(options.error || 'Нет доступа к регистрации passkey');
+      if (!optionsRes.ok) throw new Error(options.error || 'Нет доступа к регистрации отпечатка / Face ID');
       var challenge = options.publicKey.challenge;
       var credential = await navigator.credentials.create({ publicKey: preparePasskeyOptions(options) });
       var verifyRes = await apiPostJson(API + '/api/admin/passkey/register', serializePasskeyCredential(credential, challenge));
       var verify = await verifyRes.json().catch(function() { return {}; });
-      if (!verifyRes.ok) throw new Error(verify.error || 'Сервер отклонил passkey');
-      showToast('Passkey зарегистрирован для админки', 'var(--green)');
+      if (!verifyRes.ok) throw new Error(verify.error || 'Сервер отклонил отпечаток / Face ID');
+      showToast('Отпечаток / Face ID зарегистрирован для админки', 'var(--green)');
       loadSecurity();
     } catch (e) {
-      showToast(e.message || 'Не удалось зарегистрировать passkey', 'var(--red)');
+      showToast(e.message || 'Не удалось зарегистрировать отпечаток / Face ID', 'var(--red)');
     }
   }
 
@@ -1280,7 +1280,7 @@
     box.innerHTML =
       '<div class="stats-row" style="margin-bottom:0">' +
         '<div class="stat-card"><span class="bg-icon">🔑</span><div class="value" style="color:' + keyColor + ';font-size:20px">' + keyState + '</div><div class="label">ADMIN_KEY (' + (securityInfo.adminKeyLength || 0) + ' симв.)</div></div>' +
-        '<div class="stat-card"><span class="bg-icon">🔐</span><div class="value" style="color:var(--accent)">' + passkeyCount + '</div><div class="label">Passkeys</div></div>' +
+        '<div class="stat-card"><span class="bg-icon">🔐</span><div class="value" style="color:var(--accent)">' + passkeyCount + '</div><div class="label">Отпечатки / Face ID</div></div>' +
         '<div class="stat-card"><span class="bg-icon">🍪</span><div class="value" style="color:var(--text2)">' + (securityInfo.cookieSecurity && securityInfo.cookieSecurity.sameSite ? securityInfo.cookieSecurity.sameSite : '-') + '</div><div class="label">Cookie policy</div></div>' +
       '</div>' +
       '<div style="margin-top:12px;font-size:12px;color:var(--text2);line-height:1.45">' +
@@ -1289,7 +1289,7 @@
         escHtml(securityInfo.adminAuth || '') +
         '<br/>RP ID: ' + escHtml(securityInfo.adminWebAuthnRpId || '-') +
       '</div>' +
-      '<button class="btn-save-prices" style="margin-top:12px;background:linear-gradient(135deg,#7c3aed,#2563eb)" onclick="registerAdminPasskey()">🔐 Зарегистрировать Passkey</button>';
+      '<button class="btn-save-prices" style="margin-top:12px;background:linear-gradient(135deg,#7c3aed,#2563eb)" onclick="registerAdminPasskey()">🔐 Зарегистрировать отпечаток / Face ID</button>';
   }
 
   async function loadGroqTokens() {

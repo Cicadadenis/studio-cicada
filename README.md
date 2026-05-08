@@ -206,7 +206,7 @@ Cicada DSL — декларативный язык с русскоязычным
 
 ## 🖥️ Admin-панель
 
-Доступ по **`/satana`** (canonical URL; есть редирект со старых имён вида `.html`). Первый вход выполняется через `ADMIN_KEY` в `.env` (и `ADMIN_TOTP_SECRET`, если он задан). После входа в разделе **🔒 Безопасность** можно зарегистрировать WebAuthn / Passkey и затем входить кнопкой «ВОЙТИ PASSKEY» без ввода ключа.
+Доступ по **`/satana`** (canonical URL; есть редирект со старых имён вида `.html`). Первый вход выполняется через `ADMIN_KEY` в `.env` (и `ADMIN_TOTP_SECRET`, если он задан). После входа в разделе **🔒 Безопасность** можно зарегистрировать WebAuthn / Passkey (отпечаток, Face ID или системный PIN) и затем входить кнопкой «ВОЙТИ ПО ОТПЕЧАТКУ» без ввода ключа.
 
 ### Разделы
 
@@ -223,7 +223,7 @@ Cicada DSL — декларативный язык с русскоязычным
 
 **🔒 Безопасность** — статус конфигурации:
 - Длина и статус `ADMIN_KEY`
-- Количество зарегистрированных admin Passkeys и WebAuthn RP ID
+- Количество зарегистрированных отпечатков / Face ID (admin Passkeys) и WebAuthn RP ID
 - JWT настройки
 - Политика cookie
 - Активные сессии
@@ -360,7 +360,7 @@ ADMIN_KEY=...                   # не короче 16 символов
 # ADMIN_PASSKEYS_FILE=/secure/path/admin-passkeys.json
 ```
 
-Passkeys работают только в secure context: `https://` на домене или `http://localhost` для разработки. `ADMIN_WEBAUTHN_RP_ID` должен совпадать с доменом, где открыта админка (например, `example.com`), а `ADMIN_WEBAUTHN_ORIGIN` — с origin страницы (например, `https://example.com`). Если переменные не заданы, сервер вычисляет их из `APP_URL`/заголовков запроса.
+Вход по отпечатку / Face ID через Passkeys работает только в secure context: `https://` на домене или `http://localhost` для разработки. `ADMIN_WEBAUTHN_RP_ID` должен совпадать с доменом, где открыта админка (например, `example.com`), а `ADMIN_WEBAUTHN_ORIGIN` — с origin страницы (например, `https://example.com`). Если переменные не заданы, сервер вычисляет их из `APP_URL`/заголовков запроса.
 
 ### Google OAuth (опционально)
 ```env
