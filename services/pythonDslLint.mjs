@@ -25,6 +25,10 @@ function pythonCmd() {
   const fromEnv = process.env.PYTHON || process.env.PYTHON3;
   if (fromEnv) return fromEnv;
   if (process.platform === 'win32') return 'python';
+  // В non-interactive контейнерах pyenv-shim для python3 может зависать на
+  // разрешении версии. Системный Python даёт тот же парсеру интерпретатор без
+  // лишнего shim-слоя и корректно завершается по timeout.
+  if (fs.existsSync('/usr/bin/python3')) return '/usr/bin/python3';
   return 'python3';
 }
 

@@ -254,6 +254,15 @@ function emitMenu(p) {
   return [head, ...items.map((it) => `# меню пункт: ${q(it)}`)].join('\n');
 }
 
+function quoteListLines(value) {
+  return String(value || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => q(line))
+    .join(', ');
+}
+
 function unsupportedComment(type, props) {
   return `# блок ${type}: ${JSON.stringify(props || {})}`;
 }
@@ -403,10 +412,11 @@ export function emitBlockText(block) {
       return emitHttp(p);
     case 'loop': {
       const mode = p.mode || 'count';
-      if (mode === 'while') return `пока ${p.cond}:`;
-      if (mode === 'foreach') return `для каждого ${p.var} в ${p.collection}:`;
-      if (mode === 'timeout') return `таймаут ${p.seconds || 5} секунд:`;
-      return `повторять ${p.count || 3} раз:`;
+      const placeholder = '    # тело цикла';
+      if (mode === 'while') return [`пока ${p.cond || 'истина'}:`, placeholder].join('\n');
+      if (mode === 'foreach') return [`для каждого ${p.var || 'item'} в ${p.collection || 'список'}:`, placeholder].join('\n');
+      if (mode === 'timeout') return [`таймаут ${p.seconds || 5} секунд:`, placeholder].join('\n');
+      return [`повторять ${p.count || 3} раз:`, placeholder].join('\n');
     }
     case 'notify':
       return `уведомить ${p.target}: ${q(p.text || '')}`;
@@ -421,13 +431,19 @@ export function emitBlockText(block) {
       return `роль @${stripAt(p.channel)} ${p.user_id} ${ARROW} ${p.varname || 'var'}`;
     case 'forward_msg':
       return `переслать сообщение ${p.target}`;
-    case 'role':
-      return unsupportedComment(type, p);
-    case 'payment':
-    case 'analytics':
-    case 'classify':
     case 'database':
+      return `запрос_бд ${q(p.query || 'select 1')} ${ARROW} ${p.varname || 'rows'}`;
+    case 'payment':
+      return `оплата ${p.provider || 'stripe'} ${p.amount || '1'} ${p.currency || 'USD'} ${q(p.title || 'Платёж')}`;
+    case 'analytics':
+      return `событие ${q(p.event || 'event')}`;
+    case 'classify': {
+      const intents = quoteListLines(p.intents) || q('намерение');
+      return `классифицировать [${intents}] ${ARROW} ${p.varname || 'намерение'}`;
+    }
     case 'sticker':
+      return `стикер ${q(p.file_id || '')}`;
+    case 'role':
       return unsupportedComment(type, p);
     default:
       return unsupportedComment(type, p);

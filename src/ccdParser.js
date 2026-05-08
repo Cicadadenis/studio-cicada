@@ -42,6 +42,11 @@ export const FLOW_PORTS = {
   check_sub:   { input: 'flow',         output: 'flow'         },
   member_role: { input: 'flow',         output: 'flow'         },
   forward_msg: { input: 'flow',         output: 'flow'         },
+  database:    { input: 'flow',         output: 'flow'         },
+  payment:     { input: 'flow',         output: 'flow'         },
+  analytics:   { input: 'flow',         output: 'flow'         },
+  classify:    { input: 'flow',         output: 'flow'         },
+  sticker:     { input: 'flow',         output: 'flow'         },
   db_delete:   { input: 'flow',         output: 'flow'         },
   save_global: { input: 'flow',         output: 'flow'         },
   get_user:    { input: 'flow',         output: 'flow'         },
@@ -284,6 +289,27 @@ function parseNode(line) {
     if (fwMatch) return { type: 'forward_msg', props: { target: fwMatch[1].trim() }, root: false };
   }
 
+  // ── Интеграции ядра ─────────────────────────────────────────────────────
+  {
+    const dbMatch = t.match(/^запрос_бд "([^"]+)"\s*[→\-]>\s*(\S+)/);
+    if (dbMatch) return { type: 'database', props: { query: dbMatch[1], varname: dbMatch[2] }, root: false };
+  }
+  {
+    const clsMatch = t.match(/^классифицировать\s+\[([^\]]+)\]\s*[→\-]>\s*(\S+)/);
+    if (clsMatch) {
+      const intents = splitTopLevelListItems(clsMatch[1]).map((x) => stripQuotes(x)).join('\n');
+      return { type: 'classify', props: { intents, varname: clsMatch[2] }, root: false };
+    }
+  }
+  {
+    const evMatch = t.match(/^событие "([^"]+)"/);
+    if (evMatch) return { type: 'analytics', props: { event: evMatch[1] }, root: false };
+  }
+  {
+    const payMatch = t.match(/^оплата\s+(\S+)\s+(\S+)\s+(\S+)\s+"([^"]+)"$/);
+    if (payMatch) return { type: 'payment', props: { provider: payMatch[1], amount: payMatch[2], currency: payMatch[3], title: payMatch[4] }, root: false };
+  }
+
   // ── HTTP запросы ────────────────────────────────────────────────────────
   // http_заголовки var
   {
@@ -335,6 +361,7 @@ function parseNode(line) {
     return { type: 'video', props: { url, ...(caption ? { caption } : {}) }, root: false };
   }
   if (t.startsWith('аудио ')) return { type: 'audio', props: { url: stripQuotes(t.replace('аудио', '').trim()) }, root: false };
+  if (t.startsWith('стикер ')) return { type: 'sticker', props: { file_id: stripQuotes(t.replace('стикер', '').trim()) }, root: false };
   if (t.startsWith('документ ')) {
     const parts = t.replace('документ', '').trim().match(/"([^"]+)"/g) || [];
     const url = parts[0] ? stripQuotes(parts[0]) : '';
@@ -342,8 +369,14 @@ function parseNode(line) {
     return { type: 'document', props: { url, ...(caption ? { caption } : {}) }, root: false };
   }
   if (t.startsWith('переслать фото ')) return { type: 'message', props: { text: stripQuotes(t.replace('переслать фото', '').trim()), media: 'forward_photo' }, root: false };
-  if (t.startsWith('контакт ')) return { type: 'message', props: { text: t.replace('контакт', '').trim(), media: 'contact' }, root: false };
-  if (t.startsWith('локация ')) return { type: 'message', props: { text: t.replace('локация', '').trim(), media: 'location' }, root: false };
+  if (t.startsWith('контакт ')) {
+    const parts = t.replace('контакт', '').trim().match(/"([^"]+)"/g) || [];
+    return { type: 'contact', props: { phone: stripQuotes(parts[0] || ''), first_name: stripQuotes(parts[1] || '') }, root: false };
+  }
+  if (t.startsWith('локация ')) {
+    const [lat = '0', lon = '0'] = t.replace('локация', '').trim().split(/\s+/);
+    return { type: 'location', props: { lat, lon }, root: false };
+  }
 
   // ── Опрос ───────────────────────────────────────────────────────────────
   if (t.startsWith('опрос ')) {
