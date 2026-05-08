@@ -3279,8 +3279,13 @@ export default function App() {
       if (t.startsWith('использовать ')) return { type: 'use',   props: { blockname: t.replace(/^использовать\s+/, '').trim() } };
       if (t.startsWith('спросить '))    { const q = extractString(t); const v = t.split('→')[1]?.trim() || 'var'; return { type: 'ask', props: { question: q, varname: v } }; }
       if (t.startsWith('запомни '))     { const m = t.replace(/^запомни\s+/, '').split('='); return { type: 'remember', props: { varname: m[0].trim(), value: m.slice(1).join('=').trim() } }; }
+      if (t.startsWith('получить от ')) { const m = t.match(/получить от\s+(.+?)\s+"([^"]*)"\s*→\s*(\S+)/); return m ? { type: 'get_user', props: { user_id: m[1].trim(), key: m[2], varname: m[3] } } : null; }
       if (t.startsWith('получить '))    { const key = extractString(t); const v = t.split('→')[1]?.trim() || 'var'; return { type: 'get', props: { key, varname: v } }; }
+      if (t.startsWith('сохранить_глобально ')) { const m = t.match(/сохранить_глобально\s+"([^"]*)"\s*=\s*(.+)/); return m ? { type: 'save_global', props: { key: m[1], value: m[2].trim() } } : null; }
       if (t.startsWith('сохранить '))   { const m = t.match(/сохранить\s+"([^"]*)"\s*=\s*(.+)/); return m ? { type: 'save', props: { key: m[1], value: m[2].trim() } } : null; }
+      if (t.startsWith('удалить '))     { const m = t.match(/удалить\s+"([^"]*)"/); return m ? { type: 'db_delete', props: { key: m[1] } } : null; }
+      if (t.startsWith('все_ключи'))    { const v = t.split('→')[1]?.trim() || 'ключи'; return { type: 'all_keys', props: { varname: v } }; }
+      if (t.startsWith('вызвать '))     { const name = extractString(t); const v = t.split('→')[1]?.trim() || 'результат'; return { type: 'call_block', props: { blockname: name, varname: v } }; }
       if (t.startsWith('inline-кнопки:')) return { type: 'inline', props: { buttons: '' }, multiline: 'inline' };
       if (t.startsWith('кнопки:'))      return { type: 'buttons', props: { rows: '' }, multiline: true };
       if (t.startsWith('кнопки '))      { const btns = extractAllStrings(t); return { type: 'buttons', props: { rows: btns.join(', ') } }; }
@@ -3288,16 +3293,28 @@ export default function App() {
       if (t.startsWith('пауза ') || t.startsWith('подождать ')) { const s = t.match(/\d+/)?.[0] || '1'; return { type: 'delay', props: { seconds: s } }; }
       if (t.startsWith('печатает '))    { const s = t.match(/\d+/)?.[0] || '1'; return { type: 'typing', props: { seconds: s } }; }
       // HTTP: "запрос GET "url" → var" (формат DSL-генератора)
+      if (t.startsWith('http_заголовки ')) { const v = t.replace(/^http_заголовки\s+/, '').trim(); return { type: 'http', props: { method: 'HEADERS', varname: v } }; }
+      if (t.startsWith('http_get ') || t.startsWith('http_delete ')) { const m = t.match(/http_(get|delete)\s+"([^"]+)"\s*→\s*(\S+)/); return m ? { type: 'http', props: { method: m[1].toUpperCase(), url: m[2], varname: m[3] } } : null; }
+      if (t.startsWith('http_post ') || t.startsWith('http_patch ') || t.startsWith('http_put ')) {
+        const mj = t.match(/http_(post|patch|put)\s+"([^"]+)"\s+json\s+(\S+)\s*→\s*(\S+)/);
+        if (mj) return { type: 'http', props: { method: mj[1].toUpperCase(), url: mj[2], jsonVar: mj[3], varname: mj[4], isJson: 'true' } };
+        const mb = t.match(/http_(post|patch|put)\s+"([^"]+)"\s+с\s+"([^"]*)"\s*→\s*(\S+)/);
+        return mb ? { type: 'http', props: { method: mb[1].toUpperCase(), url: mb[2], body: mb[3], varname: mb[4] } } : null;
+      }
       if (t.startsWith('запрос ') && !t.startsWith('запрос_бд')) {
         const m = t.match(/запрос\s+(\w+)\s+"([^"]+)"\s*→\s*(\S+)/);
         return m ? { type: 'http', props: { method: m[1], url: m[2], varname: m[3] } } : null;
       }
+      if (t.startsWith('запрос_бд '))   { const m = t.match(/запрос_бд\s+"([^"]+)"\s*→\s*(\S+)/); return m ? { type: 'database', props: { query: m[1], varname: m[2] } } : null; }
+      if (t.startsWith('классифицировать ')) { const m = t.match(/классифицировать\s+\[([^\]]+)\]\s*→\s*(\S+)/); return m ? { type: 'classify', props: { intents: m[1].replace(/"/g, '').split(',').map(x => x.trim()).filter(Boolean).join('\n'), varname: m[2] } } : null; }
       if (t.startsWith('лог'))          { const m = t.match(/лог\[?([^\]"]*)\]?\s+"([^"]+)"/); return { type: 'log', props: { level: (m?.[1] || 'info').trim(), message: m?.[2] || '' } }; }
       // рандом: — multiline, собирает строки вида     "вариант"
       if (t === 'рандом:' || t === 'рандом') return { type: 'random', props: { variants: '' }, multiline: 'random' };
       // переключить var: — switch-блок
       if (t.startsWith('переключить ')) { const v = t.replace(/^переключить\s+/, '').replace(/:$/, '').trim(); return { type: 'switch', props: { varname: v } }; }
       // циклы
+      if (t.startsWith('для каждого ')) { const m = t.match(/для каждого\s+(\S+)\s+в\s+(.+):/); return m ? { type: 'loop', props: { mode: 'foreach', var: m[1], collection: m[2].trim() } } : null; }
+      if (t.startsWith('таймаут '))     { const seconds = t.match(/[\d.]+/)?.[0] || '5'; return { type: 'loop', props: { mode: 'timeout', seconds } }; }
       if (t.match(/^повторять\s+\d+/)) { const n = t.match(/\d+/)?.[0] || '3'; return { type: 'loop', props: { mode: 'count', count: n } }; }
       if (t.startsWith('пока '))        { const cond = t.replace(/^пока\s+/, '').replace(/:$/, ''); return { type: 'loop', props: { mode: 'while', cond } }; }
       if (t.startsWith('перейти к шаг ')) return { type: 'goto', props: { target: t.replace(/^перейти к шаг\s+/, '').trim() } };
@@ -3308,10 +3325,18 @@ export default function App() {
       if (t.startsWith('фото '))        return { type: 'photo', props: { url: extractString(t) } };
       if (t.startsWith('видео '))       return { type: 'video', props: { url: extractString(t) } };
       if (t.startsWith('аудио '))       return { type: 'audio', props: { url: extractString(t) } };
+      if (t.startsWith('стикер '))      return { type: 'sticker', props: { file_id: extractString(t) } };
       if (t.startsWith('документ '))    { const m = t.match(/документ\s+"([^"]+)"/); return { type: 'document', props: { url: m?.[1] || '' } }; }
       if (t.startsWith('локация '))     { const m = t.match(/локация\s+([\d.]+)\s+([\d.]+)/); return { type: 'location', props: { lat: m?.[1] || '0', lon: m?.[2] || '0' } }; }
       if (t.startsWith('контакт '))     { const m = t.match(/контакт\s+"([^"]+)"\s+"([^"]+)"/); return { type: 'contact', props: { phone: m?.[1] || '', first_name: m?.[2] || '' } }; }
-      if (t.startsWith('опрос '))       return { type: 'poll', props: { question: extractString(t), type: 'regular' }, multiline: true };
+      if (t.startsWith('опрос '))       { const opts = extractAllStrings(t); return { type: 'poll', props: { question: opts[0] || '', options: opts.slice(1).join('\n'), type: 'regular' }, multiline: true }; }
+      if (t.startsWith('уведомить '))   { const m = t.match(/уведомить\s+(.+?):\s*"([^"]*)"/) || t.match(/уведомить\s+(\S+)\s+"([^"]*)"/); return m ? { type: 'notify', props: { target: m[1].trim(), text: m[2] } } : null; }
+      if (t.startsWith('рассылка всем:')) { const m = t.match(/рассылка всем:\s*"?([^"]*)"?/); return { type: 'broadcast', props: { mode: 'all', text: m?.[1] || '' } }; }
+      if (t.startsWith('рассылка группе ')) { const m = t.match(/рассылка группе\s+(\S+):\s*"?([^"]*)"?/); return m ? { type: 'broadcast', props: { mode: 'group', tag: m[1], text: m[2] } } : null; }
+      if (t.startsWith('проверить подписку ')) { const m = t.match(/проверить подписку\s+(@\S+)\s*→\s*(\S+)/); return m ? { type: 'check_sub', props: { channel: m[1], varname: m[2] } } : null; }
+      if (t.startsWith('роль @'))       { const m = t.match(/роль\s+(@\S+)\s+(\S+)\s*→\s*(\S+)/); return m ? { type: 'member_role', props: { channel: m[1], user_id: m[2], varname: m[3] } } : null; }
+      if (t.startsWith('переслать сообщение ')) return { type: 'forward_msg', props: { target: t.replace(/^переслать сообщение\s+/, '').trim() } };
+      if (t.startsWith('оплата '))      { const m = t.match(/оплата\s+(\S+)\s+(\S+)\s+(\S+)\s+"([^"]*)"/); return m ? { type: 'payment', props: { provider: m[1], amount: m[2], currency: m[3], title: m[4] } } : null; }
 
       return null;
     };
@@ -3723,11 +3748,217 @@ const EXAMPLE_FULL = `версия "1.0"
     использовать главное_меню
 `
 
+  const EXAMPLE_FULL_TEST = `версия "1.0"
+бот "YOUR_BOT_TOKEN"
+
+команды:
+    "/start" - "🚀 Full Test"
+    "/help" - "❓ Все разделы"
+    "/profile" - "👤 Анкета"
+    "/media" - "🖼 Медиа"
+    "/api" - "🌐 API"
+
+глобально full_test_enabled = истина
+глобально счётчик = 0
+глобально ADMIN_ID = 123456789
+
+блок full_test_меню:
+    ответ "🧪 Full Test — пример со всеми основными блоками Cicada Studio."
+    кнопки:
+        ["👤 Анкета", "🖼 Медиа"]
+        ["💾 Данные", "🌐 API"]
+        ["🔁 Логика", "🛡 Админ"]
+        ["⚙️ Настройки", "❓ Помощь"]
+
+до каждого:
+    лог[info] "Full Test input: {текст} от {пользователь.имя}"
+
+после каждого:
+    лог[debug] "Full Test turn completed"
+
+при старте:
+    если full_test_enabled == истина:
+        запомни название_бота = "Full Test"
+        сохранить "последний_старт_{chat_id}" = текст
+        ответ "👋 Добро пожаловать в Full Test, {пользователь.имя}!"
+        печатает 1с
+        ответ_md "*Full Test* показывает меню, сценарии, условия, БД, медиа, HTTP, циклы и Telegram-блоки."
+        использовать full_test_меню
+    иначе:
+        ответ "⛔ Full Test временно выключен."
+        стоп
+
+при команде "/help":
+    ответ "❓ Разделы Full Test: анкета, медиа, данные, API, логика, настройки и админ."
+    inline-кнопки:
+        ["Открыть анкету" → "go_profile", "Открыть API" → "go_api"]
+        ["Документация" → "url:https://example.com/docs"]
+
+при команде "/profile":
+    перейти "full_test_анкета"
+
+при команде "/media":
+    использовать full_test_медиа
+
+при команде "/api":
+    использовать full_test_api
+
+при нажатии "👤 Анкета":
+    перейти "full_test_анкета"
+
+при нажатии "go_profile":
+    перейти "full_test_анкета"
+
+сценарий full_test_анкета:
+    шаг имя:
+        спросить "Как вас зовут?" → имя_анкеты
+    шаг город:
+        спросить "Из какого вы города?" → город
+    шаг возраст:
+        спросить "Сколько вам лет?" → возраст
+    шаг итог:
+        сохранить "full_test_имя_{chat_id}" = имя_анкеты
+        сохранить "full_test_город_{chat_id}" = город
+        сохранить "full_test_возраст_{chat_id}" = возраст
+        если возраст >= 18:
+            ответ "✅ Анкета сохранена: {имя_анкеты}, {город}, 18+."
+        иначе:
+            ответ "✅ Анкета сохранена: {имя_анкеты}, {город}."
+        кнопки "🏠 Главное меню" "💾 Данные"
+        стоп
+
+блок full_test_медиа:
+    ответ "🖼 Медиа-блоки: фото, видео, аудио, документ, стикер, контакт, локация и опрос."
+    ответ "Фото из Full Test"
+    фото "https://picsum.photos/640/360"
+    видео "https://samplelib.com/lib/preview/mp4/sample-5s.mp4" "Короткое видео"
+    аудио "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"
+    документ "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf" "PDF-документ"
+    стикер "CAACAgIAAxkBAAEFullTestSticker"
+    контакт "+10000000000" "Full Test Support"
+    локация 55.7558 37.6173
+    опрос "Какой блок проверить дальше?" "API" "БД" "Логика" "Медиа"
+    использовать full_test_меню
+
+при нажатии "🖼 Медиа":
+    использовать full_test_медиа
+
+при фото:
+    ответ "📷 Full Test получил фото: {файл_id}"
+    использовать full_test_меню
+
+при документе:
+    ответ "📄 Full Test получил документ: {имя_файла} ({файл_id})"
+    использовать full_test_меню
+
+при геолокации:
+    ответ "📍 Full Test получил геолокацию: {широта}, {долгота}"
+    использовать full_test_меню
+
+при нажатии "💾 Данные":
+    сохранить "full_test_status_{chat_id}" = "ok"
+    получить "full_test_status_{chat_id}" → статус
+    все_ключи → ключи
+    сохранить_глобально "full_test_last_user" = пользователь.id
+    получить от пользователь.id "full_test_status_{chat_id}" → статус_из_профиля
+    ответ "💾 Статус: {статус}. Ключи: {ключи}. Из профиля: {статус_из_профиля}"
+    удалить "full_test_temp_{chat_id}"
+    использовать full_test_меню
+
+блок full_test_api:
+    запомни payload = {"source":"Full Test","ok":true}
+    http_заголовки payload
+    http_get "https://jsonplaceholder.typicode.com/todos/1" → api_get
+    http_post "https://jsonplaceholder.typicode.com/posts" json payload → api_post
+    http_patch "https://jsonplaceholder.typicode.com/posts/1" с "title=Full Test" → api_patch
+    http_put "https://jsonplaceholder.typicode.com/posts/1" json payload → api_put
+    http_delete "https://jsonplaceholder.typicode.com/posts/1" → api_delete
+    запрос_бд "select 1 as full_test" → rows
+    классифицировать ["support", "sales", "other"] → намерение
+    ответ "🌐 API проверены. GET: {api_get}\\nPOST: {api_post}\\nPATCH: {api_patch}\\nPUT: {api_put}\\nDELETE: {api_delete}\\nSQL: {rows}\\nIntent: {намерение}"
+    использовать full_test_меню
+
+при нажатии "🌐 API":
+    использовать full_test_api
+
+при нажатии "go_api":
+    использовать full_test_api
+
+при нажатии "🔁 Логика":
+    ответ "🔁 Условия, циклы, пауза, typing, random и вызов блока."
+    запомни список = ["один", "два", "три"]
+    для каждого элемент в список:
+        ответ "• foreach: {элемент}"
+    запомни n = 2
+    пока n > 0:
+        ответ "while n={n}"
+        запомни n = n - 1
+    повторять 2 раз:
+        ответ "repeat Full Test"
+    таймаут 3 секунд:
+        печатает 1с
+        пауза 1с
+    рандом:
+        "🎲 random: A"
+        "🎲 random: B"
+        "🎲 random: C"
+    вызвать "full_test_ping" → ping_result
+    ответ "Вызов блока: {ping_result}"
+    использовать full_test_меню
+
+блок full_test_ping:
+    ответ "pong from Full Test"
+    вернуть "pong"
+
+при нажатии "🛡 Админ":
+    проверить подписку @your_channel → подписан
+    роль @your_channel пользователь.id → роль_канала
+    переслать сообщение ADMIN_ID
+    уведомить ADMIN_ID: "Full Test: пользователь {пользователь.id} открыл админ-раздел."
+    рассылка группе testers: "Full Test broadcast для группы testers"
+    ответ "🛡 Telegram admin: подписка={подписан}, роль={роль_канала}."
+    использовать full_test_меню
+
+при нажатии "⚙️ Настройки":
+    ответ "⚙️ Настройки Full Test:"
+    inline-кнопки:
+        ["🇷🇺 RU" → "ft_lang_ru", "🇬🇧 EN" → "ft_lang_en"]
+        ["💳 Тест оплаты" → "ft_payment", "❌ Закрыть" → "ft_close"]
+
+при нажатии "ft_lang_ru":
+    сохранить "full_test_lang_{chat_id}" = "ru"
+    ответ "🇷🇺 Язык Full Test: RU"
+    использовать full_test_меню
+
+при нажатии "ft_lang_en":
+    сохранить "full_test_lang_{chat_id}" = "en"
+    ответ "🇬🇧 Full Test language: EN"
+    использовать full_test_меню
+
+при нажатии "ft_payment":
+    оплата test_provider 100 RUB "Full Test payment"
+    ответ "💳 Тестовый платёж создан."
+
+при нажатии "ft_close":
+    использовать full_test_меню
+
+при нажатии "❓ Помощь":
+    перейти "/help"
+
+при нажатии "🏠 Главное меню":
+    использовать full_test_меню
+
+иначе:
+    ответ "🤔 Full Test не понял: {текст}"
+    использовать full_test_меню
+`
+
   const loadExampleFromFile = useCallback((exampleName) => {
     const examples = {
       echo: EXAMPLE_ECHO,
       shop: EXAMPLE_SHOP,
       full: EXAMPLE_FULL,
+      fullTest: EXAMPLE_FULL_TEST,
     };
 
     const code = examples[exampleName];
@@ -3753,7 +3984,7 @@ const EXAMPLE_FULL = `версия "1.0"
       setStacks(normalizedStacks);
       setSelectedBlockId(null);
       setSelectedStackId(null);
-      setProjectName(exampleName === 'echo' ? 'Эхо Бот' : exampleName === 'shop' ? 'Магазин Бот' : 'Все Функции');
+      setProjectName(exampleName === 'echo' ? 'Эхо Бот' : exampleName === 'shop' ? 'Магазин Бот' : exampleName === 'fullTest' ? 'Full Test' : 'Все Функции');
     } else {
       showToast('Не удалось разобрать пример', 'error');
     }
@@ -4783,7 +5014,7 @@ const EXAMPLE_FULL = `версия "1.0"
                   borderRadius: 10, minWidth: 200, zIndex: 300,
                   boxShadow: '0 8px 32px rgba(0,0,0,0.8)', overflow: 'hidden',
                 }}>
-                  {[['echo','🔄 Эхо Бот'],['shop','🛍️ Магазин Бот'],['full','⚡ Все Функции']].map(([key,label],i,arr) => (
+                  {[['echo','🔄 Эхо Бот'],['shop','🛍️ Магазин Бот'],['full','⚡ Все Функции'],['fullTest','🧪 Full Test']].map(([key,label],i,arr) => (
                     <button key={key}
                       onClick={() => { loadExampleFromFile(key); setShowExamples(false); }}
                       style={{ width:'100%', padding:'14px 18px', textAlign:'left', background:'transparent', color:'var(--text)', border:'none', borderBottom: i < arr.length-1 ? '1px solid var(--border)' : 'none', cursor:'pointer', fontSize:14, display: 'block' }}
@@ -4818,7 +5049,7 @@ const EXAMPLE_FULL = `версия "1.0"
                   boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
                   overflow: 'hidden',
                 }}>
-                  {[['echo','🔄 Эхо Бот'],['shop','🛍️ Магазин Бот'],['full','⚡ Все Функции']].map(([key,label],i,arr) => (
+                  {[['echo','🔄 Эхо Бот'],['shop','🛍️ Магазин Бот'],['full','⚡ Все Функции'],['fullTest','🧪 Full Test']].map(([key,label],i,arr) => (
                     <button key={key}
                       onClick={() => { loadExampleFromFile(key); setShowExamples(false); }}
                       style={{ width:'100%', padding:'11px 16px', textAlign:'left', background:'transparent', color:'var(--text)', border:'none', borderBottom: i < arr.length-1 ? '1px solid rgba(255,255,255,0.07)' : 'none', cursor:'pointer', fontSize:13, transition:'background 0.15s', fontFamily:'Syne,system-ui' }}

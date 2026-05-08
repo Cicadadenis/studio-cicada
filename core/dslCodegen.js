@@ -67,7 +67,6 @@ const ROOT_BLOCK_TYPES = new Set([
   'on_contact',
   'scenario',
   'middleware',
-  'else',
 ]);
 
 const FEATURE_BY_TYPE = {
@@ -279,7 +278,7 @@ export function emitBlockText(block) {
     case 'version':
       return `версия ${q(p.version || '1.0')}`;
     case 'bot':
-      return `бот ${q(p.token || '')}`;
+      return `бот ${q(String(p.token || '').trim() || 'YOUR_BOT_TOKEN')}`;
     case 'global':
       return `глобально ${p.varname} = ${p.value}`;
     case 'commands': {
