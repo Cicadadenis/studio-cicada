@@ -350,6 +350,7 @@ const JWT_EXPIRES_SEC = Number(process.env.JWT_EXPIRES_SEC || 30 * 24 * 60 * 60)
 
 /** Одноразовая передача JWT в SPA после OAuth-редиректа (httpOnly cookie). */
 const OAUTH_JWT_HANDOFF_COOKIE = 'oauth_jwt_handoff';
+const OAUTH_2FA_PENDING_COOKIE = 'oauth_2fa_pending';
 
 const ADMIN_JWT_EXPIRES_SEC = Number(process.env.ADMIN_JWT_EXPIRES_SEC || 8 * 60 * 60);
 
@@ -1648,6 +1649,20 @@ app.get('/api/health', (_req, res) => {
 // Одноразовый обмен cookie → JWT в localStorage после Google OAuth
 app.get('/api/auth/oauth-bootstrap', async (req, res) => {
   const handoffOpts = { path: '/', httpOnly: true, sameSite: 'strict', secure: isHttps };
+  const pendingOpts = { path: '/', httpOnly: true, sameSite: 'strict', secure: isHttps, maxAge: 10 * 60 * 1000 };
+  const pendingRaw = req.cookies?.[OAUTH_2FA_PENDING_COOKIE];
+  if (pendingRaw) {
+    try {
+      const d = jwt.verify(pendingRaw, JWT_SECRET);
+      if (d?.type === 'oauth_2fa_pending' && d?.sub) {
+        const user = await findById(String(d.sub));
+        if (user && user.twofaEnabled && !user.banned) {
+          return res.json({ ok: false, twofaRequired: true, user: safeUser(user) });
+        }
+      }
+    } catch {}
+    res.clearCookie(OAUTH_2FA_PENDING_COOKIE, pendingOpts);
+  }
   const raw = req.cookies?.[OAUTH_JWT_HANDOFF_COOKIE];
   res.clearCookie(OAUTH_JWT_HANDOFF_COOKIE, handoffOpts);
   if (!raw) return res.json({ ok: false });
@@ -1660,6 +1675,30 @@ app.get('/api/auth/oauth-bootstrap', async (req, res) => {
   } catch {
     return res.json({ ok: false });
   }
+});
+
+app.post('/api/auth/oauth-2fa/complete', async (req, res) => {
+  const pendingOpts = { path: '/', httpOnly: true, sameSite: 'strict', secure: isHttps, maxAge: 10 * 60 * 1000 };
+  const raw = req.cookies?.[OAUTH_2FA_PENDING_COOKIE];
+  if (!raw) return res.status(401).json({ error: 'Сессия 2FA истекла. Войдите снова через OAuth.' });
+  let userId = null;
+  try {
+    const d = jwt.verify(raw, JWT_SECRET);
+    if (!d || d.type !== 'oauth_2fa_pending' || !d.sub) throw new Error('bad');
+    userId = String(d.sub);
+  } catch {
+    res.clearCookie(OAUTH_2FA_PENDING_COOKIE, pendingOpts);
+    return res.status(401).json({ error: 'Сессия 2FA недействительна. Войдите снова через OAuth.' });
+  }
+  const user = await findById(userId);
+  const totp = String(req.body?.totp || '').replace(/\s/g, '');
+  if (!user || user.banned) return res.status(403).json({ error: 'Аккаунт недоступен' });
+  if (!user.twofaEnabled) return res.status(400).json({ error: '2FA отключена для аккаунта' });
+  if (!verifyTotp(user.twofaSecret, totp, 1)) return res.status(401).json({ error: 'Неверный код 2FA', twofaRequired: true });
+
+  res.clearCookie(OAUTH_2FA_PENDING_COOKIE, pendingOpts);
+  const authToken = issueUserJwt(user.id);
+  return res.json({ success: true, token: authToken, user: safeUser(user) });
 });
 
 // ================= PROJECTS (PostgreSQL) =================
@@ -2673,9 +2712,14 @@ app.get('/api/auth/google/callback', async (req, res) => {
       user = await findById(user.id);
     }
 
-    recordUserLogin(user.id, req.ip, 'google');
-    recordUserAction(user.id, 'login_success', { method: 'google' });
-    issueOauthJwtHandoffCookie(res, user.id);
+    if (user.twofaEnabled) {
+      const pending = jwt.sign({ sub: String(user.id), type: 'oauth_2fa_pending' }, JWT_SECRET, { expiresIn: '10m' });
+      res.cookie(OAUTH_2FA_PENDING_COOKIE, pending, { httpOnly: true, sameSite: 'strict', secure: isHttps, path: '/', maxAge: 10 * 60 * 1000 });
+    } else {
+      recordUserLogin(user.id, req.ip, 'google');
+      recordUserAction(user.id, 'login_success', { method: 'google' });
+      issueOauthJwtHandoffCookie(res, user.id);
+    }
     return res.redirect(APP_URL || '/');
   } catch (e) {
     console.error('Google auth callback error:', e);
