@@ -2551,8 +2551,24 @@ app.get('/api/admin/update-status', (req, res) => {
 app.post('/api/admin/update-apply', (req, res) => {
   if (!isAdminAuthed(req)) return res.status(403).json({ error: 'Forbidden' });
   const root = path.resolve(process.cwd());
+
+  const stashName = `cicada-auto-update-${Date.now()}`;
+  let autoStashed = false;
+  const statusRes = spawnSync('git', ['-C', root, 'status', '--porcelain'], { encoding: 'utf8', timeout: 30_000 });
+  if (statusRes.error || statusRes.status !== 0) {
+    return res.status(500).json({ error: `git status: ${statusRes.error?.message || statusRes.stderr || 'ошибка'}` });
+  }
+  if (String(statusRes.stdout || '').trim()) {
+    const stashRes = spawnSync('git', ['-C', root, 'stash', 'push', '--include-untracked', '-m', stashName], { encoding: 'utf8', timeout: 60_000 });
+    if (stashRes.error || stashRes.status !== 0) {
+      return res.status(500).json({ error: `git stash: ${stashRes.error?.message || stashRes.stderr || 'ошибка'}` });
+    }
+    autoStashed = true;
+  }
+
   const pullRes = spawnSync('git', ['-C', root, 'pull', '--ff-only'], { encoding: 'utf8', timeout: 120_000 });
   if (pullRes.error || pullRes.status !== 0) {
+    if (autoStashed) spawnSync('git', ['-C', root, 'stash', 'pop'], { encoding: 'utf8', timeout: 60_000 });
     return res.status(500).json({ error: `git pull: ${pullRes.error?.message || pullRes.stderr || 'ошибка'}` });
   }
   const buildRes = spawnSync('npm', ['run', 'build'], { cwd: root, encoding: 'utf8', timeout: 10 * 60_000 });
@@ -2561,7 +2577,15 @@ app.post('/api/admin/update-apply', (req, res) => {
   }
   const pm2Res = spawnSync('pm2', ['restart', 'server.mjs', '--name', 'cicada-server'], { cwd: root, encoding: 'utf8', timeout: 60_000 });
   if (pm2Res.error || pm2Res.status !== 0) {
+    if (autoStashed) spawnSync('git', ['-C', root, 'stash', 'pop'], { encoding: 'utf8', timeout: 60_000 });
     return res.status(500).json({ error: `pm2 restart: ${pm2Res.error?.message || pm2Res.stderr || 'ошибка'}` });
+  }
+
+  if (autoStashed) {
+    const popRes = spawnSync('git', ['-C', root, 'stash', 'pop'], { encoding: 'utf8', timeout: 60_000 });
+    if (popRes.error || popRes.status !== 0) {
+      return res.status(500).json({ error: `git stash pop: ${popRes.error?.message || popRes.stderr || 'разрешите конфликт и примените stash вручную'}` });
+    }
   }
   recordAdminAction(req, 'system_update_apply', null, { ok: true });
   return res.json({ success: true, message: 'Обновление установлено и сервер перезапущен.' });
