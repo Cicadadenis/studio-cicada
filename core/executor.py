@@ -332,6 +332,11 @@ def _eval_attr(target, name: str):
 
 
 def _get_var(name: str, ctx, strict: bool):
+    # Поддерживаем шаблонный синтаксис {переменная} в выражениях
+    # (например, если {логин} == "admin":)
+    if isinstance(name, str) and len(name) >= 3 and name.startswith("{") and name.endswith("}"):
+        name = name[1:-1].strip()
+
     # Встроенные динамические переменные
     if name == "текущая_дата":
         return _dt.datetime.now().strftime("%d.%m.%Y")
