@@ -31,7 +31,8 @@ export const OUTPUT_BLOCK_TYPES = new Set([
 ]);
 
 // Типы блоков, которые делегируют выполнение другому блоку/сценарию.
-export const DELEGATE_BLOCK_TYPES = new Set(['use', 'goto', 'stop']);
+// run — IR-тип для DSL-инструкции «запустить сценарий».
+export const DELEGATE_BLOCK_TYPES = new Set(['use', 'goto', 'run', 'stop']);
 
 // Заголовки DSL-секций, которые являются контейнерами (не "пустые" блоки).
 export const INLINE_BLOCK_HEADERS = new Set([
