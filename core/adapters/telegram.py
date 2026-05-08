@@ -221,7 +221,7 @@ class TelegramAdapter:
             "payload": "cicada_payment",
             "provider_token": provider_token,
             "currency": currency,
-            "prices": [{"label": title, "amount": amount * 100}],
+            "prices": [{"label": title, "amount": amount}],
         })
 
     # ─────────────── game ───────────────

@@ -252,6 +252,8 @@ class SendInvoice:
     title: str
     description: str
     amount: int
+    currency: str = "RUB"
+    provider_token: str = ""
 
 
 @dataclass
@@ -1692,7 +1694,13 @@ class Parser:
         # оплата provider amount currency "title"
         m = re.match(r'^оплата\s+(\S+)\s+(\S+)\s+(\S+)\s+"([^"]+)"$', line)
         if m:
-            return SendInvoice(title=m.group(4), description="", amount=int(float(m.group(2)) * 100))
+            return SendInvoice(
+                title=m.group(4),
+                description="",
+                amount=int(round(float(m.group(2)) * 100)),
+                currency=m.group(3),
+                provider_token="" if m.group(1) == "test_provider" else m.group(1),
+            )
 
         # меню "title": (нет поддержки в ядре — пропускаем тело, шлём ответ)
         m = re.match(r'^меню\s+"([^"]+)"\s*:', line)

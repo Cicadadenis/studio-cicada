@@ -1449,7 +1449,14 @@ class Executor:
 
     def _exec_send_invoice(self, stmt: SendInvoice, ctx):
         try:
-            self.tg.send_invoice(ctx.chat_id, stmt.title, stmt.description, stmt.amount)
+            self.tg.send_invoice(
+                ctx.chat_id,
+                stmt.title,
+                stmt.description,
+                stmt.amount,
+                getattr(stmt, "currency", "RUB"),
+                getattr(stmt, "provider_token", ""),
+            )
         except requests.exceptions.HTTPError as e:
             details = ""
             try:
