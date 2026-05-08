@@ -1,0 +1,203 @@
+версия "1.0"
+бот "YOUR_BOT_TOKEN"
+
+команды:
+    "/start" - "🚀 Full Test"
+    "/help" - "❓ Все разделы"
+    "/profile" - "👤 Анкета"
+    "/media" - "🖼 Медиа"
+    "/api" - "🌐 API"
+
+глобально full_test_enabled = истина
+глобально счётчик = 0
+глобально ADMIN_ID = 123456789
+
+блок full_test_меню:
+    ответ "🧪 Full Test — пример со всеми основными блоками Cicada Studio."
+    кнопки:
+        ["👤 Анкета", "🖼 Медиа"]
+        ["💾 Данные", "🌐 API"]
+        ["🔁 Логика", "🛡 Админ"]
+        ["⚙️ Настройки", "❓ Помощь"]
+
+до каждого:
+    лог[info] "Full Test input: {текст} от {пользователь.имя}"
+
+после каждого:
+    лог[debug] "Full Test turn completed"
+
+при старте:
+    если full_test_enabled == истина:
+        запомни название_бота = "Full Test"
+        сохранить "последний_старт_{chat_id}" = текст
+        ответ "👋 Добро пожаловать в Full Test, {пользователь.имя}!"
+        печатает 1с
+        ответ_md "*Full Test* показывает меню, сценарии, условия, БД, медиа, HTTP, циклы и Telegram-блоки."
+        использовать full_test_меню
+    иначе:
+        ответ "⛔ Full Test временно выключен."
+        стоп
+
+при команде "/help":
+    ответ "❓ Разделы Full Test: анкета, медиа, данные, API, логика, настройки и админ."
+    inline-кнопки:
+        ["Открыть анкету" → "go_profile", "Открыть API" → "go_api"]
+        ["Документация" → "url:https://example.com/docs"]
+
+при команде "/profile":
+    перейти "full_test_анкета"
+
+при команде "/media":
+    использовать full_test_медиа
+
+при команде "/api":
+    использовать full_test_api
+
+при нажатии "👤 Анкета":
+    перейти "full_test_анкета"
+
+при нажатии "go_profile":
+    перейти "full_test_анкета"
+
+сценарий full_test_анкета:
+    шаг имя:
+        спросить "Как вас зовут?" → имя_анкеты
+    шаг город:
+        спросить "Из какого вы города?" → город
+    шаг возраст:
+        спросить "Сколько вам лет?" → возраст
+    шаг итог:
+        сохранить "full_test_имя_{chat_id}" = имя_анкеты
+        сохранить "full_test_город_{chat_id}" = город
+        сохранить "full_test_возраст_{chat_id}" = возраст
+        если возраст >= 18:
+            ответ "✅ Анкета сохранена: {имя_анкеты}, {город}, 18+."
+        иначе:
+            ответ "✅ Анкета сохранена: {имя_анкеты}, {город}."
+        кнопки "🏠 Главное меню" "💾 Данные"
+        стоп
+
+блок full_test_медиа:
+    ответ "🖼 Медиа-блоки: фото, видео, аудио, документ, стикер, контакт, локация и опрос."
+    ответ "Фото из Full Test"
+    фото "https://picsum.photos/640/360"
+    видео "https://samplelib.com/lib/preview/mp4/sample-5s.mp4" "Короткое видео"
+    аудио "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"
+    документ "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf" "PDF-документ"
+    стикер "CAACAgIAAxkBAAEFullTestSticker"
+    контакт "+10000000000" "Full Test Support"
+    локация 55.7558 37.6173
+    опрос "Какой блок проверить дальше?" "API" "БД" "Логика" "Медиа"
+    использовать full_test_меню
+
+при нажатии "🖼 Медиа":
+    использовать full_test_медиа
+
+при фото:
+    ответ "📷 Full Test получил фото: {файл_id}"
+    использовать full_test_меню
+
+при документе:
+    ответ "📄 Full Test получил документ: {имя_файла} ({файл_id})"
+    использовать full_test_меню
+
+при геолокации:
+    ответ "📍 Full Test получил геолокацию: {широта}, {долгота}"
+    использовать full_test_меню
+
+при нажатии "💾 Данные":
+    сохранить "full_test_status_{chat_id}" = "ok"
+    получить "full_test_status_{chat_id}" → статус
+    все_ключи → ключи
+    сохранить_глобально "full_test_last_user" = пользователь.id
+    получить от пользователь.id "full_test_status_{chat_id}" → статус_из_профиля
+    ответ "💾 Статус: {статус}. Ключи: {ключи}. Из профиля: {статус_из_профиля}"
+    удалить "full_test_temp_{chat_id}"
+    использовать full_test_меню
+
+блок full_test_api:
+    http_get "https://jsonplaceholder.typicode.com/todos/1" → api_get
+    http_post "https://jsonplaceholder.typicode.com/posts" с "source=Full Test" → api_post
+    http_patch "https://jsonplaceholder.typicode.com/posts/1" с "title=Full Test" → api_patch
+    http_put "https://jsonplaceholder.typicode.com/posts/1" с "source=Full Test" → api_put
+    http_delete "https://jsonplaceholder.typicode.com/posts/1" → api_delete
+    запомни rows = "SQL demo"
+    запомни намерение = "other"
+    запрос_бд "select 1 as full_test" → rows
+    классифицировать ["support", "sales", "other"] → намерение
+    ответ "🌐 API проверены. GET: {api_get}\nPOST: {api_post}\nPATCH: {api_patch}\nPUT: {api_put}\nDELETE: {api_delete}\nSQL: {rows}\nIntent: {намерение}"
+    использовать full_test_меню
+
+при нажатии "🌐 API":
+    использовать full_test_api
+
+при нажатии "go_api":
+    использовать full_test_api
+
+при нажатии "🔁 Логика":
+    ответ "🔁 Условия, циклы, пауза, typing, random и вызов блока."
+    запомни список = ["один", "два", "три"]
+    для каждого элемент в список:
+        ответ "• foreach: {элемент}"
+    запомни n = 2
+    пока n > 0:
+        ответ "while n={n}"
+        запомни n = n - 1
+    повторять 2 раз:
+        ответ "repeat Full Test"
+    таймаут 3 секунд:
+        печатает 1с
+        пауза 1с
+    рандом:
+        "🎲 random: A"
+        "🎲 random: B"
+        "🎲 random: C"
+    вызвать "full_test_ping" → ping_result
+    ответ "Вызов блока: {ping_result}"
+    использовать full_test_меню
+
+блок full_test_ping:
+    ответ "pong from Full Test"
+    вернуть "pong"
+
+при нажатии "🛡 Админ":
+    проверить подписку @your_channel → подписан
+    роль @your_channel пользователь.id → роль_канала
+    переслать сообщение ADMIN_ID
+    уведомить ADMIN_ID: "Full Test: пользователь {пользователь.id} открыл админ-раздел."
+    рассылка группе testers: "Full Test broadcast для группы testers"
+    ответ "🛡 Telegram admin: подписка={подписан}, роль={роль_канала}."
+    использовать full_test_меню
+
+при нажатии "⚙️ Настройки":
+    ответ "⚙️ Настройки Full Test:"
+    inline-кнопки:
+        ["🇷🇺 RU" → "ft_lang_ru", "🇬🇧 EN" → "ft_lang_en"]
+        ["💳 Тест оплаты" → "ft_payment", "❌ Закрыть" → "ft_close"]
+
+при нажатии "ft_lang_ru":
+    сохранить "full_test_lang_{chat_id}" = "ru"
+    ответ "🇷🇺 Язык Full Test: RU"
+    использовать full_test_меню
+
+при нажатии "ft_lang_en":
+    сохранить "full_test_lang_{chat_id}" = "en"
+    ответ "🇬🇧 Full Test language: EN"
+    использовать full_test_меню
+
+при нажатии "ft_payment":
+    оплата test_provider 100 RUB "Full Test payment"
+    ответ "💳 Тестовый платёж создан."
+
+при нажатии "ft_close":
+    использовать full_test_меню
+
+при нажатии "❓ Помощь":
+    перейти "/help"
+
+при нажатии "🏠 Главное меню":
+    использовать full_test_меню
+
+иначе:
+    ответ "🤔 Full Test не понял: {текст}"
+    использовать full_test_меню
