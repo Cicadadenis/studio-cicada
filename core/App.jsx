@@ -136,11 +136,30 @@ async function postJsonWithCsrf(url, body) {
 async function fetchOauthBootstrapUser() {
   const r = await fetch('/api/auth/oauth-bootstrap', { credentials: 'include' });
   const data = await r.json().catch(() => ({}));
+  if (data?.twofaRequired) {
+    const e = new Error('Требуется код 2FA');
+    e.twofaRequired = true;
+    e.oauth2fa = true;
+    throw e;
+  }
   if (data?.ok && data.token && data.user) {
     storeJwt(data.token);
     return data.user;
   }
   return null;
+}
+
+async function completeOauth2fa(totp = '') {
+  const res = await postJsonWithCsrf('/api/auth/oauth-2fa/complete', { totp });
+  const data = await res.json().catch(() => ({}));
+  if (data?.twofaRequired) {
+    const e = new Error(data.error || 'Требуется код 2FA');
+    e.twofaRequired = true;
+    throw e;
+  }
+  if (data?.error) throw new Error(data.error);
+  if (data.token) storeJwt(data.token);
+  return data.user;
 }
 
 async function registerUser(name, email, password) {
@@ -2684,6 +2703,7 @@ export default function App() {
   const canvasRef = useRef(null);
 
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [oauth2faPending, setOauth2faPending] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [authTab, setAuthTab] = useState('login'); // 'login' | 'register'
   const [userProjects, setUserProjects] = useState([]);
@@ -3915,9 +3935,10 @@ const EXAMPLE_FULL = `версия "1.0"
               setShowAuthModal(true);
             }
           })
-          .catch(() => {
+          .catch((e) => {
             clearSession();
             setCurrentUser(null);
+            if (e?.oauth2fa || e?.twofaRequired) setOauth2faPending(true);
             setShowAuthModal(true);
           });
       } else {
@@ -3935,7 +3956,15 @@ const EXAMPLE_FULL = `версия "1.0"
             setShowAuthModal(false);
           }
         })
-        .catch(() => setShowAuthModal(false));
+        .catch((e) => {
+          if (e?.oauth2fa || e?.twofaRequired) {
+            setOauth2faPending(true);
+            setAuthTab('login');
+            setShowAuthModal(true);
+            return;
+          }
+          setShowAuthModal(false);
+        });
     }
 
     // Check if bot is already running on server after page refresh
@@ -4153,6 +4182,9 @@ const EXAMPLE_FULL = `версия "1.0"
         let user;
         if (tgData) {
           user = await telegramAuth(tgData);
+        } else if (oauth2faPending) {
+          user = await completeOauth2fa(totp);
+          setOauth2faPending(false);
         } else {
           user = await loginUser(email, password, totp);
         }
@@ -4176,6 +4208,7 @@ const EXAMPLE_FULL = `версия "1.0"
           showToast('Регистрация успешна! 3 дня PRO уже на аккаунте.', 'success');
         }
       }}
+      forceTotp={oauth2faPending}
     />
   ) : null;
 
@@ -6664,7 +6697,7 @@ function TelegramLoginButton({ onLogin }) {
     const script = document.createElement('script');
     script.src = 'https://telegram.org/js/telegram-widget.js?22';
     script.setAttribute('data-telegram-login', TG_BOT_NAME);
-    script.setAttribute('data-size', 'large');
+    script.setAttribute('data-size', 'medium');
     script.setAttribute('data-radius', '12');
     script.setAttribute('data-request-access', 'write');
     script.async = true;
@@ -6703,6 +6736,7 @@ function TelegramLoginButton({ onLogin }) {
         background: 'rgba(33,150,243,0.07)',
         border: '1px solid rgba(33,150,243,0.25)',
         overflow: 'hidden',
+        minWidth: 0,
       }}
     />
   );
@@ -7051,7 +7085,7 @@ function TwoFASettingsCard({ user, onUpdateUser, showToast }) {
   </div>);
 }
 
-function AuthModal({ tab, setTab, onClose, onLogin, onRegister, canClose = true }) {
+function AuthModal({ tab, setTab, onClose, onLogin, onRegister, canClose = true, forceTotp = false }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -7862,6 +7896,11 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onLoadP
     },
   };
   const t = I18N[uiLang] || I18N.ru;
+  const tx = {
+    ru: { supportTitle: 'Поддержка', supportHint: 'Заполните форму, затем откроется Telegram с готовым текстом для отправки в' },
+    en: { supportTitle: 'Support', supportHint: 'Fill in the form, then Telegram will open with a ready-made message for' },
+    uk: { supportTitle: 'Підтримка', supportHint: 'Заповніть форму, потім відкриється Telegram з готовим текстом для відправки в' },
+  }[uiLang] || {};
   const [activeTab, setActiveTab] = useState('profile');
   const [newName, setNewName] = useState(user.name);
   const [newEmail, setNewEmail] = useState(user.email);
@@ -8582,9 +8621,9 @@ ${supportMessage.trim()}`;
             {activeTab === 'support' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 760 }}>
                 <div style={{ background: 'rgba(16,185,129,0.05)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: 14, padding: 16 }}>
-                  <div style={{ fontSize: 16, fontWeight: 800, color: '#e5e7eb', fontFamily: 'Syne, system-ui', marginBottom: 6 }}>Поддержка</div>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: '#e5e7eb', fontFamily: 'Syne, system-ui', marginBottom: 6 }}>{tx.supportTitle}</div>
                   <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)', lineHeight: 1.6 }}>
-                    Заполните форму, затем откроется Telegram с готовым текстом для отправки в <strong>@satanasat</strong>.
+                    {tx.supportHint} <strong>@satanasat</strong>.
                   </div>
                 </div>
 
@@ -8963,3 +9002,6 @@ ${supportMessage.trim()}`;
     );
   }
   
+  useEffect(() => {
+    if (forceTotp) setTotpRequired(true);
+  }, [forceTotp]);
