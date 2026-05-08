@@ -1891,7 +1891,7 @@ function validateDSL(code, stacks) {
   // Бесконечный цикл: loop без стоп/goto внутри стека
   stacks.forEach(stack => {
     if (!stack.blocks.some(b => b.type === 'loop')) return;
-    const hasExit = stack.blocks.some(b => b.type === 'stop' || b.type === 'goto');
+    const hasExit = stack.blocks.some(b => b.type === 'stop' || b.type === 'goto' || b.type === 'use');
     if (!hasExit) {
       warnings.push(`⚠️ Цикл без выхода ("стоп" или "перейти") — возможен бесконечный цикл`);
     }
@@ -1935,6 +1935,8 @@ function validateDSL(code, stacks) {
     // запрос → var, http_get ... → var
     const m4 = l.match(/^(?:http_\w+|запрос|вызвать)\s+.*(?:→|->)\s*([а-яёa-zA-Z_][а-яёa-zA-Z_0-9]*)$/);
     if (m4) definedVars.add(m4[1]);
+    const m5 = l.match(/^для каждого\s+([а-яёa-zA-Z_][а-яёa-zA-Z_0-9]*)\s+в\s+/);
+    if (m5) definedVars.add(m5[1]);
   });
 
   // Ключевые слова DSL и встроенные функции ядра (executor.py _BUILTIN_FUNCS)
@@ -1945,6 +1947,10 @@ function validateDSL(code, stacks) {
     'стикер','контакт','локация','опрос','лог','уведомление','запрос',
     'запрос_бд','классифицировать','проверить_роль','событие','оплата',
     'блок','сценарий','шаг','повторять','пока','для','в','раз','при',
+    'ответ_md','все_ключи','сохранить_глобально','от','удалить','http_заголовки',
+    'http_get','http_post','http_patch','http_put','http_delete','json','таймаут',
+    'секунд','подождать','вызвать','проверить','подписку','роль','переслать',
+    'сообщение','уведомить','рассылка','группе','RUB',
     'нажатии','команда','команде','версия','бот','команды','до','после','каждого','старте',
     'inline', 'true', 'false', 'null', 'истина', 'ложь', 'пусто',
     // уровни логирования
@@ -1986,6 +1992,7 @@ function validateDSL(code, stacks) {
     if (REF_INSTR.test(l)) return;
     // Пропускаем строки-триггеры событий: «при документе:», «при фото:», «до каждого:»
     if (EVENT_TRIGGER.test(l)) return;
+    if (/^(?:оплата|уведомить|рассылка|переслать сообщение|проверить подписку|роль @)\s+/.test(l)) return;
 
     // Переменные в шаблонах {var} — пропускаем вызовы функций {func(args)}
     const tmplMatches = [...l.matchAll(/\{([а-яёА-ЯЁa-zA-Z_][а-яёА-ЯЁa-zA-Z_0-9.]*)\}/g)];
@@ -1999,6 +2006,7 @@ function validateDSL(code, stacks) {
       .replace(/[а-яёА-ЯЁa-zA-Z_][а-яёА-ЯЁa-zA-Z_0-9]*\s*\([^)]*\)/g, '') // убираем func(...)
       // Убираем строковые литералы в разных кавычках, чтобы "Париж"/«Париж» не считались переменными
       .replace(/"[^"\n]*"|'[^'\n]*'|«[^»\n]*»|“[^”\n]*”/g, '')
+      .replace(/@[^\s]+/g, '')                                             // убираем @channel/usernames
       .replace(/#.*/g, '');                                                // убираем комментарии
 
     // Сначала точечные токены (объект.поле) как единый блок
@@ -3320,6 +3328,7 @@ export default function App() {
       if (t.startsWith('перейти к шаг ')) return { type: 'goto', props: { target: t.replace(/^перейти к шаг\s+/, '').trim() } };
       if (t.startsWith('запустить '))   return { type: 'goto', props: { target: t.replace(/^запустить\s+/, '').trim() } };
       if (t.startsWith('перейти '))     return { type: 'goto', props: { target: t.replace(/^перейти\s+/, '').replace(/^"/, '').replace(/"$/, '').trim() } };
+      if (t.startsWith('вернуть '))    return { type: 'stop', props: { reason: 'return', value: t.replace(/^вернуть\s+/, '').trim() } };
       if (t.startsWith('завершить') || t === 'вернуть' || t === 'стоп') return { type: 'stop', props: {} };
       if (t === 'повторить шаг')        return { type: 'goto', props: { target: 'повторить' } };
       if (t.startsWith('фото '))        return { type: 'photo', props: { url: extractString(t) } };

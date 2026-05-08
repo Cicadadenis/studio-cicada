@@ -420,11 +420,10 @@ export function emitBlockText(block) {
       return emitHttp(p);
     case 'loop': {
       const mode = p.mode || 'count';
-      const placeholder = '    # тело цикла';
-      if (mode === 'while') return [`пока ${p.cond || 'истина'}:`, placeholder].join('\n');
-      if (mode === 'foreach') return [`для каждого ${p.var || 'item'} в ${p.collection || 'список'}:`, placeholder].join('\n');
-      if (mode === 'timeout') return [`таймаут ${p.seconds || 5} секунд:`, placeholder].join('\n');
-      return [`повторять ${p.count || 3} раз:`, placeholder].join('\n');
+      if (mode === 'while') return `пока ${p.cond || 'истина'}:`;
+      if (mode === 'foreach') return `для каждого ${p.var || 'item'} в ${p.collection || 'список'}:`;
+      if (mode === 'timeout') return `таймаут ${p.seconds || 5} секунд:`;
+      return `повторять ${p.count || 3} раз:`;
     }
     case 'notify':
       return `уведомить ${p.target}: ${q(p.text || '')}`;
@@ -476,7 +475,8 @@ function stackToDSLStructured(blocks) {
 
   const isBoundary = (block) => {
     if (!block) return true;
-    if (block.type === 'condition' || block.type === 'else') return true;
+    if (block.props?._afterScope) return true;
+    if (block.type === 'condition' || block.type === 'else' || block.type === 'loop') return true;
     if (rootType === 'scenario' && block.type === 'step') return true;
     return false;
   };
@@ -518,6 +518,19 @@ function stackToDSLStructured(blocks) {
         pushBlock(blocks[i], baseIndent + 1);
         i += 1;
       }
+      continue;
+    }
+
+    if (block.type === 'loop') {
+      pushBlock(block, baseIndent);
+      i += 1;
+      let bodyCount = 0;
+      while (i < blocks.length && !isBoundary(blocks[i])) {
+        pushBlock(blocks[i], baseIndent + 1);
+        bodyCount += 1;
+        i += 1;
+      }
+      if (bodyCount === 0) out.push(`${'    '.repeat(baseIndent + 1)}# тело цикла`);
       continue;
     }
 
