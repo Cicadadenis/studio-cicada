@@ -4,7 +4,7 @@
  *
  * Режимы:
  *   node scripts/parser-batch-check.mjs
- *       — 10 встроенных примеров .ccd (разные конструкции + один с ошибкой скобок).
+ *       — встроенные мини-кейсы + реальные примеры из репозитория (examples/*.ccd, qr-bot, demo-bot, bot.ccd).
  *   node scripts/parser-batch-check.mjs --dir ./path
  *       — все *.ccd в каталоге.
  *   node scripts/parser-batch-check.mjs stacks a.json b.json
@@ -168,6 +168,25 @@ const BUILTIN_DSL_CASES = [
   },
 ];
 
+/** Реальные .ccd из репозитория (те же примеры, что лежат рядом с проектом). */
+function repoExampleCcdCases() {
+  const pairs = [
+    ['examples/echo-bot.ccd', 'репо: Echo Bot (examples/echo-bot.ccd)'],
+    ['examples/shop-bot.ccd', 'репо: магазин — каталог/корзина (examples/shop-bot.ccd)'],
+    ['examples/demo-bot.ccd', 'репо: демо — квиз/медиа/inline (examples/demo-bot.ccd)'],
+    ['examples/qr-bot.ccd', 'репо: QR-код (examples/qr-bot.ccd)'],
+    ['examples/showcase-bot.ccd', 'репо: большой шаблон — меню/магазин/игра (examples/showcase-bot.ccd)'],
+    ['bot.ccd', 'репо: Dropbox-бот (bot.ccd)'],
+  ];
+  const out = [];
+  for (const [rel, label] of pairs) {
+    const fp = path.join(REPO_ROOT, rel);
+    if (!fs.existsSync(fp)) continue;
+    out.push({ name: label, dsl: fs.readFileSync(fp, 'utf8') });
+  }
+  return out;
+}
+
 function listCsvFiles(dir) {
   const abs = path.resolve(dir);
   if (!fs.existsSync(abs) || !fs.statSync(abs).isDirectory()) {
@@ -330,6 +349,7 @@ async function main() {
       dsl: c.dsl,
       expectParserFail: c.expectParserFail,
     }));
+    cases.push(...repoExampleCcdCases());
   }
 
   const rows = cases.map((c) =>
