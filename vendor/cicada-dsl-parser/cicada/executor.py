@@ -332,11 +332,42 @@ def _eval_attr(target, name: str):
     )
 
 
-def _get_var(name: str, ctx, strict: bool):
+def _normalize_var_name(name: str) -> str:
+    """Возвращает имя переменной без шаблонных обёрток.
+
+    Старый парсер условий иногда отдаёт VarRef с исходным фрагментом
+    вроде ``{логин}`` (или с пробелами/кавычками вокруг него). В строгом
+    режиме это приводило к ошибке "Переменная '{логин}' не определена",
+    хотя в контексте уже была переменная ``логин``. Нормализуем имя перед
+    поиском, чтобы шаблонный синтаксис работал одинаково в условиях,
+    ответах и выражениях.
+    """
+    if not isinstance(name, str):
+        return name
+
+    normalized = name.strip()
+
+    # Допускаем одинарные/двойные кавычки вокруг шаблонного имени, которые
+    # могут остаться после legacy fallback: "{логин}" -> логин.
+    if len(normalized) >= 2 and normalized[0] == normalized[-1] and normalized[0] in ("'", '"'):
+        inner = normalized[1:-1].strip()
+        if inner.startswith("{") and inner.endswith("}"):
+            normalized = inner
+
     # Поддерживаем шаблонный синтаксис {переменная} в выражениях
-    # (например, если {логин} == "admin":)
-    if isinstance(name, str) and len(name) >= 3 and name.startswith("{") and name.endswith("}"):
-        name = name[1:-1].strip()
+    # (например, если {логин} == "admin":). Делаем это в цикле, чтобы
+    # безопасно обработать двойную обёртку вида {{логин}}.
+    while len(normalized) >= 3 and normalized.startswith("{") and normalized.endswith("}"):
+        inner = normalized[1:-1].strip()
+        if inner == normalized:
+            break
+        normalized = inner
+
+    return normalized
+
+
+def _get_var(name: str, ctx, strict: bool):
+    name = _normalize_var_name(name)
 
     # Встроенные динамические переменные
     if name == "текущая_дата":
