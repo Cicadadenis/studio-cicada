@@ -1028,7 +1028,7 @@ app.post('/api/passkey/register-options', requireUserAuth, async (req, res) => {
       user: { id: b64url(Buffer.from(user.id)), name: user.email || user.id, displayName: user.name || user.email || user.id },
       pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
       timeout: 60000,
-      authenticatorSelection: { userVerification: 'required', residentKey: 'preferred' },
+      authenticatorSelection: { userVerification: 'required', residentKey: 'required', requireResidentKey: true },
       excludeCredentials: existing.map((c) => ({ type: 'public-key', id: c.credentialId })),
       attestation: 'none',
     },
@@ -1066,17 +1066,33 @@ app.post('/api/passkey/register', requireUserAuth, async (req, res) => {
 app.post('/api/passkey/login-options', loginRateLimit, async (req, res) => {
   const email = String(req.body?.email || '').trim().toLowerCase();
   const user = email ? await findByEmail(email) : null;
-  if (!user || user.banned || !user.verified) return res.status(404).json({ error: 'Passkey для этого email не найден' });
-  const passkeys = await listUserPasskeys(user.id);
-  if (!passkeys.length) return res.status(404).json({ error: 'Passkey для этого email не найден' });
-  const base = buildUserPasskeyOptions(req, 'login', user.id);
+
+  if (email) {
+    if (!user || user.banned || !user.verified) return res.status(404).json({ error: 'Passkey для этого email не найден' });
+    const passkeys = await listUserPasskeys(user.id);
+    if (!passkeys.length) return res.status(404).json({ error: 'Passkey для этого email не найден' });
+    const base = buildUserPasskeyOptions(req, 'login', user.id);
+    return res.json({
+      publicKey: {
+        challenge: base.challenge,
+        rpId: base.rpId,
+        timeout: 60000,
+        userVerification: 'required',
+        allowCredentials: passkeys.map((c) => ({ type: 'public-key', id: c.credentialId })),
+      },
+      challenge: base.challenge,
+    });
+  }
+
+  // Empty allowCredentials asks the browser to show a discoverable (resident) passkey,
+  // so mobile users can sign in by fingerprint / Face ID without entering email first.
+  const base = buildUserPasskeyOptions(req, 'login', null);
   res.json({
     publicKey: {
       challenge: base.challenge,
       rpId: base.rpId,
       timeout: 60000,
       userVerification: 'required',
-      allowCredentials: passkeys.map((c) => ({ type: 'public-key', id: c.credentialId })),
     },
     challenge: base.challenge,
   });
@@ -1946,7 +1962,7 @@ function consumeUserWebAuthnChallenge(kind, challenge, userId = null) {
     meta
     && meta.kind === kind
     && meta.exp > Date.now()
-    && (userId == null || meta.userId === userId)
+    && (meta.userId == null || userId == null || meta.userId === userId)
   );
 }
 
