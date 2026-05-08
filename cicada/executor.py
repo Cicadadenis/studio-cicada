@@ -952,6 +952,10 @@ class Executor:
             ctx.waiting_for = None
             if ctx.scenario:
                 self._continue_scenario(ctx)
+            elif getattr(ctx, "_pending_stmts", None):
+                pending = ctx._pending_stmts
+                ctx._pending_stmts = []
+                self._exec_body(pending, ctx)
             # `вернуть` должен влиять только на текущую обработку тела,
             # но не на after_each middleware.
             ctx._return_requested = False
@@ -1012,6 +1016,12 @@ class Executor:
                 ctx.waiting_for = None
                 if ctx.scenario:
                     self._continue_scenario(ctx)
+                elif getattr(ctx, "_pending_stmts", None):
+                    pending = ctx._pending_stmts
+                    ctx._pending_stmts = []
+                    self._exec_body(pending, ctx)
+                ctx._return_requested = False
+                self._run_after_each(ctx)
                 return
             for h in self.program.handlers:
                 if h.kind == media_kind:
@@ -1023,6 +1033,12 @@ class Executor:
             ctx.waiting_for = None
             if ctx.scenario:
                 self._continue_scenario(ctx)
+            elif getattr(ctx, "_pending_stmts", None):
+                pending = ctx._pending_stmts
+                ctx._pending_stmts = []
+                self._exec_body(pending, ctx)
+            ctx._return_requested = False
+            self._run_after_each(ctx)
             return
 
         if text == "/start":
@@ -1126,7 +1142,7 @@ class Executor:
 
         signal = None
         try:
-            for stmt in stmts:
+            for i, stmt in enumerate(stmts):
                 result = self._exec(stmt, ctx)
 
                 if isinstance(stmt, If):
@@ -1144,6 +1160,14 @@ class Executor:
                 # FSM semantics: `спросить ... → var` должен поставить ожидание и
                 # остановить выполнение текущего шага до ввода пользователя.
                 if getattr(ctx, "waiting_for", None):
+                    # Сохраняем хвост текущего тела, чтобы цепочки
+                    # `спросить → спросить → если ...` продолжались после ответа.
+                    tail = stmts[i + 1 :]
+                    prev = getattr(ctx, "_pending_stmts", None)
+                    if prev is not None:
+                        ctx._pending_stmts = list(prev) + list(tail)
+                    else:
+                        ctx._pending_stmts = list(tail)
                     break
         except (_BreakSignal, _ContinueSignal) as e:
             signal = e
