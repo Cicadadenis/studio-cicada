@@ -1682,6 +1682,193 @@ const ADMIN_KEY = process.env.ADMIN_KEY;
 /** Если задан (Base32 ≥16 символов после trim), вход в админку требует код из Authenticator (TOTP). */
 const ADMIN_TOTP_SECRET = normalizeAdminTotpSecret(process.env.ADMIN_TOTP_SECRET);
 
+const ADMIN_PASSKEYS_FILE = process.env.ADMIN_PASSKEYS_FILE || path.resolve('data/admin-passkeys.json');
+const ADMIN_WEBAUTHN_RP_NAME = process.env.ADMIN_WEBAUTHN_RP_NAME || 'Cicada Studio Admin';
+const ADMIN_WEBAUTHN_RP_ID = String(process.env.ADMIN_WEBAUTHN_RP_ID || '').trim();
+const ADMIN_WEBAUTHN_ORIGIN = String(process.env.ADMIN_WEBAUTHN_ORIGIN || APP_URL || '').replace(/\/$/, '');
+const adminWebAuthnChallenges = new Map();
+
+function b64url(buf) {
+  return Buffer.from(buf).toString('base64url');
+}
+
+function fromB64url(value) {
+  return Buffer.from(String(value || ''), 'base64url');
+}
+
+function resolveAdminWebAuthnOrigin(req) {
+  if (ADMIN_WEBAUTHN_ORIGIN) return ADMIN_WEBAUTHN_ORIGIN;
+  const proto = req.get('x-forwarded-proto') || req.protocol || (isHttps ? 'https' : 'http');
+  const host = req.get('x-forwarded-host') || req.get('host') || API_HOST || 'localhost';
+  return `${String(proto).split(',')[0]}://${String(host).split(',')[0]}`.replace(/\/$/, '');
+}
+
+function resolveAdminWebAuthnRpId(req) {
+  if (ADMIN_WEBAUTHN_RP_ID) return ADMIN_WEBAUTHN_RP_ID;
+  try {
+    return new URL(resolveAdminWebAuthnOrigin(req)).hostname;
+  } catch {
+    return String(API_HOST || 'localhost').split(':')[0];
+  }
+}
+
+function putAdminWebAuthnChallenge(kind, challenge) {
+  adminWebAuthnChallenges.set(challenge, { kind, exp: Date.now() + 5 * 60 * 1000 });
+}
+
+function consumeAdminWebAuthnChallenge(kind, challenge) {
+  const meta = adminWebAuthnChallenges.get(challenge);
+  adminWebAuthnChallenges.delete(challenge);
+  return Boolean(meta && meta.kind === kind && meta.exp > Date.now());
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [challenge, meta] of adminWebAuthnChallenges.entries()) {
+    if (!meta || meta.exp <= now) adminWebAuthnChallenges.delete(challenge);
+  }
+}, 5 * 60 * 1000).unref();
+
+function loadAdminPasskeys() {
+  try {
+    const raw = fs.readFileSync(ADMIN_PASSKEYS_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed.credentials) ? parsed.credentials : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveAdminPasskeys(credentials) {
+  fs.mkdirSync(path.dirname(ADMIN_PASSKEYS_FILE), { recursive: true });
+  fs.writeFileSync(ADMIN_PASSKEYS_FILE, JSON.stringify({ credentials }, null, 2));
+}
+
+function decodeCborFirst(buf) {
+  let offset = 0;
+  function readLen(add) {
+    if (add < 24) return add;
+    if (add === 24) return buf[offset++];
+    if (add === 25) { const v = buf.readUInt16BE(offset); offset += 2; return v; }
+    if (add === 26) { const v = buf.readUInt32BE(offset); offset += 4; return v; }
+    throw new Error('CBOR length is not supported');
+  }
+  function readItem() {
+    const head = buf[offset++];
+    const major = head >> 5;
+    const add = head & 31;
+    const len = readLen(add);
+    if (major === 0) return len;
+    if (major === 1) return -1 - len;
+    if (major === 2) { const v = buf.subarray(offset, offset + len); offset += len; return v; }
+    if (major === 3) { const v = buf.subarray(offset, offset + len).toString('utf8'); offset += len; return v; }
+    if (major === 4) return Array.from({ length: len }, () => readItem());
+    if (major === 5) {
+      const m = new Map();
+      for (let i = 0; i < len; i += 1) m.set(readItem(), readItem());
+      return m;
+    }
+    if (major === 7) {
+      if (add === 20) return false;
+      if (add === 21) return true;
+      if (add === 22) return null;
+    }
+    throw new Error('CBOR type is not supported');
+  }
+  return readItem();
+}
+
+function cosePublicKeyToPem(coseKey) {
+  const kty = coseKey.get(1);
+  const alg = coseKey.get(3);
+  if (kty === 2 && alg === -7) {
+    const crv = coseKey.get(-1);
+    const x = coseKey.get(-2);
+    const y = coseKey.get(-3);
+    if (crv !== 1 || !Buffer.isBuffer(x) || !Buffer.isBuffer(y)) {
+      throw new Error('Некорректный passkey ES256/P-256');
+    }
+    const jwk = { kty: 'EC', crv: 'P-256', x: b64url(x), y: b64url(y) };
+    return crypto.createPublicKey({ key: jwk, format: 'jwk' }).export({ type: 'spki', format: 'pem' });
+  }
+  if (kty === 3 && alg === -257) {
+    const n = coseKey.get(-1);
+    const e = coseKey.get(-2);
+    if (!Buffer.isBuffer(n) || !Buffer.isBuffer(e)) {
+      throw new Error('Некорректный passkey RS256');
+    }
+    const jwk = { kty: 'RSA', n: b64url(n), e: b64url(e) };
+    return crypto.createPublicKey({ key: jwk, format: 'jwk' }).export({ type: 'spki', format: 'pem' });
+  }
+  throw new Error('Поддерживаются passkeys ES256/P-256 и RS256');
+}
+
+function parseAuthenticatorData(authData) {
+  if (!Buffer.isBuffer(authData) || authData.length < 37) throw new Error('Некорректные authenticatorData');
+  return {
+    rpIdHash: authData.subarray(0, 32),
+    flags: authData[32],
+    signCount: authData.readUInt32BE(33),
+    restOffset: 37,
+  };
+}
+
+function extractRegistrationCredential(attestationObject) {
+  const att = decodeCborFirst(attestationObject);
+  const authData = att instanceof Map ? att.get('authData') : null;
+  const parsed = parseAuthenticatorData(authData);
+  if ((parsed.flags & 0x01) === 0) throw new Error('Пользователь не подтверждён authenticator');
+  if ((parsed.flags & 0x40) === 0) throw new Error('Нет attested credential data');
+  let o = parsed.restOffset + 16; // AAGUID
+  const credIdLen = authData.readUInt16BE(o);
+  o += 2;
+  const credentialId = authData.subarray(o, o + credIdLen);
+  o += credIdLen;
+  const publicKey = cosePublicKeyToPem(decodeCborFirst(authData.subarray(o)));
+  return { credentialId: b64url(credentialId), publicKey, signCount: parsed.signCount };
+}
+
+function expectedRpIdHash(req) {
+  return crypto.createHash('sha256').update(resolveAdminWebAuthnRpId(req)).digest();
+}
+
+function verifyClientData(clientDataJSON, { type, challenge, origin }) {
+  const clientData = JSON.parse(clientDataJSON.toString('utf8'));
+  if (clientData.type !== type) throw new Error('Некорректный WebAuthn type');
+  if (clientData.challenge !== challenge) throw new Error('Некорректный challenge');
+  if (clientData.origin !== origin) throw new Error('Некорректный origin');
+}
+
+function verifyAdminPasskeyAssertion(req, credential) {
+  const { id, response } = req.body || {};
+  const clientDataJSON = fromB64url(response?.clientDataJSON);
+  const authenticatorData = fromB64url(response?.authenticatorData);
+  const signature = fromB64url(response?.signature);
+  const parsed = parseAuthenticatorData(authenticatorData);
+  verifyClientData(clientDataJSON, {
+    type: 'webauthn.get',
+    challenge: req.body?.challenge,
+    origin: resolveAdminWebAuthnOrigin(req),
+  });
+  if (!consumeAdminWebAuthnChallenge('login', req.body?.challenge)) throw new Error('Challenge истёк');
+  if (!parsed.rpIdHash.equals(expectedRpIdHash(req))) throw new Error('RP ID не совпадает');
+  if ((parsed.flags & 0x01) === 0) throw new Error('Пользователь не подтверждён authenticator');
+  const signed = Buffer.concat([authenticatorData, crypto.createHash('sha256').update(clientDataJSON).digest()]);
+  const ok = crypto.verify('sha256', signed, credential.publicKey, signature);
+  if (!ok || id !== credential.credentialId) throw new Error('Подпись passkey не прошла проверку');
+  return parsed.signCount;
+}
+
+function buildAdminPasskeyOptions(req, kind) {
+  const challenge = b64url(crypto.randomBytes(32));
+  putAdminWebAuthnChallenge(kind, challenge);
+  return {
+    challenge,
+    rpId: resolveAdminWebAuthnRpId(req),
+    origin: resolveAdminWebAuthnOrigin(req),
+  };
+}
+
 function isAdminAuthed(req) {
   const token = req.cookies?.admin_session;
   if (!token) return false;
@@ -1694,8 +1881,95 @@ function isAdminAuthed(req) {
 }
 
 /** Подсказка для страницы входа: включён ли второй фактор (не раскрывает ключ). */
-app.get('/api/admin/login-config', adminLoginRateLimit, (_req, res) => {
-  res.json({ totpRequired: Boolean(ADMIN_TOTP_SECRET) });
+app.get('/api/admin/login-config', adminLoginRateLimit, (req, res) => {
+  res.json({
+    totpRequired: Boolean(ADMIN_TOTP_SECRET),
+    passkeyEnabled: loadAdminPasskeys().length > 0,
+    webauthn: { rpId: resolveAdminWebAuthnRpId(req), origin: resolveAdminWebAuthnOrigin(req) },
+  });
+});
+
+app.post('/api/admin/passkey/login-options', adminLoginRateLimit, (req, res) => {
+  const credentials = loadAdminPasskeys();
+  if (!credentials.length) return res.status(404).json({ error: 'Отпечаток / Face ID для админки ещё не зарегистрирован' });
+  const base = buildAdminPasskeyOptions(req, 'login');
+  res.json({
+    publicKey: {
+      challenge: base.challenge,
+      rpId: base.rpId,
+      timeout: 60000,
+      userVerification: 'required',
+      allowCredentials: credentials.map((c) => ({ type: 'public-key', id: c.credentialId })),
+    },
+  });
+});
+
+app.post('/api/admin/passkey/login', adminLoginRateLimit, (req, res) => {
+  try {
+    const credential = loadAdminPasskeys().find((c) => c.credentialId === req.body?.id);
+    if (!credential) throw new Error('Отпечаток / Face ID не найден');
+    const signCount = verifyAdminPasskeyAssertion(req, credential);
+    const credentials = loadAdminPasskeys().map((c) => (
+      c.credentialId === credential.credentialId
+        ? { ...c, signCount: Math.max(Number(c.signCount || 0), signCount), lastUsedAt: new Date().toISOString() }
+        : c
+    ));
+    saveAdminPasskeys(credentials);
+    issueAdminSessionCookie(res);
+    recordAdminAction(req, 'admin_passkey_login', null, { credentialId: credential.credentialId.slice(0, 12) });
+    res.json({ ok: true });
+  } catch (err) {
+    recordAuthError('admin_passkey_login', req, null, err.message);
+    res.status(403).json({ error: 'Forbidden' });
+  }
+});
+
+app.post('/api/admin/passkey/register-options', adminLoginRateLimit, (req, res) => {
+  if (!isAdminAuthed(req)) return res.status(403).json({ error: 'Forbidden' });
+  const credentials = loadAdminPasskeys();
+  const base = buildAdminPasskeyOptions(req, 'register');
+  res.json({
+    publicKey: {
+      challenge: base.challenge,
+      rp: { name: ADMIN_WEBAUTHN_RP_NAME, id: base.rpId },
+      user: { id: b64url(Buffer.from('admin')), name: 'admin', displayName: 'Cicada Admin' },
+      pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+      timeout: 60000,
+      authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'required', requireResidentKey: true },
+      attestation: 'none',
+      excludeCredentials: credentials.map((c) => ({ type: 'public-key', id: c.credentialId })),
+    },
+  });
+});
+
+app.post('/api/admin/passkey/register', adminLoginRateLimit, (req, res) => {
+  if (!isAdminAuthed(req)) return res.status(403).json({ error: 'Forbidden' });
+  try {
+    const clientDataJSON = fromB64url(req.body?.response?.clientDataJSON);
+    const attestationObject = fromB64url(req.body?.response?.attestationObject);
+    verifyClientData(clientDataJSON, {
+      type: 'webauthn.create',
+      challenge: req.body?.challenge,
+      origin: resolveAdminWebAuthnOrigin(req),
+    });
+    if (!consumeAdminWebAuthnChallenge('register', req.body?.challenge)) throw new Error('Challenge истёк');
+    const parsed = extractRegistrationCredential(attestationObject);
+    const authData = decodeCborFirst(attestationObject).get('authData');
+    if (!parseAuthenticatorData(authData).rpIdHash.equals(expectedRpIdHash(req))) throw new Error('RP ID не совпадает');
+    const credentials = loadAdminPasskeys().filter((c) => c.credentialId !== parsed.credentialId);
+    credentials.push({
+      credentialId: parsed.credentialId,
+      publicKey: parsed.publicKey,
+      signCount: parsed.signCount,
+      createdAt: new Date().toISOString(),
+    });
+    saveAdminPasskeys(credentials);
+    recordAdminAction(req, 'admin_passkey_register', null, { credentialId: parsed.credentialId.slice(0, 12) });
+    res.json({ ok: true, count: credentials.length });
+  } catch (err) {
+    recordAuthError('admin_passkey_register', req, null, err.message);
+    res.status(400).json({ error: 'Не удалось зарегистрировать passkey' });
+  }
 });
 
 app.post('/api/admin/login', adminLoginRateLimit, (req, res) => {
@@ -1907,10 +2181,14 @@ app.get('/api/admin/security', (req, res) => {
     jwtSecretLength: jwtSecretLen,
     userAuth: 'JWT Bearer (server-side session map не используется)',
     adminTotpConfigured: Boolean(ADMIN_TOTP_SECRET),
+    adminPasskeysConfigured: loadAdminPasskeys().length,
+    adminWebAuthnRpId: resolveAdminWebAuthnRpId(req),
     adminAuth:
-      ADMIN_TOTP_SECRET != null
-        ? 'ADMIN_KEY + TOTP (RFC 6238), затем JWT в cookie admin_session'
-        : 'JWT в httpOnly cookie admin_session (stateless)',
+      loadAdminPasskeys().length > 0
+        ? 'Отпечаток/Face ID (Passkey/WebAuthn) или ADMIN_KEY' + (ADMIN_TOTP_SECRET ? ' + TOTP' : '') + ', затем JWT в cookie admin_session'
+        : (ADMIN_TOTP_SECRET != null
+            ? 'ADMIN_KEY + TOTP (RFC 6238), затем JWT в cookie admin_session'
+            : 'ADMIN_KEY, затем JWT в httpOnly cookie admin_session (stateless)'),
     userSessionsActive: 0,
     adminSessionsActive: 0,
     cookieSecurity: {

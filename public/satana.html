@@ -760,8 +760,12 @@
           <span>→</span>
           <span>ВОЙТИ</span>
         </button>
+        <button class="btn-primary" id="passkey-login-btn" onclick="tryPasskeyLogin()" style="display:none;margin-top:10px;background:linear-gradient(135deg,#7c3aed,#2563eb)">
+          <span>🔐</span>
+          <span>ВОЙТИ ПО ОТПЕЧАТКУ</span>
+        </button>
 
-        <div class="error-msg" id="login-error">⚠ Неверный ключ или код</div>
+        <div class="error-msg" id="login-error">⚠ Неверный ключ, код или отпечаток</div>
 
         <p class="login-hint">NEON PROTOCOL • SECURE</p>
       </div>
@@ -941,6 +945,7 @@
   let securityInfo = null;
   let systemInfo = null;
   let loginTotpRequired = false;
+  let loginPasskeyEnabled = false;
   let adminLogs = { apiErrors: [], authErrors: [], adminActions: [] };
 
   const AVATAR_COLORS = [
@@ -968,6 +973,43 @@
       headers: headers,
       body: JSON.stringify(body != null ? body : {}),
     });
+  }
+
+  function b64urlToBuffer(value) {
+    var s = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
+    while (s.length % 4) s += '=';
+    var bin = atob(s);
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+    return bytes.buffer;
+  }
+
+  function bufferToB64url(buffer) {
+    var bytes = new Uint8Array(buffer || new ArrayBuffer(0));
+    var bin = '';
+    for (var i = 0; i < bytes.length; i += 1) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  }
+
+  function preparePasskeyOptions(options) {
+    var publicKey = Object.assign({}, options.publicKey || {});
+    publicKey.challenge = b64urlToBuffer(publicKey.challenge);
+    if (publicKey.user && publicKey.user.id) publicKey.user.id = b64urlToBuffer(publicKey.user.id);
+    ['allowCredentials', 'excludeCredentials'].forEach(function(key) {
+      if (Array.isArray(publicKey[key])) {
+        publicKey[key] = publicKey[key].map(function(c) { return Object.assign({}, c, { id: b64urlToBuffer(c.id) }); });
+      }
+    });
+    return publicKey;
+  }
+
+  function serializePasskeyCredential(credential, challenge) {
+    var r = credential.response;
+    var out = { id: credential.id, type: credential.type, rawId: bufferToB64url(credential.rawId), challenge: challenge, response: {} };
+    ['clientDataJSON', 'attestationObject', 'authenticatorData', 'signature', 'userHandle'].forEach(function(key) {
+      if (r[key]) out.response[key] = bufferToB64url(r[key]);
+    });
+    return out;
   }
 
   function showToast(msg, color = 'var(--text)') {
@@ -1002,9 +1044,59 @@
       const r = await fetch(API + '/api/admin/login-config');
       const j = await r.json();
       loginTotpRequired = !!j.totpRequired;
+      loginPasskeyEnabled = !!j.passkeyEnabled && !!window.PublicKeyCredential;
       var wrap = document.getElementById('admin-totp-wrap');
       if (wrap) wrap.style.display = loginTotpRequired ? 'block' : 'none';
+      var passkeyBtn = document.getElementById('passkey-login-btn');
+      if (passkeyBtn) passkeyBtn.style.display = loginPasskeyEnabled ? 'flex' : 'none';
     } catch (e) {}
+  }
+
+
+  async function tryPasskeyLogin() {
+    if (!window.PublicKeyCredential) {
+      showToast('Этот браузер не поддерживает вход по отпечатку / Face ID', 'var(--red)');
+      return;
+    }
+    var btn = document.getElementById('passkey-login-btn');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin-icon">⟳</span> Отпечаток...'; }
+    try {
+      var optionsRes = await apiPostJson(API + '/api/admin/passkey/login-options', {});
+      var options = await optionsRes.json().catch(function() { return {}; });
+      if (!optionsRes.ok) throw new Error(options.error || 'Отпечаток / Face ID ещё не настроен');
+      var challenge = options.publicKey.challenge;
+      var credential = await navigator.credentials.get({ publicKey: preparePasskeyOptions(options) });
+      var verifyRes = await apiPostJson(API + '/api/admin/passkey/login', serializePasskeyCredential(credential, challenge));
+      if (!verifyRes.ok) throw new Error('Отпечаток / Face ID не принят сервером');
+      adminKey = '__passkey__';
+      loadUsers();
+    } catch (e) {
+      var errEl = document.getElementById('login-error');
+      errEl.textContent = '⚠ ' + (e.message || 'Не удалось войти по отпечатку / Face ID');
+      errEl.style.display = 'flex';
+      if (btn) { btn.disabled = false; btn.innerHTML = '<span>🔐</span><span>ВОЙТИ ПО ОТПЕЧАТКУ</span>'; }
+    }
+  }
+
+  async function registerAdminPasskey() {
+    if (!window.PublicKeyCredential) {
+      showToast('Этот браузер не поддерживает вход по отпечатку / Face ID', 'var(--red)');
+      return;
+    }
+    try {
+      var optionsRes = await apiPostJson(API + '/api/admin/passkey/register-options', {});
+      var options = await optionsRes.json().catch(function() { return {}; });
+      if (!optionsRes.ok) throw new Error(options.error || 'Нет доступа к регистрации отпечатка / Face ID');
+      var challenge = options.publicKey.challenge;
+      var credential = await navigator.credentials.create({ publicKey: preparePasskeyOptions(options) });
+      var verifyRes = await apiPostJson(API + '/api/admin/passkey/register', serializePasskeyCredential(credential, challenge));
+      var verify = await verifyRes.json().catch(function() { return {}; });
+      if (!verifyRes.ok) throw new Error(verify.error || 'Сервер отклонил отпечаток / Face ID');
+      showToast('Отпечаток / Face ID зарегистрирован для админки', 'var(--green)');
+      loadSecurity();
+    } catch (e) {
+      showToast(e.message || 'Не удалось зарегистрировать отпечаток / Face ID', 'var(--red)');
+    }
   }
 
   async function tryLogin() {
@@ -1183,18 +1275,21 @@
     if (!box || !securityInfo) return;
     var keyState = securityInfo.adminKeyConfigured ? 'OK' : 'СЛАБЫЙ/НЕ ЗАДАН';
     var keyColor = securityInfo.adminKeyConfigured ? 'var(--green)' : 'var(--red)';
+    var passkeyCount = Number(securityInfo.adminPasskeysConfigured || 0);
     box.className = '';
     box.innerHTML =
       '<div class="stats-row" style="margin-bottom:0">' +
         '<div class="stat-card"><span class="bg-icon">🔑</span><div class="value" style="color:' + keyColor + ';font-size:20px">' + keyState + '</div><div class="label">ADMIN_KEY (' + (securityInfo.adminKeyLength || 0) + ' симв.)</div></div>' +
-        '<div class="stat-card"><span class="bg-icon">🛡️</span><div class="value" style="color:var(--accent)">' + (securityInfo.passwordHashing || '-') + '</div><div class="label">Хеширование паролей</div></div>' +
+        '<div class="stat-card"><span class="bg-icon">🔐</span><div class="value" style="color:var(--accent)">' + passkeyCount + '</div><div class="label">Отпечатки / Face ID</div></div>' +
         '<div class="stat-card"><span class="bg-icon">🍪</span><div class="value" style="color:var(--text2)">' + (securityInfo.cookieSecurity && securityInfo.cookieSecurity.sameSite ? securityInfo.cookieSecurity.sameSite : '-') + '</div><div class="label">Cookie policy</div></div>' +
       '</div>' +
       '<div style="margin-top:12px;font-size:12px;color:var(--text2);line-height:1.45">' +
         escHtml(securityInfo.userAuth || '') +
         '<br/>' +
         escHtml(securityInfo.adminAuth || '') +
-      '</div>';
+        '<br/>RP ID: ' + escHtml(securityInfo.adminWebAuthnRpId || '-') +
+      '</div>' +
+      '<button class="btn-save-prices" style="margin-top:12px;background:linear-gradient(135deg,#7c3aed,#2563eb)" onclick="registerAdminPasskey()">🔐 Зарегистрировать отпечаток / Face ID</button>';
   }
 
   async function loadGroqTokens() {

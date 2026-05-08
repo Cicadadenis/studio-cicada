@@ -5187,7 +5187,7 @@ const EXAMPLE_FULL = `версия "1.0"
                   <button
                     onClick={() => { setShowInstructions(true); setMobileMoreOpen(false); }}
                     style={{ width:'100%', padding:'10px 16px', textAlign:'left', background:'transparent', color:'var(--text2)', border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui', display:'flex', alignItems:'center', gap:8 }}
-                  >📖 Инструкция</button>
+                  >{builderUi.mobileInstructions}</button>
                 </div>
               </>
             )}
@@ -7917,6 +7917,27 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onLoadP
       settings: 'Настройки',
       docs: 'Документация',
       support: 'Поддержка',
+      quickActions: 'Быстрые действия',
+      newProjectSub: 'Создать бота с нуля',
+      docsSub: 'Открыть инструкцию',
+      supportSub: 'Написать в поддержку',
+      personalInfo: 'Личная информация',
+      projectsCount: 'ПРОЕКТОВ',
+      daysWithUs: 'ДНЕЙ С НАМИ',
+      planLabel: 'ТАРИФ',
+      supportLabel: 'ПОДДЕРЖКА',
+      registrationDate: 'Дата регистрации',
+      lastLogin: 'Последний вход',
+      today: 'Сегодня',
+      noProjects: 'Нет проектов',
+      saveProjectHint: 'Сохраните проект через кнопку «Сохранить проект» на панели',
+      botTestToken: '🤖 Токен бота для теста',
+      botTestTokenHint: 'Токен будет автоматически подставляться в новые блоки «Бот» и в схемы, сгенерированные AI.',
+      tokenSaved: '✅ Токен сохранён',
+      tokenRemoved: 'Токен удалён',
+      removeToken: '✕ Убрать',
+      dangerZone: 'Опасная зона',
+      logoutAccount: '↩ Выйти из аккаунта',
       upgradePro: 'Перейти на Pro →',
       logoutConfirm: 'Выйти из аккаунта?',
       editProfile: '✎ Редактировать профиль',
@@ -7954,6 +7975,27 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onLoadP
       settings: 'Settings',
       docs: 'Documentation',
       support: 'Support',
+      quickActions: 'Quick actions',
+      newProjectSub: 'Create a bot from scratch',
+      docsSub: 'Open the guide',
+      supportSub: 'Contact support',
+      personalInfo: 'Personal information',
+      projectsCount: 'PROJECTS',
+      daysWithUs: 'DAYS WITH US',
+      planLabel: 'PLAN',
+      supportLabel: 'SUPPORT',
+      registrationDate: 'Registration date',
+      lastLogin: 'Last login',
+      today: 'Today',
+      noProjects: 'No projects',
+      saveProjectHint: 'Save a project with the “Save project” button in the toolbar',
+      botTestToken: '🤖 Test bot token',
+      botTestTokenHint: 'The token will be inserted automatically into new “Bot” blocks and AI-generated flows.',
+      tokenSaved: '✅ Token saved',
+      tokenRemoved: 'Token removed',
+      removeToken: '✕ Remove',
+      dangerZone: 'Danger zone',
+      logoutAccount: '↩ Sign out',
       upgradePro: 'Upgrade to Pro →',
       logoutConfirm: 'Sign out?',
       editProfile: '✎ Edit profile',
@@ -7991,6 +8033,27 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onLoadP
       settings: 'Налаштування',
       docs: 'Документація',
       support: 'Підтримка',
+      quickActions: 'Швидкі дії',
+      newProjectSub: 'Створити бота з нуля',
+      docsSub: 'Відкрити інструкцію',
+      supportSub: 'Написати в підтримку',
+      personalInfo: 'Особиста інформація',
+      projectsCount: 'ПРОЄКТІВ',
+      daysWithUs: 'ДНІВ З НАМИ',
+      planLabel: 'ТАРИФ',
+      supportLabel: 'ПІДТРИМКА',
+      registrationDate: 'Дата реєстрації',
+      lastLogin: 'Останній вхід',
+      today: 'Сьогодні',
+      noProjects: 'Немає проєктів',
+      saveProjectHint: 'Збережіть проєкт кнопкою «Зберегти проєкт» на панелі',
+      botTestToken: '🤖 Токен бота для тесту',
+      botTestTokenHint: 'Токен автоматично підставлятиметься в нові блоки «Бот» і схеми, згенеровані AI.',
+      tokenSaved: '✅ Токен збережено',
+      tokenRemoved: 'Токен видалено',
+      removeToken: '✕ Прибрати',
+      dangerZone: 'Небезпечна зона',
+      logoutAccount: '↩ Вийти з акаунту',
       upgradePro: 'Перейти на Pro →',
       logoutConfirm: 'Вийти з акаунту?',
       editProfile: '✎ Редагувати профіль',
@@ -8355,7 +8418,7 @@ ${supportMessage.trim()}`;
               </div>
               <button
                 onClick={() => { if (confirm(t.logoutConfirm)) { onLogout(); onClose(); } }}
-                title="Выйти"
+                title={t.logoutAccount.replace(/^↩\s*/, '')}
                 style={{ width: 28, height: 28, borderRadius: 7, background: 'rgba(248,113,113,0.06)', border: '1px solid rgba(248,113,113,0.2)', color: 'rgba(248,113,113,0.6)', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'all .15s' }}
                 onMouseEnter={e => { e.currentTarget.style.background = 'rgba(248,113,113,0.18)'; e.currentTarget.style.borderColor = '#f87171'; e.currentTarget.style.color = '#f87171'; }}
                 onMouseLeave={e => { e.currentTarget.style.background = 'rgba(248,113,113,0.06)'; e.currentTarget.style.borderColor = 'rgba(248,113,113,0.2)'; e.currentTarget.style.color = 'rgba(248,113,113,0.6)'; }}
@@ -8432,10 +8495,10 @@ ${supportMessage.trim()}`;
                 {/* Stats row */}
                 <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(4,1fr)', gap: 10 }}>
                   {[
-                    { label: 'ПРОЕКТОВ', value: projects.length, color: '#f97316', isNum: true },
-                    { label: 'ДНЕЙ С НАМИ', value: user.createdAt ? Math.floor((Date.now() - new Date(user.createdAt)) / 86400000) : '—', color: '#06b6d4', isNum: true },
-                    { label: 'ТАРИФ', value: user.plan === 'pro' ? 'PRO' : 'FREE', isPlan: true },
-                    { label: 'ПОДДЕРЖКА', value: '24/7', color: '#818cf8', isNum: true },
+                    { label: t.projectsCount, value: projects.length, color: '#f97316', isNum: true },
+                    { label: t.daysWithUs, value: user.createdAt ? Math.floor((Date.now() - new Date(user.createdAt)) / 86400000) : '—', color: '#06b6d4', isNum: true },
+                    { label: t.planLabel, value: user.plan === 'pro' ? 'PRO' : 'FREE', isPlan: true },
+                    { label: t.supportLabel, value: '24/7', color: '#818cf8', isNum: true },
                   ].map(({ label, value, color, isNum, isPlan }) => (
                     <div key={label} style={{ padding: '13px 14px', borderRadius: 12, background: 'rgba(10,8,28,0.6)', border: '1px solid rgba(99,102,241,0.2)', boxShadow: '0 2px 12px rgba(0,0,0,0.3)' }}>
                       {isPlan ? (
@@ -8456,12 +8519,12 @@ ${supportMessage.trim()}`;
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                     {/* Quick actions */}
                     <section>
-                      <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', fontFamily: 'Syne,system-ui', marginBottom: 10 }}>Быстрые действия</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', fontFamily: 'Syne,system-ui', marginBottom: 10 }}>{t.quickActions}</div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                         {[
-                          { icon: '⊕', label: 'Новый проект', sub: 'Создать бота с нуля', color: '#f97316', glow: 'rgba(249,115,22,0.2)', action: onClose },
-                          { icon: '📖', label: 'Документация', sub: 'Открыть инструкцию', color: '#60a5fa', glow: 'rgba(96,165,250,0.15)', action: onOpenInstructions },
-                          { icon: '🛟', label: 'Поддержка', sub: 'Написать в поддержку', color: '#34d399', glow: 'rgba(52,211,153,0.15)', action: () => setActiveTab('support') },
+                          { icon: '⊕', label: t.newProject, sub: t.newProjectSub, color: '#f97316', glow: 'rgba(249,115,22,0.2)', action: onClose },
+                          { icon: '📖', label: t.docs, sub: t.docsSub, color: '#60a5fa', glow: 'rgba(96,165,250,0.15)', action: onOpenInstructions },
+                          { icon: '🛟', label: t.support, sub: t.supportSub, color: '#34d399', glow: 'rgba(52,211,153,0.15)', action: () => setActiveTab('support') },
                         ].map(({ icon, label, sub, color, glow, action }) => (
                           <button
                             key={label}
@@ -8479,13 +8542,13 @@ ${supportMessage.trim()}`;
 
                     {/* Personal info */}
                     <section>
-                      <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', fontFamily: 'Syne,system-ui', marginBottom: 10 }}>Личная информация</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', fontFamily: 'Syne,system-ui', marginBottom: 10 }}>{t.personalInfo}</div>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                         {[
-                          { icon: '👤', label: 'Имя', value: user.name, editable: true },
+                          { icon: '👤', label: t.name, value: user.name, editable: true },
                           { icon: '✉️', label: 'Email', value: user.email, editable: true },
-                          { icon: '📅', label: 'Дата регистрации', value: user.createdAt ? formatDate(user.createdAt) : '—', editable: false },
-                          { icon: '🕐', label: 'Последний вход', value: 'Сегодня', editable: false },
+                          { icon: '📅', label: t.registrationDate, value: user.createdAt ? formatDate(user.createdAt) : '—', editable: false },
+                          { icon: '🕐', label: t.lastLogin, value: t.today, editable: false },
                           { icon: '🌐', label: t.language, value: ({ ru:'Русский', en:'English', uk:'Українська' }[user.uiLanguage || 'ru'] || 'Русский'), editable: true },
                         ].map(({ icon, label, value, editable }) => (
                           <div
@@ -8586,8 +8649,8 @@ ${supportMessage.trim()}`;
                 {projects.length === 0 ? (
                   <div style={{ textAlign: 'center', padding: '48px 20px', background: 'rgba(255,255,255,0.025)', border: '1px dashed rgba(255,255,255,0.13)', borderRadius: 20 }}>
                     <div style={{ fontSize: 48, marginBottom: 14, opacity: 0.3 }}>⊞</div>
-                    <div style={{ fontSize: 15, fontWeight: 600, color: 'rgba(255,255,255,0.4)', fontFamily: 'Syne, system-ui' }}>Нет проектов</div>
-                    <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.2)', marginTop: 8, lineHeight: 1.6 }}>Сохраните проект через кнопку «Сохранить проект» на панели</div>
+                    <div style={{ fontSize: 15, fontWeight: 600, color: 'rgba(255,255,255,0.4)', fontFamily: 'Syne, system-ui' }}>{t.noProjects}</div>
+                    <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.2)', marginTop: 8, lineHeight: 1.6 }}>{t.saveProjectHint}</div>
                   </div>
                 ) : (
                   projects.map((project, i) => (
@@ -8631,17 +8694,17 @@ ${supportMessage.trim()}`;
                 <div style={{ background: 'rgba(62,207,142,0.04)', border: '1px solid rgba(62,207,142,0.18)', borderRadius: 14, padding: 16 }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(62,207,142,0.8)', textTransform: 'uppercase', letterSpacing: '0.1em', fontFamily: 'Syne, system-ui', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 8 }}>
                     <div style={{ flex: 1, height: 1, background: 'rgba(62,207,142,0.15)' }} />
-                    🤖 Токен бота для теста
+                    {t.botTestToken}
                     <div style={{ flex: 1, height: 1, background: 'rgba(62,207,142,0.15)' }} />
                   </div>
-                  <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.38)', margin: '0 0 12px', lineHeight: 1.5 }}>Токен будет автоматически подставляться в новые блоки «Бот» и в схемы, сгенерированные AI.</p>
+                  <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.38)', margin: '0 0 12px', lineHeight: 1.5 }}>{t.botTestTokenHint}</p>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     <input type="text" value={testToken} onChange={e => setTestToken(e.target.value)} onFocus={() => setFocusedField('ttoken')} onBlur={() => setFocusedField(null)} style={{ ...inputBase('ttoken'), flex: 1, fontFamily: 'var(--mono,monospace)', fontSize: 12, letterSpacing: '0.02em' }} placeholder="1234567890:AAHxxxxxxxxxxxxxxxxxxxxxxxxxxxx" />
                     {testToken && testToken !== (user.test_token || '') && (
-                      <button onClick={async () => { setTestTokenSaving(true); try { await onUpdateUser({ test_token: testToken.trim() || null, _silent: true }); showToast('✅ Токен сохранён', 'success'); } catch(e) { showToast('Ошибка: ' + e.message, 'error'); } finally { setTestTokenSaving(false); } }} disabled={testTokenSaving} style={{ padding: '9px 14px', borderRadius: 10, fontSize: 12, fontWeight: 700, fontFamily: 'Syne, system-ui', background: 'linear-gradient(135deg,#3ecf8e,#0ea5e9)', color: '#0a0a0a', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0, opacity: testTokenSaving ? 0.6 : 1 }}>{testTokenSaving ? '...' : '💾 Сохранить'}</button>
+                      <button onClick={async () => { setTestTokenSaving(true); try { await onUpdateUser({ test_token: testToken.trim() || null, _silent: true }); showToast(t.tokenSaved, 'success'); } catch(e) { showToast('Ошибка: ' + e.message, 'error'); } finally { setTestTokenSaving(false); } }} disabled={testTokenSaving} style={{ padding: '9px 14px', borderRadius: 10, fontSize: 12, fontWeight: 700, fontFamily: 'Syne, system-ui', background: 'linear-gradient(135deg,#3ecf8e,#0ea5e9)', color: '#0a0a0a', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0, opacity: testTokenSaving ? 0.6 : 1 }}>{testTokenSaving ? '...' : '💾 ' + t.confirm}</button>
                     )}
                     {testToken && testToken === (user.test_token || '') && (
-                      <button onClick={async () => { setTestTokenSaving(true); try { await onUpdateUser({ test_token: null, _silent: true }); setTestToken(''); showToast('Токен удалён', 'success'); } catch(e) { showToast('Ошибка: ' + e.message, 'error'); } finally { setTestTokenSaving(false); } }} disabled={testTokenSaving} style={{ padding: '9px 12px', borderRadius: 10, fontSize: 12, background: 'rgba(248,113,113,0.08)', color: '#f87171', border: '1px solid rgba(248,113,113,0.2)', cursor: 'pointer', flexShrink: 0, opacity: testTokenSaving ? 0.6 : 1 }}>✕ Убрать</button>
+                      <button onClick={async () => { setTestTokenSaving(true); try { await onUpdateUser({ test_token: null, _silent: true }); setTestToken(''); showToast(t.tokenRemoved, 'success'); } catch(e) { showToast('Ошибка: ' + e.message, 'error'); } finally { setTestTokenSaving(false); } }} disabled={testTokenSaving} style={{ padding: '9px 12px', borderRadius: 10, fontSize: 12, background: 'rgba(248,113,113,0.08)', color: '#f87171', border: '1px solid rgba(248,113,113,0.2)', cursor: 'pointer', flexShrink: 0, opacity: testTokenSaving ? 0.6 : 1 }}>{t.removeToken}</button>
                     )}
                   </div>
                   {user.test_token && <div style={{ marginTop: 8, fontSize: 11, color: 'rgba(62,207,142,0.6)', fontFamily: 'var(--mono)' }}>✓ Сохранён: {user.test_token.slice(0, 10)}...{user.test_token.slice(-6)}</div>}
@@ -8733,10 +8796,10 @@ ${supportMessage.trim()}`;
                 <div style={{ background: 'rgba(248,113,113,0.02)', border: '1px solid rgba(248,113,113,0.16)', borderRadius: 14, padding: 16 }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(248,113,113,0.5)', textTransform: 'uppercase', letterSpacing: '0.1em', fontFamily: 'Syne, system-ui', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
                     <div style={{ flex: 1, height: 1, background: 'rgba(248,113,113,0.15)' }} />
-                    Опасная зона
+                    {t.dangerZone}
                     <div style={{ flex: 1, height: 1, background: 'rgba(248,113,113,0.15)' }} />
                   </div>
-                  <button onClick={() => { if (confirm('Выйти из аккаунта?')) { onLogout(); onClose(); } }} style={{ width: '100%', padding: '9px 16px', fontSize: 12, fontWeight: 700, fontFamily: 'Syne, system-ui', background: 'rgba(248,113,113,0.06)', color: '#f87171', border: '1px solid rgba(248,113,113,0.18)', borderRadius: 10, cursor: 'pointer', transition: 'all 0.2s' }} onMouseEnter={e => { e.currentTarget.style.background = 'rgba(248,113,113,0.15)'; }} onMouseLeave={e => { e.currentTarget.style.background = 'rgba(248,113,113,0.06)'; }}>↩ Выйти из аккаунта</button>
+                  <button onClick={() => { if (confirm(t.logoutConfirm)) { onLogout(); onClose(); } }} style={{ width: '100%', padding: '9px 16px', fontSize: 12, fontWeight: 700, fontFamily: 'Syne, system-ui', background: 'rgba(248,113,113,0.06)', color: '#f87171', border: '1px solid rgba(248,113,113,0.18)', borderRadius: 10, cursor: 'pointer', transition: 'all 0.2s' }} onMouseEnter={e => { e.currentTarget.style.background = 'rgba(248,113,113,0.15)'; }} onMouseLeave={e => { e.currentTarget.style.background = 'rgba(248,113,113,0.06)'; }}>{t.logoutAccount}</button>
                 </div>
               </div>
             )}
