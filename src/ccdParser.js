@@ -1,4 +1,4 @@
-const ROOT_KEYWORDS = ['версия', 'бот', 'команды:', 'глобально', 'блок', 'до каждого:', 'после каждого:', 'при старте:', 'старт:', 'при команде', 'команда', 'при нажатии', 'при фото:', 'при документе:', 'при геолокации:', 'сценарий', 'иначе', 'иначе:'];
+const ROOT_KEYWORDS = ['версия', 'бот', 'команды:', 'глобально', 'блок', 'до каждого:', 'после каждого:', 'при старте:', 'старт:', 'при команде', 'команда', 'при нажатии', 'при фото:', 'при документе:', 'при геолокации:', 'сценарий'];
 
 export const FLOW_PORTS = {
   version:     { input: null,           output: null           },
@@ -11,7 +11,7 @@ export const FLOW_PORTS = {
   command:     { input: null,           output: 'flow'         },
   on_location: { input: null,           output: 'flow'         },
   callback:    { input: null,           output: 'flow'         },
-  else:        { input: null,           output: 'flow'         },
+  else:        { input: 'flow',         output: 'flow'         },
   scenario:    { input: null,           output: 'scenario_flow'},
   step:        { input: 'scenario_flow',output: 'scenario_flow'},
   message:     { input: 'flow',         output: 'flow'         },
@@ -118,7 +118,7 @@ function parseNode(line) {
   if (t.startsWith('при нажатии ') && t.endsWith(':')) return { type: 'callback', props: { label: stripQuotes(t.match(/"([^"]+)"/)?.[1] || '') }, root: true };
   if (t.startsWith('сценарий ') && t.endsWith(':')) return { type: 'scenario', props: { name: t.replace('сценарий', '').replace(':', '').trim(), text: 'Начинаем!' }, root: true };
   if (t.startsWith('шаг ') && t.endsWith(':')) return { type: 'step', props: { name: t.replace('шаг', '').replace(':', '').trim(), text: '...' }, root: false };
-  if (t === 'иначе:' || t === 'иначе') return { type: 'else', props: {}, root: true };
+  if (t === 'иначе:' || t === 'иначе') return { type: 'else', props: {}, root: false };
 
   // ── Медиа-обработчики (root) ────────────────────────────────────────────
   if (t === 'при фото:') return { type: 'on_photo', props: {}, root: true };
@@ -508,8 +508,9 @@ export function parseCCDToFlow(text, blockTypes, defaultProps) {
     const parsed = parseNode(raw);
     if (!parsed) continue;
 
-    // FIX 2: else всегда root
-    const isRoot = parsed.root || parsed.type === 'else' || ROOT_KEYWORDS.some(k => trimmed.startsWith(k));
+    // `иначе` относится к ближайшему `если` на том же уровне отступа;
+    // корневым блоком оно быть не должно, иначе импорт DSL разрывает ветку условия.
+    const isRoot = parsed.root || ROOT_KEYWORDS.some(k => trimmed.startsWith(k));
 
     if (isRoot) {
       currentRoot += 1;
