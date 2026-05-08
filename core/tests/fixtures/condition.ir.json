@@ -4,6 +4,8 @@
   "indent": 0,
   "block": {
     "type": "condition",
-    "props": {}
+    "props": {
+      "cond": "текст == \"да\""
+    }
   }
 }
