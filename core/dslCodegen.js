@@ -104,6 +104,12 @@ function q(v) {
     .replace(/"/g, '\\"')}"`;
 }
 
+/** Cicada parser требует непустой RHS после «=» (regex .+). Пустой value из JSON/ИИ ломает DSL. */
+function dslAssignRhs(value) {
+  if (value == null || String(value).trim() === '') return '""';
+  return String(value).trim();
+}
+
 function stripAt(ch) {
   return String(ch || '').trim().replace(/^@/, '');
 }
@@ -280,7 +286,7 @@ export function emitBlockText(block) {
     case 'bot':
       return `бот ${q(String(p.token || '').trim() || 'YOUR_BOT_TOKEN')}`;
     case 'global':
-      return `глобально ${p.varname} = ${p.value}`;
+      return `глобально ${p.varname} = ${dslAssignRhs(p.value)}`;
     case 'commands': {
       const out = ['команды:'];
       const cmdText = String(p.commands || '').trim();
@@ -348,15 +354,15 @@ export function emitBlockText(block) {
     case 'ask':
       return `спросить ${q(p.question || '')} ${ARROW} ${p.varname || 'var'}`;
     case 'remember':
-      return `запомни ${p.varname} = ${p.value}`;
+      return `запомни ${p.varname} = ${dslAssignRhs(p.value)}`;
     case 'get':
       return `получить ${q(p.key || '')} ${ARROW} ${p.varname || 'var'}`;
     case 'get_user':
       return `получить от ${p.user_id} ${q(p.key || '')} ${ARROW} ${p.varname || 'var'}`;
     case 'save':
-      return `сохранить ${q(p.key || '')} = ${p.value}`;
+      return `сохранить ${q(p.key || '')} = ${dslAssignRhs(p.value)}`;
     case 'save_global':
-      return `сохранить_глобально ${q(p.key || '')} = ${p.value}`;
+      return `сохранить_глобально ${q(p.key || '')} = ${dslAssignRhs(p.value)}`;
     case 'db_delete':
       return `удалить ${q(p.key || '')}`;
     case 'all_keys':

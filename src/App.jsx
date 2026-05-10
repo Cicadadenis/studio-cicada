@@ -275,6 +275,24 @@ async function updateUser(userId, updates, currentUser = null) {
   return normalized;
 }
 
+/** POST /api/avatar: сохраняет data URL на сервере; мержит ответ как после /api/update. */
+async function uploadAvatar(userId, dataUrl, currentUser = null) {
+  const data = await apiFetch(`${API_URL}/avatar`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userId, dataUrl }),
+  });
+  const rawUser = data?.user || {};
+  const normalized = {
+    ...(currentUser || {}),
+    ...rawUser,
+  };
+  if (Object.prototype.hasOwnProperty.call(rawUser, 'photo_url')) {
+    normalized.photo_url = rawUser.photo_url ?? null;
+  }
+  return normalized;
+}
+
 async function fetch2FASetup(userId) {
   return apiFetch(`${API_URL}/2fa/setup?userId=${encodeURIComponent(userId)}`);
 }
@@ -5974,6 +5992,12 @@ const EXAMPLE_FULL = `версия "1.0"
               throw e;
             }
           }}
+          onUploadAvatar={async (dataUrl) => {
+            const merged = await uploadAvatar(currentUser.id, dataUrl, currentUser);
+            setCurrentUser(merged);
+            saveSession(merged);
+            return merged;
+          }}
           onLoadProject={async (projectId) => {
             const project = await loadProjectFromCloud(projectId);
             if (project) {
@@ -8048,7 +8072,7 @@ function SaveToCloudButton({ onSaveToCloud }) {
   );
 }
 
-function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onLoadProject, onDeleteProject, onSaveToCloud, showToast, isMobile, onOpenInstructions }) {
+function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onUploadAvatar, onLoadProject, onDeleteProject, onSaveToCloud, showToast, isMobile, onOpenInstructions }) {
   const builderUiContext = React.useContext(BuilderUiContext);
   const builderUiForToast = builderUiContext?.t;
   const uiLang = (builderUiContext?.lang || user.uiLanguage || 'ru').toLowerCase();
@@ -8346,7 +8370,7 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onLoadP
       setSaveSuccess(false);
       setAvatarSaving(true);
       try {
-        const updated = await onUpdateUser({ photo_url: optimized || null, _silent: true });
+        const updated = await onUploadAvatar(optimized);
         setNewAvatar(updated?.photo_url || optimized || '');
         setSaveSuccess(true);
         setTimeout(() => setSaveSuccess(false), 2500);
