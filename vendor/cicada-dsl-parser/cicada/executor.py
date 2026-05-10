@@ -930,9 +930,7 @@ class Executor:
         """Рендерит {переменные} в строковых шаблонах ключей БД."""
         if not isinstance(template, str) or ("{" not in template and "}" not in template):
             return template
-        try:
-            return self._render_parts(parse_string_expr(f'"{template}"'), ctx)
-        except Exception:
+        def _fallback_render(raw_template: str) -> str:
             # Fallback для служебных переменных, чтобы ключи вроде f_{chat_id}
             # работали даже если контекст ещё не положил chat_id/user_id в vars.
             def repl(match):
@@ -944,7 +942,16 @@ class Executor:
                 return str(ctx.get(name, ""))
 
             import re as _re
-            return _re.sub(r"\{([^}]+)\}", repl, template)
+            return _re.sub(r"\{([^}]+)\}", repl, raw_template)
+
+        try:
+            rendered = self._render_parts(parse_string_expr(f'"{template}"'), ctx)
+            # parse_string_expr может вернуть цельной строкой без интерполяции в ряде legacy-кейсов.
+            if isinstance(rendered, str) and "{" in rendered and "}" in rendered:
+                return _fallback_render(rendered)
+            return rendered
+        except Exception:
+            return _fallback_render(template)
 
     def _resolve_db_key(self, key, ctx) -> str:
         """Вычисляет ключ БД и поддерживает шаблоны вида "f_{chat_id}"."""
@@ -1884,6 +1891,17 @@ class Executor:
     def _resume_after_wait(self, ctx):
         """После ответа на «спросить»: выполнить хвост текущего шага, затем продолжить FSM."""
         pending = getattr(ctx, "_pending_stmts", None)
+        # Legacy parser может разрезать шаг после `спросить` на отдельный шаг и
+        # оставлять в pending технический EndScenario. В этом случае продолжение
+        # должно идти через FSM, иначе теряем инструкции следующего шага.
+        if (
+            pending
+            and len(pending) == 1
+            and pending[0].__class__.__name__ == "EndScenario"
+            and getattr(ctx, "scenario", None)
+        ):
+            pending = []
+            ctx._pending_stmts = []
         if pending:
             ctx._pending_stmts = []
             self._exec_body(pending, ctx)
