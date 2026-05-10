@@ -9,11 +9,13 @@ import time
 import json as _json
 import datetime as _dt
 import os as _os
+import re
 import requests
 
 from cicada.parser import (
     Program, Handler, Reply, RandomReply, SwitchStmt, Ask, Remember, If,
     parse_condition,
+    parse_string_expr,
     Buttons, InlineButton, InlineKeyboard, Photo, PhotoVar, Sticker,
     GlobalVar,
     StartScenario, Step,
@@ -43,6 +45,23 @@ from cicada.parser import (
 )
 from cicada.database import get_db
 from cicada.runtime import Runtime
+
+
+def auto_cast(value):
+    """
+    Значения из «спросить» приходят строками; приводим чистые int/float к числам,
+    чтобы {a + b}, сравнения с 0 и деление работали ожидаемо.
+    """
+    if value is None:
+        return value
+    if not isinstance(value, str):
+        return value
+    value = value.strip()
+    if re.fullmatch(r"-?\d+", value):
+        return int(value)
+    if re.fullmatch(r"-?\d+\.\d+", value):
+        return float(value)
+    return value
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -434,16 +453,27 @@ def _eval_binop(node: BinaryOp, ctx, strict: bool):
             )
         if isinstance(left, _NUMERIC) and isinstance(right, _NUMERIC):
             return left + right
-        if isinstance(left, str) or isinstance(right, str):
-            l_str = "" if left  is None else str(left)
-            r_str = "" if right is None else str(right)
-            return l_str + r_str
+        # Два операнда-строки: если оба похожи на числа (ввод пользователя) —
+        # складываем арифметически, иначе конкатенация текстов.
+        if isinstance(left, str) and isinstance(right, str):
+            try:
+                lf = float(left)
+                rf = float(right)
+                if lf == int(lf) and rf == int(rf):
+                    return int(lf) + int(rf)
+                return lf + rf
+            except (ValueError, OverflowError):
+                return left + right
         if isinstance(left, _NUMERIC) and isinstance(right, str):
-            try:    return left + float(right)
-            except ValueError: return str(left) + right
+            try:
+                return left + float(right)
+            except ValueError:
+                return str(left) + right
         if isinstance(left, str) and isinstance(right, _NUMERIC):
-            try:    return float(left) + right
-            except ValueError: return left + str(right)
+            try:
+                return float(left) + right
+            except ValueError:
+                return left + str(right)
         return str(left) + str(right)
 
     if op == "содержит":
@@ -948,14 +978,9 @@ class Executor:
             return
 
         if ctx.waiting_for:
-            ctx.set(ctx.waiting_for, data)
+            ctx.set(ctx.waiting_for, auto_cast(data))
             ctx.waiting_for = None
-            if ctx.scenario:
-                self._continue_scenario(ctx)
-            elif getattr(ctx, "_pending_stmts", None):
-                pending = ctx._pending_stmts
-                ctx._pending_stmts = []
-                self._exec_body(pending, ctx)
+            self._resume_after_wait(ctx)
             # `вернуть` должен влиять только на текущую обработку тела,
             # но не на after_each middleware.
             ctx._return_requested = False
@@ -1014,12 +1039,7 @@ class Executor:
             if ctx.waiting_for and ctx.get("файл_id"):
                 ctx.set(ctx.waiting_for, ctx.get("файл_id"))
                 ctx.waiting_for = None
-                if ctx.scenario:
-                    self._continue_scenario(ctx)
-                elif getattr(ctx, "_pending_stmts", None):
-                    pending = ctx._pending_stmts
-                    ctx._pending_stmts = []
-                    self._exec_body(pending, ctx)
+                self._resume_after_wait(ctx)
                 ctx._return_requested = False
                 self._run_after_each(ctx)
                 return
@@ -1029,14 +1049,9 @@ class Executor:
             return
 
         if ctx.waiting_for and text and not text.startswith("/"):
-            ctx.set(ctx.waiting_for, text)
+            ctx.set(ctx.waiting_for, auto_cast(text))
             ctx.waiting_for = None
-            if ctx.scenario:
-                self._continue_scenario(ctx)
-            elif getattr(ctx, "_pending_stmts", None):
-                pending = ctx._pending_stmts
-                ctx._pending_stmts = []
-                self._exec_body(pending, ctx)
+            self._resume_after_wait(ctx)
             ctx._return_requested = False
             self._run_after_each(ctx)
             return
@@ -1541,12 +1556,42 @@ class Executor:
                 f"Шаг или сценарий '{target}' не найден", stmt
             )
 
+    def _render_template_string(self, template: str, ctx) -> str:
+        """Подставляет {переменные} в строковых ключах БД (например file_{chat_id})."""
+        if not isinstance(template, str) or ("{" not in template and "}" not in template):
+            return template
+        try:
+            return self._render_parts(parse_string_expr(f'"{template}"'), ctx)
+        except Exception:
+            # Если парсер/строгий eval не подхватил служебные поля — chat_id/user_id с атрибутов ctx.
+            def repl(match):
+                name = match.group(1).strip()
+                if name == "chat_id" and hasattr(ctx, "chat_id"):
+                    return str(ctx.chat_id)
+                if name == "user_id" and hasattr(ctx, "user_id"):
+                    return str(ctx.user_id)
+                return str(ctx.get(name, ""))
+
+            return re.sub(r"\{([^}]+)\}", repl, template)
+
+    def _resolve_db_key(self, key, ctx) -> str:
+        """Ключ save/get/delete: выражение или строка с шаблоном {…}."""
+        if isinstance(key, str):
+            return self._render_template_string(key, ctx)
+        return str(self._resolve_val(key, ctx))
+
     def _exec_save_to_db(self, stmt: SaveToDB, ctx):
         value = self._resolve_val(stmt.value, ctx)
-        get_db().set(str(ctx.user_id), stmt.key, value)
+        key = self._resolve_db_key(stmt.key, ctx)
+        if self.debug:
+            self._log("DEBUG", f"[STATE] saving key={key!r} user_id={ctx.user_id}", ctx)
+        get_db().set(str(ctx.user_id), key, value)
 
     def _exec_load_from_db(self, stmt: LoadFromDB, ctx):
-        value = get_db().get(str(ctx.user_id), stmt.key)
+        key = self._resolve_db_key(stmt.key, ctx)
+        if self.debug:
+            self._log("DEBUG", f"[STATE] loading key={key!r} user_id={ctx.user_id}", ctx)
+        value = get_db().get(str(ctx.user_id), key)
         ctx.set(stmt.variable, value if value is not None else "")
 
     def _exec_log(self, stmt: Log, ctx):
@@ -1779,8 +1824,8 @@ class Executor:
 
     def _exec_delete_from_db(self, stmt: DeleteFromDB, ctx):
         """удалить "ключ" — удаление ключа из БД."""
-        key = self._resolve_val(stmt.key, ctx) if not isinstance(stmt.key, str) else stmt.key
-        get_db().delete(str(ctx.user_id), str(key))
+        key = self._resolve_db_key(stmt.key, ctx)
+        get_db().delete(str(ctx.user_id), key)
 
     def _exec_get_all_db_keys(self, stmt: GetAllDBKeys, ctx):
         """все_ключи → список — все ключи пользователя в БД."""
@@ -1789,15 +1834,15 @@ class Executor:
 
     def _exec_save_global_db(self, stmt: SaveGlobalDB, ctx):
         """сохранить_глобально "ключ" = значение."""
-        key   = self._resolve_val(stmt.key, ctx)   if not isinstance(stmt.key, str)   else stmt.key
+        key   = self._resolve_db_key(stmt.key, ctx)
         value = self._resolve_val(stmt.value, ctx)
-        get_db().set_global(str(key), value)
+        get_db().set_global(key, value)
 
     def _exec_load_from_user_db(self, stmt: LoadFromUserDB, ctx):
         """получить от USER_ID "ключ" → переменная."""
         uid   = self._resolve_val(stmt.user_id, ctx)
-        key   = self._resolve_val(stmt.key, ctx) if not isinstance(stmt.key, str) else stmt.key
-        value = get_db().get(str(uid), str(key))
+        key   = self._resolve_db_key(stmt.key, ctx)
+        value = get_db().get(str(uid), key)
         ctx.set(stmt.variable, value if value is not None else "")
 
     # ── Управление потоком расширения ──────────────────────────────────
@@ -1837,6 +1882,15 @@ class Executor:
     # ═══════════════════════════════════════════════════════════════
     #  FSM — сценарии
     # ═══════════════════════════════════════════════════════════════
+
+    def _resume_after_wait(self, ctx):
+        """После ответа на «спросить»: выполнить хвост текущего шага, затем продолжить FSM."""
+        pending = getattr(ctx, "_pending_stmts", None)
+        if pending:
+            ctx._pending_stmts = []
+            self._exec_body(pending, ctx)
+        if ctx.scenario and ctx.waiting_for is None:
+            self._continue_scenario(ctx)
 
     def _start_scenario(self, ctx, name: str):
         if name not in self.program.scenarios:

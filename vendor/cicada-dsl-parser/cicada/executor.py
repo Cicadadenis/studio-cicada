@@ -9,6 +9,7 @@ import time
 import json as _json
 import datetime as _dt
 import os as _os
+import re
 import requests
 
 from cicada.parser import (
@@ -44,6 +45,23 @@ from cicada.parser import (
 )
 from cicada.database import get_db
 from cicada.runtime import Runtime
+
+
+def auto_cast(value):
+    """
+    Значения из «спросить» приходят строками; приводим чистые int/float к числам,
+    чтобы {a + b}, сравнения с 0 и деление работали ожидаемо.
+    """
+    if value is None:
+        return value
+    if not isinstance(value, str):
+        return value
+    value = value.strip()
+    if re.fullmatch(r"-?\d+", value):
+        return int(value)
+    if re.fullmatch(r"-?\d+\.\d+", value):
+        return float(value)
+    return value
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -435,16 +453,27 @@ def _eval_binop(node: BinaryOp, ctx, strict: bool):
             )
         if isinstance(left, _NUMERIC) and isinstance(right, _NUMERIC):
             return left + right
-        if isinstance(left, str) or isinstance(right, str):
-            l_str = "" if left  is None else str(left)
-            r_str = "" if right is None else str(right)
-            return l_str + r_str
+        # Два операнда-строки: если оба похожи на числа (ввод пользователя) —
+        # складываем арифметически, иначе конкатенация текстов.
+        if isinstance(left, str) and isinstance(right, str):
+            try:
+                lf = float(left)
+                rf = float(right)
+                if lf == int(lf) and rf == int(rf):
+                    return int(lf) + int(rf)
+                return lf + rf
+            except (ValueError, OverflowError):
+                return left + right
         if isinstance(left, _NUMERIC) and isinstance(right, str):
-            try:    return left + float(right)
-            except ValueError: return str(left) + right
+            try:
+                return left + float(right)
+            except ValueError:
+                return str(left) + right
         if isinstance(left, str) and isinstance(right, _NUMERIC):
-            try:    return float(left) + right
-            except ValueError: return left + str(right)
+            try:
+                return float(left) + right
+            except ValueError:
+                return left + str(right)
         return str(left) + str(right)
 
     if op == "содержит":
@@ -974,14 +1003,9 @@ class Executor:
             return
 
         if ctx.waiting_for:
-            ctx.set(ctx.waiting_for, data)
+            ctx.set(ctx.waiting_for, auto_cast(data))
             ctx.waiting_for = None
-            if ctx.scenario:
-                self._continue_scenario(ctx)
-            elif getattr(ctx, "_pending_stmts", None):
-                pending = ctx._pending_stmts
-                ctx._pending_stmts = []
-                self._exec_body(pending, ctx)
+            self._resume_after_wait(ctx)
             # `вернуть` должен влиять только на текущую обработку тела,
             # но не на after_each middleware.
             ctx._return_requested = False
@@ -1040,12 +1064,7 @@ class Executor:
             if ctx.waiting_for and ctx.get("файл_id"):
                 ctx.set(ctx.waiting_for, ctx.get("файл_id"))
                 ctx.waiting_for = None
-                if ctx.scenario:
-                    self._continue_scenario(ctx)
-                elif getattr(ctx, "_pending_stmts", None):
-                    pending = ctx._pending_stmts
-                    ctx._pending_stmts = []
-                    self._exec_body(pending, ctx)
+                self._resume_after_wait(ctx)
                 ctx._return_requested = False
                 self._run_after_each(ctx)
                 return
@@ -1055,14 +1074,9 @@ class Executor:
             return
 
         if ctx.waiting_for and text and not text.startswith("/"):
-            ctx.set(ctx.waiting_for, text)
+            ctx.set(ctx.waiting_for, auto_cast(text))
             ctx.waiting_for = None
-            if ctx.scenario:
-                self._continue_scenario(ctx)
-            elif getattr(ctx, "_pending_stmts", None):
-                pending = ctx._pending_stmts
-                ctx._pending_stmts = []
-                self._exec_body(pending, ctx)
+            self._resume_after_wait(ctx)
             ctx._return_requested = False
             self._run_after_each(ctx)
             return
@@ -1866,6 +1880,15 @@ class Executor:
     # ═══════════════════════════════════════════════════════════════
     #  FSM — сценарии
     # ═══════════════════════════════════════════════════════════════
+
+    def _resume_after_wait(self, ctx):
+        """После ответа на «спросить»: выполнить хвост текущего шага, затем продолжить FSM."""
+        pending = getattr(ctx, "_pending_stmts", None)
+        if pending:
+            ctx._pending_stmts = []
+            self._exec_body(pending, ctx)
+        if ctx.scenario and ctx.waiting_for is None:
+            self._continue_scenario(ctx)
 
     def _start_scenario(self, ctx, name: str):
         if name not in self.program.scenarios:
