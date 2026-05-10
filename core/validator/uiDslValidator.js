@@ -29,7 +29,7 @@ function parseDslBodies(code) {
 }
 
 function analyzeBodyUiState(nodes, errors, ctx = { scope: 'body' }) {
-  const state = { messages: [], buttons: null, terminal: false };
+  const state = { messages: [], buttons: null, terminal: false, next: null };
   let seenButtons = false;
 
   const isMessage = (t) => /^(?:ответ|ответ_md)\s+/i.test(t) || t === 'рандом:' || t === 'рандом';
@@ -45,11 +45,12 @@ function analyzeBodyUiState(nodes, errors, ctx = { scope: 'body' }) {
 
     const ifButtons = ifState.buttons ? JSON.stringify(ifState.buttons) : null;
     const elseButtons = elseState?.buttons ? JSON.stringify(elseState.buttons) : null;
-    if (ifButtons && elseButtons && ifButtons !== elseButtons) {
-      errors.push(`❌ Строка ${line}: UI-расхождение в ветках if/else — блок «Кнопки» должен быть детерминированным (одинаковым в обеих ветках)`);
+    if (ifButtons !== elseButtons) {
+      errors.push(`❌ Строка ${line}: UI_STATE_INVALID: расхождение кнопок в if/else (ветки должны формировать одинаковый финальный UI state)`);
     }
-    out.buttons = ifState.buttons || elseState?.buttons || out.buttons;
+    out.buttons = ifState.buttons || elseState?.buttons || out.buttons || null;
     out.terminal = Boolean(ifState.terminal && (elseState ? elseState.terminal : true));
+    out.next = null;
     return out;
   };
 
@@ -58,13 +59,13 @@ function analyzeBodyUiState(nodes, errors, ctx = { scope: 'body' }) {
     const t = node.text;
 
     if (isMessage(t)) {
-      if (seenButtons) errors.push(`❌ Строка ${node.line}: блок «Ответ» не может идти после блока «Кнопки»`);
+      if (seenButtons) errors.push(`❌ Строка ${node.line}: UI_STATE_INVALID: блок «Ответ» не может идти после блока «Кнопки»`);
       state.messages.push(t);
       continue;
     }
     if (isButtons(t)) {
-      if (seenButtons || state.buttons) errors.push(`❌ Строка ${node.line}: в одном body допускается только один блок «Кнопки»`);
-      if (state.messages.length === 0) errors.push(`❌ Строка ${node.line}: «Кнопки» должны идти после блока «Ответ»`);
+      if (seenButtons || state.buttons) errors.push(`❌ Строка ${node.line}: UI_STATE_INVALID: в одном body допускается только один блок «Кнопки»`);
+      if (state.messages.length === 0) errors.push(`❌ Строка ${node.line}: UI_STATE_INVALID: «Кнопки» должны идти после блока «Ответ»`);
       seenButtons = true;
       state.buttons = [t];
       continue;
@@ -74,7 +75,7 @@ function analyzeBodyUiState(nodes, errors, ctx = { scope: 'body' }) {
       continue;
     }
     if (seenButtons) {
-      errors.push(`❌ Строка ${node.line}: после блока «Кнопки» разрешена только инструкция «стоп»`);
+      errors.push(`❌ Строка ${node.line}: UI_STATE_INVALID: instruction after buttons block is not allowed (допустим только «стоп»)`);
     }
 
     if (isIf(t)) {
