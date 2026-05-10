@@ -926,12 +926,41 @@
       </div>
       <div class="table-wrap" style="padding:14px;margin-top:10px">
         <div class="section-title" style="margin-bottom:10px">Groq токены (.env)</div>
+        <p style="font-size:12px;color:var(--text3);margin:0 0 10px;line-height:1.5">
+          <strong>Ротация ключей:</strong> с каждым запросом к ИИ порядок ключей сдвигается (round-robin). Если один ключ вернёт
+          <code>401</code>, <code>403</code>, <code>429</code> или сеть оборвётся — пробуется следующий, пока не кончится пул.
+          Если ключи от <em>одного</em> аккаунта Groq, суточная квота токенов (TPD) часто общая, тогда «запасные» ключи не спасут.
+        </p>
         <div style="display:grid;gap:8px">
           <input class="search-box" id="groq-token-1" placeholder="GROQ_TOKEN" />
           <input class="search-box" id="groq-token-2" placeholder="GROQ_TOKEN_2" />
           <input class="search-box" id="groq-token-3" placeholder="GROQ_TOKEN_3" />
         </div>
         <button class="btn-save-prices" style="margin-top:10px" onclick="saveGroqTokens()">Сохранить токены</button>
+        <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+          <div class="section-title" style="margin-bottom:8px">Модель ИИ (.env)</div>
+          <p style="font-size:12px;color:var(--text3);margin:0 0 8px;line-height:1.45">
+            Для облака Groq читается <code>GROQ_MODEL</code> (если пусто — подставится <code>OLLAMA_MODEL</code>, затем значение по умолчанию).
+            Локальный Ollama: в .env задайте <code>AI_PROVIDER=ollama</code> и <code>OLLAMA_URL</code> (не из этой формы).
+          </p>
+          <label style="font-size:11px;color:var(--text3)">GROQ_MODEL</label>
+          <input class="search-box" id="llm-groq-model" placeholder="например llama-3.3-70b-versatile" list="datalist-groq-models" style="margin-top:4px" />
+          <datalist id="datalist-groq-models">
+            <option value="llama-3.3-70b-versatile"></option>
+            <option value="llama-3.1-8b-instant"></option>
+            <option value="meta-llama/llama-4-scout-17b-16e-instruct"></option>
+            <option value="openai/gpt-oss-20b"></option>
+            <option value="qwen-qwq-32b"></option>
+            <option value="deepseek-r1-distill-qwen-32b"></option>
+          </datalist>
+          <label style="font-size:11px;color:var(--text3);margin-top:10px;display:block">OLLAMA_MODEL</label>
+          <input class="search-box" id="llm-ollama-model" placeholder="локальная модель, напр. qwen2.5:3b" style="margin-top:4px" />
+          <div style="font-size:11px;color:var(--text3);margin-top:8px;line-height:1.45">
+            Сейчас: провайдер <code id="llm-resolved-provider">…</code> · модель в запросах <code id="llm-effective-model">…</code>
+            <span id="llm-env-provider-wrap" style="display:none"> · <code>AI_PROVIDER</code>=<code id="llm-env-provider"></code></span>
+          </div>
+          <button class="btn-save-prices" style="margin-top:10px" onclick="saveLlmModels()">Сохранить модели</button>
+        </div>
         <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
           <div class="section-title" style="margin-bottom:8px">Лимиты Groq по каждому ключу</div>
           <p style="font-size:12px;color:var(--text3);margin:0 0 10px;line-height:1.45">
@@ -1340,15 +1369,36 @@
 
   async function loadGroqTokens() {
     try {
-      var res = await fetch(API + '/api/admin/groq-tokens', { credentials: 'include' });
-      if (!res.ok) return;
-      var data = await res.json();
-      var t1 = document.getElementById('groq-token-1');
-      var t2 = document.getElementById('groq-token-2');
-      var t3 = document.getElementById('groq-token-3');
-      if (t1) t1.value = data.token1 || '';
-      if (t2) t2.value = data.token2 || '';
-      if (t3) t3.value = data.token3 || '';
+      var tokRes = await fetch(API + '/api/admin/groq-tokens', { credentials: 'include' });
+      if (tokRes.ok) {
+        var data = await tokRes.json();
+        var t1 = document.getElementById('groq-token-1');
+        var t2 = document.getElementById('groq-token-2');
+        var t3 = document.getElementById('groq-token-3');
+        if (t1) t1.value = data.token1 || '';
+        if (t2) t2.value = data.token2 || '';
+        if (t3) t3.value = data.token3 || '';
+      }
+      var lmRes = await fetch(API + '/api/admin/llm-model', { credentials: 'include' });
+      if (lmRes.ok) {
+        var m = await lmRes.json();
+        var g = document.getElementById('llm-groq-model');
+        var o = document.getElementById('llm-ollama-model');
+        if (g) g.value = m.groqModel || '';
+        if (o) o.value = m.ollamaModel || '';
+        var rp = document.getElementById('llm-resolved-provider');
+        var em = document.getElementById('llm-effective-model');
+        var wrap = document.getElementById('llm-env-provider-wrap');
+        var ep = document.getElementById('llm-env-provider');
+        if (rp) rp.textContent = m.resolvedProvider || '—';
+        if (em) em.textContent = m.effectiveModel || '—';
+        if (m.aiProviderEnv && wrap && ep) {
+          wrap.style.display = 'inline';
+          ep.textContent = m.aiProviderEnv;
+        } else if (wrap) {
+          wrap.style.display = 'none';
+        }
+      }
     } catch (e) {}
   }
 
@@ -1361,6 +1411,23 @@
       var data = await res.json();
       if (data.success) showToast('GROQ токены сохранены в .env', 'var(--green)');
       else showToast('Ошибка: ' + (data.error || '?'), 'var(--red)');
+    } catch (e) {
+      showToast('Ошибка подключения', 'var(--red)');
+    }
+  }
+
+  async function saveLlmModels() {
+    var groqModel = (document.getElementById('llm-groq-model') || {}).value || '';
+    var ollamaModel = (document.getElementById('llm-ollama-model') || {}).value || '';
+    try {
+      var res = await apiPostJson(API + '/api/admin/llm-model', { groqModel: groqModel, ollamaModel: ollamaModel });
+      var data = await res.json();
+      if (data.success) {
+        showToast('Модели сохранены в .env', 'var(--green)');
+        loadGroqTokens();
+      } else {
+        showToast('Ошибка: ' + (data.error || '?'), 'var(--red)');
+      }
     } catch (e) {
       showToast('Ошибка подключения', 'var(--red)');
     }

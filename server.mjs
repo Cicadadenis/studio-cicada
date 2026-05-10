@@ -3220,6 +3220,43 @@ app.post('/api/admin/groq-tokens', (req, res) => {
   res.json({ success: true, count: GROQ_TOKENS.length });
 });
 
+app.get('/api/admin/llm-model', (req, res) => {
+  if (!isAdminAuthed(req)) return res.status(403).json({ error: 'Forbidden' });
+  const cfg = getLlmChatConfig();
+  res.json({
+    groqModel: trimEnvStr(process.env.GROQ_MODEL),
+    ollamaModel: trimEnvStr(process.env.OLLAMA_MODEL),
+    aiProviderEnv: trimEnvStr(process.env.AI_PROVIDER),
+    resolvedProvider: resolveAiProvider(),
+    effectiveModel: cfg.model,
+  });
+});
+
+app.post('/api/admin/llm-model', (req, res) => {
+  if (!isAdminAuthed(req)) return res.status(403).json({ error: 'Forbidden' });
+  const { groqModel, ollamaModel } = req.body || {};
+  const gm = trimEnvStr(groqModel);
+  const om = trimEnvStr(ollamaModel);
+  updateEnvFileValues({
+    GROQ_MODEL: gm,
+    OLLAMA_MODEL: om,
+  });
+  process.env.GROQ_MODEL = gm;
+  process.env.OLLAMA_MODEL = om;
+  const cfg = getLlmChatConfig();
+  recordAdminAction(req, 'update_llm_model', null, {
+    groqModel: gm || '(пусто)',
+    ollamaModel: om || '(пусто)',
+    effectiveModel: cfg.model,
+    resolvedProvider: resolveAiProvider(),
+  });
+  res.json({
+    success: true,
+    effectiveModel: cfg.model,
+    resolvedProvider: resolveAiProvider(),
+  });
+});
+
 const GROQ_LIMIT_SLOT_ENVS = [
   'GROQ_API_KEY',
   'GROQ_TOKEN_1',
