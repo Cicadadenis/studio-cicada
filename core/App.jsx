@@ -7,7 +7,6 @@ import { RUNTIME_PROPERTY_NAMES } from '../core/runtime/rules.js';
 import { generateDSL, stackToDSL } from '../core/stacksToDsl.js';
 import { getCsrfTokenForRequest, resetCsrfPrefetch } from './csrf.js';
 import confetti from 'canvas-confetti';
-import { CALCULATOR_BOT_DETAILED_PROMPT } from './aiGeneratorDetailedExamplePrompt.js';
 
 function fireRegistrationConfetti() {
   const opts = { origin: { y: 0.72 }, zIndex: 10050 };
@@ -2332,14 +2331,15 @@ export default function App() {
   // ─── ADMIN / TRIAL ───────────────────────────────────────────────────────
   
   const isAdmin = currentUser?.role === 'admin';
-  const canSeeCode = isAdmin || currentUser?.plan === 'pro';
-  /** Активный PRO (включая пробный период после регистрации) — нужен для AI-генерации */
-  const canUseAiGenerator = Boolean(
+  /** Активная подписка PRO или пробный период — те же условия, что для AI и платных функций. */
+  const hasActiveProSubscription = Boolean(
     currentUser &&
       currentUser.plan === 'pro' &&
       currentUser.subscriptionExp != null &&
       Number(currentUser.subscriptionExp) > Date.now(),
   );
+  const canSeeCode = isAdmin || hasActiveProSubscription;
+  const canUseAiGenerator = hasActiveProSubscription;
 
   // Mobile state
   const [mobileTab, setMobileTab] = useState('canvas'); // 'canvas' | 'blocks' | 'props' | 'dsl'
@@ -4778,9 +4778,11 @@ const EXAMPLE_FULL = `версия "1.0"
                     <button className="tb-files-menu-item" onClick={() => { loadProject(); setShowFilesMenu(false); }}>
                       <span style={{ color: '#60a5fa' }}>📂</span> Загрузить файл
                     </button>
+                    {canSeeCode && (
                     <button className="tb-files-menu-item" onClick={() => { loadCCD(); setShowFilesMenu(false); }}>
                       <span style={{ color: '#a78bfa' }}>↑</span> Открыть .ccd
                     </button>
+                    )}
                   </div>
                 </>
               )}
@@ -4977,11 +4979,12 @@ const EXAMPLE_FULL = `версия "1.0"
                       style={{ width:'100%', padding:'10px 16px', textAlign:'left', background:'transparent', color:'#3ecf8e', border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui', display:'flex', alignItems:'center', gap:8 }}
                     >☁ Сохранить в облако</button>
                   )}
-                  {/* Загрузить .ccd */}
+                  {canSeeCode && (
                   <button
-                    onClick={() => { document.getElementById('ccd-upload-mobile')?.click(); setMobileMoreOpen(false); }}
+                    onClick={() => { loadCCD(); setMobileMoreOpen(false); }}
                     style={{ width:'100%', padding:'10px 16px', textAlign:'left', background:'transparent', color:'#a78bfa', border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui', display:'flex', alignItems:'center', gap:8 }}
                   >📁 Загрузить .ccd</button>
+                  )}
                   <div style={{ height:1, background:'var(--border)', margin:'4px 0' }} />
                   <button
                     onClick={() => { setBotDebugOpen(v => !v); setMobileMoreOpen(false); }}
@@ -5087,7 +5090,7 @@ const EXAMPLE_FULL = `версия "1.0"
                 {[
                   { label: 'Бот приветствует и показывает меню', text: 'Бот приветствует и показывает меню' },
                   { label: 'Заказ: имя и телефон', text: 'Бот принимает заказы, спрашивает имя и телефон' },
-                  { label: 'Калькулятор — полное ТЗ (рекомендуется)', text: CALCULATOR_BOT_DETAILED_PROMPT },
+                  { label: 'Бот калькулятор', text: 'Бот калькулятор' },
                   { label: 'Бот с оплатой подписки', text: 'Бот с оплатой подписки' },
                 ].map((ex) => (
                   <button
@@ -5113,7 +5116,7 @@ const EXAMPLE_FULL = `версия "1.0"
                 value={aiPrompt}
                 onChange={e => setAiPrompt(e.target.value)}
                 disabled={aiLoading}
-                placeholder="Укажи триггеры (/start, кнопки), тексты сообщений, варианты кнопок, что происходит при каждом нажатии, переменные, финальный экран. Либо нажми «Калькулятор — полное ТЗ»."
+                placeholder="Укажи триггеры (/start, кнопки), тексты сообщений, варианты кнопок, что происходит при каждом нажатии, переменные, финальный экран. Либо нажми «Бот калькулятор» или другой пример ниже."
                 rows={10}
                 style={{
                   width: '100%', boxSizing: 'border-box',
@@ -5696,26 +5699,8 @@ const EXAMPLE_FULL = `версия "1.0"
               </div>
             </>
           )}
-          {(!isMobileView || mobileTab === 'dsl') && (
-            canSeeCode
-              ? <DSLPane stacks={stacks} isMobile={isMobileView} onApplyCorrectedCode={applyCorrectedDSLCode} />
-              : !isMobileView && (
-                <div style={{
-                  flex: 1, display: 'flex', flexDirection: 'column',
-                  alignItems: 'center', justifyContent: 'center',
-                  padding: 24, gap: 12,
-                  borderTop: '1px solid var(--border)',
-                  background: 'repeating-linear-gradient(135deg, transparent, transparent 10px, rgba(255,255,255,0.015) 10px, rgba(255,255,255,0.015) 20px)',
-                }}>
-                  <span style={{ fontSize: 32 }}>🔒</span>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', fontFamily: 'Syne, system-ui', textAlign: 'center' }}>
-                    Код недоступен
-                  </div>
-                  <div style={{ fontSize: 11, color: 'var(--text3)', textAlign: 'center', lineHeight: 1.6 }}>
-                    Просмотр кода доступен<br/>в платной версии
-                  </div>
-                </div>
-              )
+          {canSeeCode && (!isMobileView || mobileTab === 'dsl') && (
+            <DSLPane stacks={stacks} isMobile={isMobileView} onApplyCorrectedCode={applyCorrectedDSLCode} />
           )}
         </div>
         )}

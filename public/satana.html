@@ -923,6 +923,14 @@
           <input class="search-box" id="groq-token-3" placeholder="GROQ_TOKEN_3" />
         </div>
         <button class="btn-save-prices" style="margin-top:10px" onclick="saveGroqTokens()">Сохранить токены</button>
+        <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+          <div class="section-title" style="margin-bottom:8px">Лимиты Groq по каждому ключу</div>
+          <p style="font-size:12px;color:var(--text3);margin:0 0 10px;line-height:1.45">
+            Делается лёгкий запрос <code style="font-size:11px">GET /v1/models</code> от имени каждого заданного env-ключа. Если три ключа от одной организации Groq, числа по RPD/TPM часто совпадают; отдельная квота «токены в сутки» (TPD) приходит в теле ответа только при ошибках (например 429).
+          </p>
+          <button type="button" class="topbar-btn" onclick="checkGroqLimits()">Обновить проверку лимитов</button>
+          <div id="groq-limits-box" style="margin-top:12px;font-size:12px;color:var(--text2)"></div>
+        </div>
       </div>
     </div>
 
@@ -1347,6 +1355,79 @@
     } catch (e) {
       showToast('Ошибка подключения', 'var(--red)');
     }
+  }
+
+  async function checkGroqLimits() {
+    var box = document.getElementById('groq-limits-box');
+    if (!box) return;
+    box.removeAttribute('class');
+    box.textContent = '';
+    box.style.padding = '';
+    box.style.borderRadius = '';
+    box.style.background = '';
+    box.textContent = 'Запрос к Groq для каждого из ключей (.env), подождите…';
+    try {
+      var res = await fetch(API + '/api/admin/groq-limits', { credentials: 'include' });
+      if (res.status === 403) {
+        box.textContent = 'Нет доступа';
+        return;
+      }
+      var data = await res.json();
+      if (data.error) {
+        box.textContent = data.error;
+        return;
+      }
+      renderGroqLimits(data);
+    } catch (e) {
+      box.textContent = 'Ошибка: ' + (e.message || 'сеть');
+    }
+  }
+
+  function renderGroqLimits(data) {
+    var box = document.getElementById('groq-limits-box');
+    if (!box) return;
+    var rows = (data.slots || []).map(function (s) {
+      if (!s.configured) {
+        return '<tr><td><code>' + escHtml(s.slot) + '</code></td><td colspan="3" style="color:var(--text3);padding:10px 8px">не задан в .env</td></tr>';
+      }
+      var L = s.limits || {};
+      var reqRem = L['x-ratelimit-remaining-requests'];
+      var reqLim = L['x-ratelimit-limit-requests'];
+      var tokRem = L['x-ratelimit-remaining-tokens'];
+      var tokLim = L['x-ratelimit-limit-tokens'];
+      var resetR = L['x-ratelimit-reset-requests'];
+      var resetT = L['x-ratelimit-reset-tokens'];
+      var rqCell = reqRem != null ? escHtml(String(reqRem)) + ' / ' + escHtml(String(reqLim != null ? reqLim : '—')) + (resetR != null ? '<div style="font-size:10px;color:var(--text3);margin-top:3px">сброс ' + escHtml(String(resetR)) + '</div>' : '') : '<span style="color:var(--text3)">—</span>';
+      var tkCell = tokRem != null ? escHtml(String(tokRem)) + ' / ' + escHtml(String(tokLim != null ? tokLim : '—')) + (resetT != null ? '<div style="font-size:10px;color:var(--text3);margin-top:3px">сброс ' + escHtml(String(resetT)) + '</div>' : '') : '<span style="color:var(--text3)">—</span>';
+      var status = '';
+      if (s.networkError) status = '<span style="color:#f87171">⚠ Сеть</span>';
+      else if (s.ok) status = '<span style="color:var(--green)">✓ OK</span> <span style="color:var(--text3)">' + escHtml(String(s.httpStatus || '')) + '</span>';
+      else status = '<span style="color:#fb923c">✗ ' + escHtml(String(s.httpStatus || '?')) + '</span>';
+      var errParts = '';
+      if (s.networkError) errParts += '<div style="color:#f87171;margin-top:6px;font-size:11px;white-space:pre-wrap">' + escHtml(s.networkError) + '</div>';
+      if (s.apiError) errParts += '<div style="color:#fde68a;margin-top:6px;font-size:11px;white-space:pre-wrap;line-height:1.4">' + escHtml(s.apiError) + '</div>';
+      if (s.note) errParts += '<div style="color:var(--text3);margin-top:6px;font-size:11px">' + escHtml(s.note) + '</div>';
+      return '<tr>' +
+        '<td style="vertical-align:top;padding:10px 8px;width:26%"><code>' + escHtml(s.slot) + '</code><div style="font-size:11px;color:var(--text3);margin-top:4px;font-family:var(--mono)">' + escHtml(s.keyHint || '') + '</div>' + errParts + '</td>' +
+        '<td style="vertical-align:top;padding:10px 8px;width:12%">' + status + '</td>' +
+        '<td style="vertical-align:top;padding:10px 8px;width:28%">' + rqCell + '</td>' +
+        '<td style="vertical-align:top;padding:10px 8px;width:32%">' + tkCell + '</td>' +
+        '</tr>';
+    }).join('');
+    var head = '';
+    if (data.baseUrl) head += '<div style="font-size:12px;color:var(--text2);margin-bottom:10px;line-height:1.5">' + escHtml(data.probe || '') + ' · <code style="font-size:11px">' + escHtml(data.baseUrl) + '</code></div>';
+    head += '<div style="font-size:12px;color:var(--text2);margin-bottom:10px">Модель в .env (<code>GROQ_MODEL</code>): <code style="font-size:11px">' + escHtml(String(data.model || '')) + '</code></div>';
+    if (data.docHint) head += '<p style="font-size:11px;color:var(--text3);margin:0 0 12px;line-height:1.5">' + escHtml(data.docHint) + '</p>';
+    box.innerHTML = head +
+      '<div style="overflow:auto">' +
+      '<table style="width:100%;border-collapse:collapse;border:1px solid var(--border);border-radius:10px;background:var(--bg2);font-size:12px">' +
+      '<thead><tr style="text-align:left;border-bottom:1px solid var(--border);background:rgba(251,191,36,0.06)">' +
+      '<th style="padding:10px">Переменная</th>' +
+      '<th style="padding:10px">Ответ API</th>' +
+      '<th style="padding:10px">RPD запросов (осталось / лимит)</th>' +
+      '<th style="padding:10px">TPM токенов за минуту (осталось / лимит)</th>' +
+      '</tr></thead>' +
+      '<tbody>' + rows + '</tbody></table></div>';
   }
 
   async function loadSupportRequests() {

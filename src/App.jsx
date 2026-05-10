@@ -17,7 +17,6 @@ import {
   blockNoteForLang,
   RU_GROUP_TO_ID,
 } from './builderI18n.js';
-import { CALCULATOR_BOT_DETAILED_PROMPT } from '../core/aiGeneratorDetailedExamplePrompt.js';
 
 function fireRegistrationConfetti() {
   const opts = { origin: { y: 0.72 }, zIndex: 10050 };
@@ -318,6 +317,17 @@ function clearSession() {
   resetCsrfPrefetch();
   localStorage.removeItem('cicada_session');
   clearJwt();
+}
+
+/** Обновляет plan/subscriptionExp и остальное из БД без повторного входа (важно после выдачи подписки в админке). */
+async function fetchSessionUserFromServer() {
+  if (!getStoredJwt()) return null;
+  try {
+    const data = await apiFetch(`${API_URL}/me`);
+    return data?.user ?? null;
+  } catch {
+    return null;
+  }
 }
 
 // Re-export from users.js for compatibility
@@ -2412,14 +2422,15 @@ export default function App() {
   // ─── ADMIN / TRIAL ───────────────────────────────────────────────────────
   
   const isAdmin = currentUser?.role === 'admin';
-  const canSeeCode = isAdmin || currentUser?.plan === 'pro';
-  /** Активный PRO (включая пробный период после регистрации) — нужен для AI-генерации */
-  const canUseAiGenerator = Boolean(
+  /** Активная подписка PRO или пробный период — те же условия, что для AI и платных функций. */
+  const hasActiveProSubscription = Boolean(
     currentUser &&
       currentUser.plan === 'pro' &&
       currentUser.subscriptionExp != null &&
       Number(currentUser.subscriptionExp) > Date.now(),
   );
+  const canSeeCode = isAdmin || hasActiveProSubscription;
+  const canUseAiGenerator = hasActiveProSubscription;
 
   // Mobile state
   const [mobileTab, setMobileTab] = useState('canvas'); // 'canvas' | 'blocks' | 'props' | 'dsl'
@@ -3944,6 +3955,36 @@ const EXAMPLE_FULL = `версия "1.0"
     return () => window.removeEventListener('cicada:session-expired', handleExpired);
   }, [showToast]);
 
+  // Подтягиваем план/подписку с сервера: админ изменил профиль → без выхода из аккаунта
+  useEffect(() => {
+    if (!currentUser?.id || !getStoredJwt()) return undefined;
+    let cancelled = false;
+    const sync = () => {
+      fetchSessionUserFromServer().then((u) => {
+        if (cancelled || !u) return;
+        setCurrentUser((prev) => {
+          if (!prev || prev.id !== u.id) return prev;
+          const merged = { ...prev, ...u };
+          saveSession(merged);
+          return merged;
+        });
+      });
+    };
+    sync();
+    const interval = setInterval(sync, 60_000);
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') sync();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('focus', sync);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('focus', sync);
+    };
+  }, [currentUser?.id]);
+
   // Poll every 5s — syncs bot status across browsers/tabs
   useEffect(() => {
     const id = setInterval(checkBotStatus, 5000);
@@ -4864,9 +4905,11 @@ const EXAMPLE_FULL = `версия "1.0"
                     <button className="tb-files-menu-item" onClick={() => { loadProject(); setShowFilesMenu(false); }}>
                       <span style={{ color: '#60a5fa' }}>📂</span> {builderUi.loadFile}
                     </button>
+                    {canSeeCode && (
                     <button className="tb-files-menu-item" onClick={() => { loadCCD(); setShowFilesMenu(false); }}>
                       <span style={{ color: '#a78bfa' }}>↑</span> {builderUi.openCcd}
                     </button>
+                    )}
                   </div>
                 </>
               )}
@@ -5063,11 +5106,13 @@ const EXAMPLE_FULL = `версия "1.0"
                       style={{ width:'100%', padding:'10px 16px', textAlign:'left', background:'transparent', color:'#3ecf8e', border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui', display:'flex', alignItems:'center', gap:8 }}
                     >☁ {builderUi.saveCloud}</button>
                   )}
-                  {/* Загрузить .ccd */}
+                  {/* Загрузить .ccd — только при доступе к панели кода (активный PRO). */}
+                  {canSeeCode && (
                   <button
-                    onClick={() => { document.getElementById('ccd-upload-mobile')?.click(); setMobileMoreOpen(false); }}
+                    onClick={() => { loadCCD(); setMobileMoreOpen(false); }}
                     style={{ width:'100%', padding:'10px 16px', textAlign:'left', background:'transparent', color:'#a78bfa', border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui', display:'flex', alignItems:'center', gap:8 }}
                   >{builderUi.mobileLoadCcd}</button>
+                  )}
                   <div style={{ height:1, background:'var(--border)', margin:'4px 0' }} />
                   <button
                     onClick={() => { setBotDebugOpen(v => !v); setMobileMoreOpen(false); }}
@@ -5175,7 +5220,7 @@ const EXAMPLE_FULL = `версия "1.0"
                 {[
                   { label: 'Бот приветствует и показывает меню', text: 'Бот приветствует и показывает меню' },
                   { label: 'Заказ: имя и телефон', text: 'Бот принимает заказы, спрашивает имя и телефон' },
-                  { label: 'Калькулятор — полное ТЗ (рекомендуется)', text: CALCULATOR_BOT_DETAILED_PROMPT },
+                  { label: 'Бот калькулятор', text: 'Бот калькулятор' },
                   { label: 'Бот с оплатой подписки', text: 'Бот с оплатой подписки' },
                 ].map((ex) => (
                   <button
@@ -5201,7 +5246,7 @@ const EXAMPLE_FULL = `версия "1.0"
                 value={aiPrompt}
                 onChange={e => setAiPrompt(e.target.value)}
                 disabled={aiLoading}
-                placeholder="Укажи триггеры (/start, кнопки), тексты сообщений, варианты кнопок, что происходит при каждом нажатии, переменные, финальный экран. Либо нажми «Калькулятор — полное ТЗ»."
+                placeholder="Укажи триггеры (/start, кнопки), тексты сообщений, варианты кнопок, что происходит при каждом нажатии, переменные, финальный экран. Либо нажми «Бот калькулятор» или другой пример ниже."
                 rows={10}
                 style={{
                   width: '100%', boxSizing: 'border-box',
@@ -5784,26 +5829,8 @@ const EXAMPLE_FULL = `версия "1.0"
               </div>
             </>
           )}
-          {(!isMobileView || mobileTab === 'dsl') && (
-            canSeeCode
-              ? <DSLPane stacks={stacks} isMobile={isMobileView} onApplyCorrectedCode={applyCorrectedDSLCode} />
-              : !isMobileView && (
-                <div style={{
-                  flex: 1, display: 'flex', flexDirection: 'column',
-                  alignItems: 'center', justifyContent: 'center',
-                  padding: 24, gap: 12,
-                  borderTop: '1px solid var(--border)',
-                  background: 'repeating-linear-gradient(135deg, transparent, transparent 10px, rgba(255,255,255,0.015) 10px, rgba(255,255,255,0.015) 20px)',
-                }}>
-                  <span style={{ fontSize: 32 }}>🔒</span>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', fontFamily: 'Syne, system-ui', textAlign: 'center' }}>
-                    {builderUi.codeLockedTitle}
-                  </div>
-                  <div style={{ fontSize: 11, color: 'var(--text3)', textAlign: 'center', lineHeight: 1.6 }}>
-                    {builderUi.codeLockedBody}<br/>{builderUi.codeLockedBody2}
-                  </div>
-                </div>
-              )
+          {canSeeCode && (!isMobileView || mobileTab === 'dsl') && (
+            <DSLPane stacks={stacks} isMobile={isMobileView} onApplyCorrectedCode={applyCorrectedDSLCode} />
           )}
         </div>
         )}
