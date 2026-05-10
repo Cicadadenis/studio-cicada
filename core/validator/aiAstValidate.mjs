@@ -22,6 +22,7 @@ const ALLOWED_TYPES = new Set([
   'else',
   'run',
   'stop',
+  'send_file',
 ]);
 
 function validateBlock(block, stackId, errors) {
@@ -81,6 +82,9 @@ function validateBlock(block, stackId, errors) {
     case 'start':
     case 'else':
     case 'stop':
+      break;
+    case 'send_file':
+      if (!needStr(p.file, 1)) errors.push(`стек ${stackId}: send_file.file обязателен (file_id или {переменная})`);
       break;
     default:
       break;

@@ -406,6 +406,10 @@ export function emitBlockText(block) {
       const fn = (p.filename || '').trim();
       return fn ? `документ ${q(p.url || '')} ${q(fn)}` : `документ ${q(p.url || '')}`;
     }
+    case 'send_file': {
+      const f = String(p.file ?? '').trim();
+      return f ? `отправить файл ${f}` : '';
+    }
     case 'contact':
       return `контакт ${q(p.phone || '')} ${q(p.first_name || '')}`;
     case 'location':
@@ -891,6 +895,9 @@ export function validateFlow(flow) {
       case 'audio':
       case 'document':
         if (!p.url?.trim()) warnings.push(`Блок «${t}» [${n.id}]: не указан URL`);
+        break;
+      case 'send_file':
+        if (!p.file?.trim()) warnings.push(`Блок «Отправить файл» [${n.id}]: не указан file_id / выражение`);
         break;
       case 'delay':
       case 'typing':

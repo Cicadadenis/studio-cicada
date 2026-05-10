@@ -43,7 +43,8 @@
             "condition",
             "else",
             "run",
-            "stop"
+            "stop",
+            "send_file"
           ]
         },
         "props": { "type": "object" }
@@ -228,6 +229,21 @@
         {
           "if": { "properties": { "type": { "const": "stop" } } },
           "then": { "properties": { "props": { "type": "object" } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "send_file" } } },
+          "then": {
+            "properties": {
+              "props": {
+                "type": "object",
+                "required": ["file"],
+                "additionalProperties": true,
+                "properties": {
+                  "file": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          }
         }
       ]
     }

@@ -1667,6 +1667,11 @@ class Parser:
         if m:
             return SendDocument(Variable(m.group(1)), "")
 
+        # отправить файл <выражение> — то же, что документ по переменной/выражению (Telegram sendDocument)
+        m = re.match(r'^отправить\s+файл\s+(.+)$', line)
+        if m:
+            return SendDocument(parse_value(m.group(1).strip()), "")
+
         # аудио "путь" / аудио "путь" "подпись" / аудио переменная
         m = re.match(r'^аудио\s+"([^"]+)"\s*(?:"([^"]*)")?$', line)
         if m:

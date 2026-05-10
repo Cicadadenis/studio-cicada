@@ -38,6 +38,7 @@ const FIELDS = {
   audio:     [{ key:'url',       label:'URL аудио или file_id',    tag:'input' }],
   document:  [{ key:'url',       label:'URL файла или file_id',    tag:'input' },
               { key:'filename',  label:'имя файла',                tag:'input' }],
+  send_file: [{ key:'file',      label:'file_id или {переменная}', tag:'input' }],
   sticker:   [{ key:'file_id',   label:'file_id стикера',          tag:'input' }],
   delay:     [{ key:'seconds',   label:'секунд ожидания',          tag:'input' }],
   typing:    [{ key:'seconds',   label:'секунд "печатает..."',     tag:'input' }],
@@ -100,6 +101,7 @@ const TYPE_HINTS = {
   role:      'Ветвление по роли пользователя: admin, user, guest и т.д.',
   payment:   'Инициирует платёж через Stripe, Telegram Pay или криптовалюту.',
   analytics: 'Отправляет событие в систему аналитики (конверсии, воронки и т.д.).',
+  send_file: 'Отправляет файл как документ Telegram по file_id (sendDocument), не строкой текста.',
 };
 
 export default function PropsPanel({ node, onChange, onDelete }) {

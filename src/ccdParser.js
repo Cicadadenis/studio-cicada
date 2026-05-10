@@ -33,6 +33,7 @@ export const FLOW_PORTS = {
   video:       { input: 'flow',         output: 'flow'         },
   audio:       { input: 'flow',         output: 'flow'         },
   document:    { input: 'flow',         output: 'flow'         },
+  send_file:   { input: 'flow',         output: 'flow'         },
   random:      { input: 'flow',         output: 'flow'         },
   // ── Новые типы ядра ─────────────────────────────────────────────────────
   loop:        { input: 'flow',         output: 'flow'         },
@@ -362,6 +363,10 @@ function parseNode(line) {
   }
   if (t.startsWith('аудио ')) return { type: 'audio', props: { url: stripQuotes(t.replace('аудио', '').trim()) }, root: false };
   if (t.startsWith('стикер ')) return { type: 'sticker', props: { file_id: stripQuotes(t.replace('стикер', '').trim()) }, root: false };
+  if (/^отправить файл\s+/i.test(t)) {
+    const rest = t.replace(/^отправить\s+файл\s+/i, '').trim();
+    return { type: 'send_file', props: { file: rest }, root: false };
+  }
   if (t.startsWith('документ ')) {
     const parts = t.replace('документ', '').trim().match(/"([^"]+)"/g) || [];
     const url = parts[0] ? stripQuotes(parts[0]) : '';

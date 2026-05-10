@@ -365,6 +365,7 @@ export const BLOCK_TYPES = [
   { type:'video',      label:'Видео',          icon:'▷',  color:'#2dd4bf', group:'Медиа',      canBeRoot:false, canStack:true  },
   { type:'audio',      label:'Аудио',          icon:'♪',  color:'#818cf8', group:'Медиа',      canBeRoot:false, canStack:true  },
   { type:'document',   label:'Документ',       icon:'📄', color:'#94a3b8', group:'Медиа',      canBeRoot:false, canStack:true  },
+  { type:'send_file',  label:'Отправить файл', icon:'📎', color:'#64748b', group:'Медиа',      canBeRoot:false, canStack:true  },
   { type:'sticker',    label:'Стикер',         icon:'◉',  color:'#f472b6', group:'Медиа',      canBeRoot:false, canStack:true  },
   { type:'contact',    label:'Контакт',         icon:'👤', color:'#0ea5e9', group:'Медиа',      canBeRoot:false, canStack:true  },
   { type:'location',   label:'Локация',         icon:'📍', color:'#ef4444', group:'Медиа',      canBeRoot:false, canStack:true  },
@@ -390,7 +391,7 @@ export const BLOCK_TYPES = [
 
 // ─── COMPATIBILITY: what can stack BELOW a given type ─────────────────────
 // Базовый набор без buttons и inline — они только после message
-const FLOW_CHILDREN = ['message','typing','delay','condition','else','switch','ask','remember','get','save','random','loop','http','log','notify','broadcast','role','payment','analytics','photo','video','audio','document','sticker','contact','location','poll','database','classify','use','stop','goto','menu','check_sub','member_role','forward_msg','db_delete','save_global','get_user','all_keys','call_block'];
+const FLOW_CHILDREN = ['message','typing','delay','condition','else','switch','ask','remember','get','save','random','loop','http','log','notify','broadcast','role','payment','analytics','photo','video','audio','document','send_file','sticker','contact','location','poll','database','classify','use','stop','goto','menu','check_sub','member_role','forward_msg','db_delete','save_global','get_user','all_keys','call_block'];
 const FLOW_NO_MEDIA = ['message','typing','delay','condition','switch','ask','remember','get','save','random','loop','http','log','stop','goto','use'];
 const TERMINAL = [];
 
@@ -419,11 +420,12 @@ const CAN_STACK_BELOW = {
   loop:       [...FLOW_CHILDREN],
   http:       ['message','remember','save','condition','log','stop','goto','use'],
   delay:      ['message','typing','condition','ask','remember','get','save','http','log','stop','goto','use'],
-  typing:     ['message','photo','video','audio','document','sticker','condition','ask','delay','stop','goto','use'],
+  typing:     ['message','photo','video','audio','document','send_file','sticker','condition','ask','delay','stop','goto','use'],
   photo:      ['message','typing','delay','condition','ask','stop','goto','use','log'],
   video:      ['message','typing','delay','condition','ask','stop','goto','use','log'],
   audio:      ['message','typing','delay','condition','ask','stop','goto','use','log'],
   document:   ['message','typing','delay','condition','ask','stop','goto','use','log'],
+  send_file:  ['message','typing','delay','condition','ask','stop','goto','use','log'],
   sticker:    ['message','typing','delay','condition','ask','stop','goto','use','log'],
   contact:    ['message','typing','delay','condition','ask','stop','goto','use','log'],
   location:   ['message','typing','delay','condition','ask','stop','goto','use','log'],
@@ -514,7 +516,7 @@ function snapAttachRejectHint(parentType, childType) {
 const NEXT_BLOCK_PRIORITY = [
   'message', 'buttons', 'inline', 'condition', 'else', 'ask', 'remember', 'use',
   'typing', 'delay', 'get', 'save', 'random', 'photo', 'video', 'stop', 'goto',
-  'log', 'loop', 'switch', 'http', 'menu', 'poll', 'document', 'audio', 'sticker',
+  'log', 'loop', 'switch', 'http', 'menu', 'poll', 'document', 'send_file', 'audio', 'sticker',
   'contact', 'location', 'notify', 'broadcast', 'database', 'classify', 'role', 'payment', 'analytics',
   'check_sub', 'member_role', 'forward_msg', 'db_delete', 'save_global', 'get_user', 'all_keys', 'call_block',
 ];
@@ -592,6 +594,7 @@ const BEGINNER_GUIDE = {
   video: 'Отправка видео.',
   audio: 'Отправка аудио.',
   document: 'Отправка файла.',
+  send_file: 'Отправка уже сохранённого файла по Telegram file_id (не текстом). Укажите переменную или выражение.',
   sticker: 'Отправка стикера по file_id.',
   contact: 'Отправка контакта.',
   location: 'Отправка точки на карте.',
@@ -667,6 +670,7 @@ const DEFAULT_PROPS = {
   video:      { url: '', caption: '' },
   audio:      { url: '' },
   document:   { url: '', filename: 'file.pdf' },
+  send_file:  { file: '{сохранённый_файл}' },
   sticker:    { file_id: '' },
   contact:    { phone: '', first_name: '', last_name: '' },
   location:   { lat: '', lon: '' },
@@ -767,6 +771,7 @@ const FIELDS = {
   audio:     [{ key:'url',       label:'URL аудио или file_id', tag:'input' }],
   document:  [{ key:'url',       label:'URL файла или file_id', tag:'input' },
               { key:'filename',  label:'имя файла',          tag:'input' }],
+  send_file: [{ key:'file',      label:'file_id или {переменная}', tag:'input' }],
   sticker:   [{ key:'file_id',   label:'file_id стикера',   tag:'input' }],
   contact:   [{ key:'phone',     label:'номер телефона',     tag:'input' },
               { key:'first_name',label:'имя',                tag:'input' },
@@ -999,6 +1004,7 @@ function getPreview(type, props) {
     case 'contact':    return `${p.first_name||''} ${p.phone||''}`.trim();
     case 'location':   return `${p.lat||'0'}, ${p.lon||'0'}`;
     case 'poll':       return (p.question||'').slice(0,28);
+    case 'send_file':  return (p.file||'file').slice(0,24);
     case 'on_photo':   return 'входящее фото';
     case 'on_voice':   return 'голосовое';
     case 'on_document':return 'входящий документ';
@@ -1071,6 +1077,7 @@ const BLOCK_NOTES = {
   on_photo: { icon: '💡', color: '#34d399', text: 'Когда прислали фото. Дальше — ответ, подпись, кнопки как в обычном диалоге.' },
   on_voice: { icon: '💡', color: '#818cf8', text: 'Когда прислали голосовое. Дальше — тот же набор блоков, что после «Ответ».' },
   on_document:{ icon: '💡', color: '#94a3b8', text: 'Когда прислали документ. Дальше — ответ, логика, сохранение файла и т.д.' },
+  send_file:  { icon: '💡', color: '#64748b', text: 'Вызывает Telegram sendDocument: передайте file_id из переменной (не путать с текстом в «Ответ»).' },
   on_sticker:{ icon: '💡', color: '#f472b6', text: 'Когда прислали стикер.' },
   on_location:{ icon: '💡', color: '#ef4444', text: 'Когда поделились геолокацией (в .ccd: при геолокации:).' },
   on_contact:{ icon: '💡', color: '#0ea5e9', text: 'Когда отправили контакт.' },
@@ -2945,6 +2952,10 @@ export default function App() {
       if (t.startsWith('видео '))       return { type: 'video', props: { url: extractString(t) } };
       if (t.startsWith('аудио '))       return { type: 'audio', props: { url: extractString(t) } };
       if (t.startsWith('стикер '))      return { type: 'sticker', props: { file_id: extractString(t) } };
+      if (/^отправить файл\s+/i.test(t)) {
+        const rest = t.replace(/^отправить\s+файл\s+/i, '').trim();
+        return { type: 'send_file', props: { file: rest } };
+      }
       if (t.startsWith('документ '))    { const m = t.match(/документ\s+"([^"]+)"/); return { type: 'document', props: { url: m?.[1] || '' } }; }
       if (t.startsWith('локация '))     { const m = t.match(/локация\s+([\d.]+)\s+([\d.]+)/); return { type: 'location', props: { lat: m?.[1] || '0', lon: m?.[2] || '0' } }; }
       if (t.startsWith('контакт '))     { const m = t.match(/контакт\s+"([^"]+)"\s+"([^"]+)"/); return { type: 'contact', props: { phone: m?.[1] || '', first_name: m?.[2] || '' } }; }
