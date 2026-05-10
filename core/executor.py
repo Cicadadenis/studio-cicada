@@ -1613,9 +1613,33 @@ class Executor:
         """Интерполирует {var} в строке ключа БД."""
         if '{' not in str(key):
             return str(key)
-        from cicada.parser import parse_string_expr
-        parts = parse_string_expr(f'"{key}"')
-        return self._render_parts(parts, ctx)
+        template = str(key)
+        token_re = re.compile(r"\{([^{}]+)\}")
+        unresolved = []
+
+        def repl(match):
+            name = match.group(1).strip()
+            try:
+                value = _get_var(name, ctx, strict=True)
+            except Exception:
+                unresolved.append(name)
+                return match.group(0)
+            if value is None:
+                unresolved.append(name)
+                return match.group(0)
+            return str(value)
+
+        rendered = token_re.sub(repl, template)
+        if unresolved:
+            raise CicadaRuntimeError(
+                f"Не удалось интерполировать шаблон '{template}': "
+                f"не определены переменные {', '.join(sorted(set(unresolved)))}"
+            )
+        if "{" in rendered or "}" in rendered:
+            raise CicadaRuntimeError(
+                f"Некорректный шаблон '{template}': шаблон должен быть интерполирован полностью"
+            )
+        return rendered
 
     def _exec_save_to_db(self, stmt: SaveToDB, ctx):
         value = self._resolve_val(stmt.value, ctx)
