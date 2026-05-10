@@ -20,6 +20,7 @@ export const OUTPUT_BLOCK_TYPES = new Set([
   'photo',
   'sticker',
   'document',
+  'send_file',
   'audio',
   'video',
   'poll',
