@@ -867,6 +867,36 @@ def indent_of(line: str) -> int:
     return len(line) - len(line.lstrip())
 
 
+def merge_adjacent_chislo_placeholders(parts: list) -> list:
+    """
+    «{число1}{число2}» без + между плейсхолдерами даёт конкатенацию строк («45»).
+    Для имён вида число + цифры складываем как выражение (типичный калькулятор в DSL).
+    """
+    if not parts or len(parts) < 2:
+        return parts
+    pat = re.compile(r"^число\d+$", re.UNICODE)
+    out = []
+    i = 0
+    n = len(parts)
+    while i < n:
+        if isinstance(parts[i], Variable) and pat.match(parts[i].name):
+            run = [parts[i]]
+            j = i + 1
+            while j < n and isinstance(parts[j], Variable) and pat.match(parts[j].name):
+                run.append(parts[j])
+                j += 1
+            if len(run) >= 2:
+                acc = run[0]
+                for v in run[1:]:
+                    acc = BinaryOp(acc, "+", v)
+                out.append(acc)
+                i = j
+                continue
+        out.append(parts[i])
+        i += 1
+    return out
+
+
 def parse_string_expr(raw: str) -> list:
     """
     Разбирает строку-шаблон в список частей [str | Variable | BinaryOp ...].
@@ -900,7 +930,7 @@ def parse_string_expr(raw: str) -> list:
             last_end = match.end()
         if last_end < len(stripped_quote):
             parts.append(stripped_quote[last_end:])
-        return parts if parts else [""]
+        return merge_adjacent_chislo_placeholders(parts) if parts else [""]
 
     # Парсим как полное выражение через Expression AST
     try:
@@ -1009,6 +1039,45 @@ def parse_condition(raw: str):
         return parse_simple_condition(raw)
 
 
+
+def split_step_on_ask(step: Step) -> list:
+    """
+    Несколько «спросить» в одном «шаг» → отдельные шаги FSM (имена: name, name_2, …).
+
+    Исполнитель после Ask в сценарии продолжает с steps[ctx.step] и не использует
+    _pending_stmts; один Step с двумя Ask приводит к завершению сценария после первого ответа.
+    """
+    new_steps: list = []
+    current: list = []
+    counter = 1
+    for stmt in step.body:
+        current.append(stmt)
+        if isinstance(stmt, Ask):
+            step_name = step.name if counter == 1 else f"{step.name}_{counter}"
+            new_steps.append(Step(name=step_name, body=current[:]))
+            current = []
+            counter += 1
+    if current:
+        step_name = step.name if counter == 1 else f"{step.name}_{counter}"
+        new_steps.append(Step(name=step_name, body=current[:]))
+    return new_steps if new_steps else [step]
+
+
+def normalize_scenario_steps(steps: list) -> list:
+    """Применяет split_step_on_ask к каждому верхнеуровневому Step в теле сценария."""
+    out = []
+    for stmt in steps:
+        if isinstance(stmt, Step):
+            out.extend(split_step_on_ask(stmt))
+        else:
+            out.append(stmt)
+    return out
+
+
+def normalize_program_scenario_asks(prog: Program) -> None:
+    """Постобработка после разбора: согласовать AST с FSM исполнителя."""
+    for name, steps in list(prog.scenarios.items()):
+        prog.scenarios[name] = normalize_scenario_steps(steps)
 
 
 # ─────────────────────────── Parser ───────────────────────────────
@@ -1274,6 +1343,7 @@ class Parser:
             if stmt:
                 prog.handlers.append(Handler("any", None, [stmt]))
 
+        normalize_program_scenario_asks(prog)
         return prog
 
     def _parse_block(self) -> list:

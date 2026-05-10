@@ -7,6 +7,7 @@ import { RUNTIME_PROPERTY_NAMES } from '../core/runtime/rules.js';
 import { generateDSL, stackToDSL } from '../core/stacksToDsl.js';
 import { getCsrfTokenForRequest, resetCsrfPrefetch } from './csrf.js';
 import confetti from 'canvas-confetti';
+import { CALCULATOR_BOT_DETAILED_PROMPT } from './aiGeneratorDetailedExamplePrompt.js';
 
 function fireRegistrationConfetti() {
   const opts = { origin: { y: 0.72 }, zIndex: 10050 };
@@ -2880,7 +2881,13 @@ export default function App() {
       if (t.startsWith('ответ_md '))    return { type: 'message', props: { text: extractString(t), md: true } };
       if (t.startsWith('ответ '))       return { type: 'message', props: { text: extractString(t) } };
       if (t.startsWith('использовать ')) return { type: 'use',   props: { blockname: t.replace(/^использовать\s+/, '').trim() } };
-      if (t.startsWith('спросить '))    { const q = extractString(t); const v = t.split('→')[1]?.trim() || 'var'; return { type: 'ask', props: { question: q, varname: v } }; }
+      if (t.startsWith('спросить ')) {
+        const q = extractString(t);
+        const v = t.includes('→')
+          ? (t.split('→')[1]?.trim() || 'var')
+          : (t.includes('->') ? (t.split('->')[1]?.trim() || 'var') : 'var');
+        return { type: 'ask', props: { question: q, varname: v } };
+      }
       if (t.startsWith('запомни '))     { const m = t.replace(/^запомни\s+/, '').split('='); return { type: 'remember', props: { varname: m[0].trim(), value: m.slice(1).join('=').trim() } }; }
       if (t.startsWith('получить от ')) { const m = t.match(/получить от\s+(.+?)\s+"([^"]*)"\s*→\s*(\S+)/); return m ? { type: 'get_user', props: { user_id: m[1].trim(), key: m[2], varname: m[3] } } : null; }
       if (t.startsWith('получить '))    { const key = extractString(t); const v = t.split('→')[1]?.trim() || 'var'; return { type: 'get', props: { key, varname: v } }; }
@@ -3037,6 +3044,12 @@ export default function App() {
         currentStack = newStack(parsed.type, parsed.props);
         currentStack._lastScopeIndent = -1;
         currentStack._lastScopeType = null;
+        if (parsed.type === 'scenario') {
+          currentStack._scenarioStepBase = '';
+          currentStack._asksSinceScenarioStep = 0;
+          currentStack._scenarioStepIndent = -1;
+          currentStack._scenarioSiblingAskIndent = null;
+        }
       } else {
         // Дочерний блок — добавляем в currentStack
         // condition/else/шаг на indent=1 тоже идут в тот же стек
@@ -3044,6 +3057,25 @@ export default function App() {
           // Осиротевший блок — создаём стек
           currentStack = newStack(parsed.type, parsed.props);
         } else {
+          const isScenarioStack = currentStack.blocks[0]?.type === 'scenario';
+
+          // Несколько «спросить» под одним «шаг …:» → отдельные шаги (как в DSL ядра с FSM)
+          if (isScenarioStack && parsed.type === 'ask') {
+            const base = currentStack._scenarioStepBase;
+            const n = currentStack._asksSinceScenarioStep ?? 0;
+            const sib = currentStack._scenarioSiblingAskIndent;
+            const isSiblingAsk = sib == null || indent === sib;
+            if (isSiblingAsk && sib == null) {
+              currentStack._scenarioSiblingAskIndent = indent;
+            }
+            if (isSiblingAsk && base && n >= 1) {
+              const stepIndent = currentStack._scenarioStepIndent ?? indent;
+              addBlock(currentStack, 'step', { name: `${base}_${n + 1}` });
+              currentStack._lastScopeType = 'step';
+              currentStack._lastScopeIndent = stepIndent;
+            }
+          }
+
           // Определяем: этот блок идёт ПОСЛЕ ветки else/condition на том же уровне?
           const props = { ...parsed.props };
           if (
@@ -3059,8 +3091,20 @@ export default function App() {
           if (parsed.type === 'condition' || parsed.type === 'else' || parsed.type === 'step' || parsed.type === 'loop') {
             currentStack._lastScopeType = parsed.type;
             currentStack._lastScopeIndent = indent;
+            if (parsed.type === 'step' && isScenarioStack) {
+              currentStack._scenarioStepBase = parsed.props.name;
+              currentStack._asksSinceScenarioStep = 0;
+              currentStack._scenarioStepIndent = indent;
+              currentStack._scenarioSiblingAskIndent = null;
+            }
           }
           addBlock(currentStack, parsed.type, props);
+          if (isScenarioStack && parsed.type === 'ask') {
+            const sib = currentStack._scenarioSiblingAskIndent;
+            if (sib != null && indent === sib) {
+              currentStack._asksSinceScenarioStep = (currentStack._asksSinceScenarioStep ?? 0) + 1;
+            }
+          }
         }
       }
 
@@ -5026,7 +5070,7 @@ const EXAMPLE_FULL = `версия "1.0"
                   ✨ Создать бота с AI
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 3 }}>
-                  Опиши бота — AI сгенерирует схему блоков
+                  Опиши бота — AI сгенерирует схему блоков. Короткого запроса обычно мало: нужны состояния, кнопки и переходы.
                 </div>
               </div>
               <button
@@ -5039,15 +5083,18 @@ const EXAMPLE_FULL = `версия "1.0"
             {/* Body */}
             <div style={{ padding: '20px' }}>
               {/* Примеры подсказки */}
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12, alignItems: 'center' }}>
                 {[
-                  'Бот приветствует и показывает меню',
-                  'Бот принимает заказы, спрашивает имя и телефон',
-                  'Бот-викторина с 3 вопросами',
-                  'Бот с оплатой подписки',
-                ].map(ex => (
-                  <button key={ex}
-                    onClick={() => setAiPrompt(ex)}
+                  { label: 'Бот приветствует и показывает меню', text: 'Бот приветствует и показывает меню' },
+                  { label: 'Заказ: имя и телефон', text: 'Бот принимает заказы, спрашивает имя и телефон' },
+                  { label: 'Калькулятор — полное ТЗ (рекомендуется)', text: CALCULATOR_BOT_DETAILED_PROMPT },
+                  { label: 'Бот с оплатой подписки', text: 'Бот с оплатой подписки' },
+                ].map((ex) => (
+                  <button
+                    key={ex.label}
+                    type="button"
+                    title={ex.text.length > 80 ? 'Вставить подробное техническое описание сценария' : undefined}
+                    onClick={() => setAiPrompt(ex.text)}
                     disabled={aiLoading}
                     style={{
                       padding: '5px 10px', borderRadius: 20, fontSize: 11,
@@ -5055,8 +5102,9 @@ const EXAMPLE_FULL = `версия "1.0"
                       border: '1px solid rgba(251,191,36,0.2)', cursor: 'pointer',
                       fontFamily: 'system-ui', transition: 'all 0.15s',
                       opacity: aiLoading ? 0.5 : 1,
+                      maxWidth: '100%',
                     }}
-                  >{ex}</button>
+                  >{ex.label}</button>
                 ))}
               </div>
 
@@ -5065,8 +5113,8 @@ const EXAMPLE_FULL = `версия "1.0"
                 value={aiPrompt}
                 onChange={e => setAiPrompt(e.target.value)}
                 disabled={aiLoading}
-                placeholder="Например: бот принимает заказы пиццы, спрашивает адрес доставки и отправляет подтверждение..."
-                rows={4}
+                placeholder="Укажи триггеры (/start, кнопки), тексты сообщений, варианты кнопок, что происходит при каждом нажатии, переменные, финальный экран. Либо нажми «Калькулятор — полное ТЗ»."
+                rows={10}
                 style={{
                   width: '100%', boxSizing: 'border-box',
                   background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)',

@@ -458,6 +458,128 @@ export function emitBlockText(block) {
 }
 
 /**
+ * Верхний уровень тела «шаг» в линейном списке блоков (как узлы AST в parser.py).
+ */
+function topLevelStatementsForStepBody(body) {
+  const stmts = [];
+  let i = 0;
+  const afterScope = (b) => b?.props?._afterScope;
+
+  while (i < body.length) {
+    const b = body[i];
+    if (b.type === 'condition') {
+      const stmt = [b];
+      i += 1;
+      while (i < body.length && body[i].type !== 'else' && !afterScope(body[i])) {
+        stmt.push(body[i]);
+        i += 1;
+      }
+      if (i < body.length && body[i].type === 'else') {
+        stmt.push(body[i]);
+        i += 1;
+        while (i < body.length && !afterScope(body[i])) {
+          stmt.push(body[i]);
+          i += 1;
+        }
+      }
+      stmts.push(stmt);
+      continue;
+    }
+    if (b.type === 'else') {
+      const stmt = [b];
+      i += 1;
+      while (i < body.length && !afterScope(body[i])) {
+        stmt.push(body[i]);
+        i += 1;
+      }
+      stmts.push(stmt);
+      continue;
+    }
+    if (b.type === 'loop') {
+      const stmt = [b];
+      i += 1;
+      while (
+        i < body.length &&
+        !afterScope(body[i]) &&
+        body[i].type !== 'condition' &&
+        body[i].type !== 'else' &&
+        body[i].type !== 'loop'
+      ) {
+        stmt.push(body[i]);
+        i += 1;
+      }
+      stmts.push(stmt);
+      continue;
+    }
+    stmts.push([b]);
+    i += 1;
+  }
+  return stmts;
+}
+
+/**
+ * Несколько «спросить» под одним «шаг» ломают FSM в исполнителе сценария
+ * (после Ask вызывается _continue_scenario, а не _pending_stmts).
+ * Разбиваем как normalize_program_scenario_asks в parser.py.
+ */
+function splitOneStepBlockForAskFsm(stepBlock, body) {
+  const baseName = stepBlock.props?.name || 'шаг';
+  const stmts = topLevelStatementsForStepBody(body);
+  const topAskCount = stmts.filter((s) => s.length === 1 && s[0].type === 'ask').length;
+  if (topAskCount <= 1) {
+    return [stepBlock, ...body];
+  }
+
+  const out = [];
+  let current = [];
+  let counter = 1;
+
+  const flush = () => {
+    if (current.length === 0) return;
+    const stepName = counter === 1 ? baseName : `${baseName}_${counter}`;
+    counter += 1;
+    out.push({
+      ...stepBlock,
+      props: { ...stepBlock.props, name: stepName },
+    });
+    for (const blk of current) out.push(blk);
+    current = [];
+  };
+
+  for (const stmtBlocks of stmts) {
+    for (const blk of stmtBlocks) current.push(blk);
+    if (stmtBlocks.length === 1 && stmtBlocks[0].type === 'ask') {
+      flush();
+    }
+  }
+  if (current.length) flush();
+  return out;
+}
+
+export function expandScenarioStackBlocksForAskFsm(blocks) {
+  if (!blocks?.length || blocks[0]?.type !== 'scenario') return blocks;
+  const out = [blocks[0]];
+  let i = 1;
+  while (i < blocks.length) {
+    const block = blocks[i];
+    if (block.type !== 'step') {
+      out.push(block);
+      i += 1;
+      continue;
+    }
+    const stepBlock = block;
+    i += 1;
+    const body = [];
+    while (i < blocks.length && blocks[i].type !== 'step') {
+      body.push(blocks[i]);
+      i += 1;
+    }
+    out.push(...splitOneStepBlockForAskFsm(stepBlock, body));
+  }
+  return out;
+}
+
+/**
  * Линейные стеки с «если … иначе» — добавляем отступы тел как в parser.py.
  */
 function stackToDSLStructured(blocks) {
@@ -543,7 +665,8 @@ function stackToDSLStructured(blocks) {
 export function stackToDSL(stack) {
   const blocks = stack?.blocks || [];
   if (!blocks.length) return '';
-  return stackToDSLStructured(blocks);
+  const normalized = expandScenarioStackBlocksForAskFsm(blocks);
+  return stackToDSLStructured(normalized);
 }
 
 export function generateDSLFromStacks(stacks) {
