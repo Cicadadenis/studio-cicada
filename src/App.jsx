@@ -1899,11 +1899,204 @@ function buildAutoFixFromValidation(code, validationResult) {
   }
 
   text = lines.join('\n');
+
+  const hasUiOrderErrors = (validationResult.errors || []).some((e) =>
+    /кнопки|UI_STATE_INVALID|после блока «Кнопки»|должен идти после блока «Ответ»/i.test(String(e || '')),
+  );
+
+  if (hasUiOrderErrors) {
+    const normalizeDslUI = (input) => {
+      const src = String(input || '').split('\n');
+      const out = [];
+      for (let i = 0; i < src.length; i += 1) {
+        const line = src[i];
+        const trim = line.trim();
+        const indent = ((line.match(/^\s*/) || [''])[0] || '').replace(/\t/g, '    ').length;
+        out.push(line);
+        if (!trim.endsWith(':')) continue;
+
+        const bodyStart = i + 1;
+        let j = bodyStart;
+        while (j < src.length) {
+          const t = src[j].trim();
+          const ind = ((src[j].match(/^\s*/) || [''])[0] || '').replace(/\t/g, '    ').length;
+          if (t && ind <= indent) break;
+          j += 1;
+        }
+        const body = src.slice(bodyStart, j);
+        if (!body.length) continue;
+
+        const logic = [];
+        const answers = [];
+        const stopLines = [];
+        let buttons = null;
+
+        for (let k = 0; k < body.length; k += 1) {
+          const ln = body[k];
+          const t = ln.trim();
+          if (!t) { logic.push(ln); continue; }
+          if (/^(?:стоп|завершить|завершить сценарий|вернуть)\b/i.test(t)) { stopLines.push(ln); continue; }
+          if (/^(?:ответ|ответ_md)\s+/i.test(t)) { answers.push(ln); continue; }
+          if (/^кнопки(?:\s|:|$)/i.test(t) || /^inline-кнопки:?\s*$/i.test(t)) {
+            if (!buttons) {
+              const btnChunk = [ln];
+              const lnIndent = ((ln.match(/^\s*/) || [''])[0] || '').replace(/\t/g, '    ').length;
+              let x = k + 1;
+              while (x < body.length) {
+                const nt = body[x].trim();
+                const nIndent = ((body[x].match(/^\s*/) || [''])[0] || '').replace(/\t/g, '    ').length;
+                if (nt && nIndent <= lnIndent) break;
+                btnChunk.push(body[x]);
+                x += 1;
+              }
+              buttons = btnChunk;
+            }
+            continue;
+          }
+          logic.push(ln);
+        }
+
+        const normalized = [...logic, ...answers];
+        if (buttons) normalized.push(...buttons);
+        if (buttons && stopLines.length === 0) normalized.push(`${' '.repeat(indent + 4)}стоп`);
+        else normalized.push(...stopLines);
+
+        normalized.forEach((ln) => out.push(ln));
+        i = j - 1;
+      }
+      return out.join('\n');
+    };
+
+    const beforeNormalize = text;
+    const normalizedText = normalizeDslUI(text);
+    if (normalizedText !== beforeNormalize) {
+      text = normalizedText;
+      lines = text.split('\n');
+      fixes.push({
+        line: 1,
+        message: 'Авто-нормализация UI-порядка: logic → ответы → кнопки → стоп',
+        before: 'DSL с нарушением UI-порядка',
+        after: 'DSL приведён к детерминированной структуре',
+      });
+      changed.clear();
+      lines.forEach((_, idx) => changed.add(idx));
+    }
+  }
+
   return {
     correctedCode: text,
     changedLineIndexes: [...changed].sort((a, b) => a - b),
     fixes,
   };
+}
+
+function normalizeDslUI(input) {
+  const source = String(input || '');
+  const lines = source.split('\n');
+  const blockBodies = new Map();
+
+  // 1) Собираем блоки для развёртки `использовать <блок>`
+  for (let i = 0; i < lines.length; i += 1) {
+    const t = lines[i].trim();
+    const m = t.match(/^блок\s+([^\s:]+)\s*:\s*$/i);
+    if (!m) continue;
+    const name = m[1];
+    const baseIndent = getLineIndent(lines[i]);
+    const body = [];
+    let j = i + 1;
+    while (j < lines.length) {
+      const nt = lines[j].trim();
+      const ind = getLineIndent(lines[j]);
+      if (nt && ind <= baseIndent) break;
+      body.push(lines[j]);
+      j += 1;
+    }
+    blockBodies.set(name, body);
+  }
+
+  // 2) Разворачиваем `использовать` + нормализуем body
+  const out = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const trim = line.trim();
+    const indent = getLineIndent(line);
+    out.push(line);
+    if (!trim.endsWith(':')) continue;
+
+    const bodyStart = i + 1;
+    let j = bodyStart;
+    while (j < lines.length) {
+      const t = lines[j].trim();
+      const ind = getLineIndent(lines[j]);
+      if (t && ind <= indent) break;
+      j += 1;
+    }
+    const body = lines.slice(bodyStart, j);
+    if (!body.length) continue;
+
+    const logic = [];
+    const answers = [];
+    const stopLines = [];
+    let buttons = null;
+
+    for (let k = 0; k < body.length; k += 1) {
+      const ln = body[k];
+      const t = ln.trim();
+      if (!t) { logic.push(ln); continue; }
+
+      const useMatch = t.match(/^использовать\s+([^\s]+)\s*$/i);
+      if (useMatch && blockBodies.has(useMatch[1])) {
+        const blockLines = blockBodies.get(useMatch[1]) || [];
+        blockLines.forEach((bLine) => {
+          const bt = bLine.trim();
+          if (/^(?:ответ|ответ_md)\s+/i.test(bt)) answers.push(bLine);
+          else if (/^кнопки(?:\s|:|$)/i.test(bt) || /^inline-кнопки:?\s*$/i.test(bt)) {
+            if (!buttons) buttons = [bLine];
+          } else if (/^(?:стоп|завершить|завершить сценарий|вернуть)\b/i.test(bt)) {
+            stopLines.push(bLine);
+          } else logic.push(bLine);
+        });
+        continue;
+      }
+
+      if (/^(?:стоп|завершить|завершить сценарий|вернуть)\b/i.test(t)) { stopLines.push(ln); continue; }
+      if (/^(?:ответ|ответ_md)\s+/i.test(t)) { answers.push(ln); continue; }
+      if (/^кнопки(?:\s|:|$)/i.test(t) || /^inline-кнопки:?\s*$/i.test(t)) {
+        if (!buttons) {
+          const btnChunk = [ln];
+          const lnIndent = getLineIndent(ln);
+          let x = k + 1;
+          while (x < body.length) {
+            const nt = body[x].trim();
+            const nIndent = getLineIndent(body[x]);
+            if (nt && nIndent <= lnIndent) break;
+            btnChunk.push(body[x]);
+            x += 1;
+          }
+          buttons = btnChunk;
+        }
+        continue;
+      }
+      logic.push(ln);
+    }
+
+    if (trim.startsWith('иначе') && answers.length === 0) {
+      answers.push(`${' '.repeat(indent + 4)}ответ "..."`);
+    }
+
+    const normalized = [...logic, ...answers];
+    if (buttons) normalized.push(...buttons);
+    if (buttons || stopLines.length > 0) normalized.push(`${' '.repeat(indent + 4)}стоп`);
+
+    normalized.forEach((ln) => out.push(ln));
+    i = j - 1;
+  }
+
+  return out.join('\n');
+}
+
+function fixDslSchema(input) {
+  return normalizeDslUI(input);
 }
 
 // ─── DSL PANEL ────────────────────────────────────────────────────────────
@@ -1917,11 +2110,13 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
   /** После «Применить исправления»: показываем исправленный текст и подсветку строк */
   const [previewCorrected, setPreviewCorrected] = React.useState(null);
   const [highlightRows, setHighlightRows] = React.useState([]); // 0-based индексы строк
+  const [fixNotice, setFixNotice] = React.useState('');
 
   React.useEffect(() => {
     setValidationResult(null);
     setPreviewCorrected(null);
     setHighlightRows([]);
+    setFixNotice('');
   }, [dsl]);
 
   const [copied, setCopied] = React.useState(false);
@@ -1997,11 +2192,25 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
     const autoFixed = buildAutoFixFromValidation(dsl, validationResult);
     if (!autoFixed.fixes.length) return;
     const applied = onApplyCorrectedCode?.(autoFixed.correctedCode);
+    setFixNotice('DSL исправлен и приведён к корректной структуре');
+    setTimeout(() => setFixNotice(''), 2200);
     if (!applied) {
       // fallback: хотя бы показать пользователю исправленный текст в превью
       setPreviewCorrected(autoFixed.correctedCode);
       setHighlightRows(autoFixed.changedLineIndexes || []);
     }
+  };
+
+  const applySchemaFix = () => {
+    const fixed = fixDslSchema(previewCorrected ?? dsl);
+    const applied = onApplyCorrectedCode?.(fixed);
+    setFixNotice('DSL исправлен и приведён к корректной структуре');
+    setTimeout(() => setFixNotice(''), 2200);
+    if (!applied) {
+      setPreviewCorrected(fixed);
+      setHighlightRows(fixed.split('\n').map((_, idx) => idx));
+    }
+    setTimeout(() => { check(); }, 0);
   };
 
   const resetPreview = () => {
@@ -2088,7 +2297,22 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
             }}
             title={!validationResult ? ui.dslFixTitleNeedCheck : (!hasFixes ? ui.dslFixTitleNoFix : ui.dslFixTitleApply)}
           >
-            {ui.dslFix}{hasFixes ? ` (${computedFixes?.fixes?.length || 0})` : ''}
+            {'🔧 Исправить ошибки DSL'}{hasFixes ? ` (${computedFixes?.fixes?.length || 0})` : ''}
+          </button>
+          <button
+            type="button"
+            onClick={applySchemaFix}
+            style={{
+              background: '#16a34a',
+              color: '#fff',
+              padding: '2px 7px',
+              borderRadius: 4,
+              fontSize: 9,
+              border: 'none',
+            }}
+            title="Нормализовать структуру DSL по UI-правилам"
+          >
+            {'🛠 Исправить DSL'}
           </button>
         </div>
       </div>
@@ -2160,6 +2384,11 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
               )}
             </div>
           )}
+        </div>
+      )}
+      {fixNotice && (
+        <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--border)', background: 'rgba(16,185,129,0.12)', color: '#10b981', fontSize: 10, fontWeight: 600 }}>
+          {fixNotice}
         </div>
       )}
 
@@ -3726,7 +3955,7 @@ const EXAMPLE_FULL = `версия "1.0"
       fullTest: EXAMPLE_FULL_TEST,
     };
 
-    const code = examples[exampleName];
+    const code = fixDslSchema(examples[exampleName]);
     if (!code) {
       showToast('Пример не найден', 'error');
       return;
