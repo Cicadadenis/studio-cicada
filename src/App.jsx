@@ -275,6 +275,19 @@ async function updateUser(userId, updates, currentUser = null) {
   return normalized;
 }
 
+async function uploadAvatar(userId, dataUrl, currentUser = null) {
+  const data = await apiFetch(`${API_URL}/avatar`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userId, dataUrl }),
+  });
+  return {
+    ...(currentUser || {}),
+    ...(data?.user || {}),
+    photo_url: data?.user?.photo_url ?? null,
+  };
+}
+
 async function fetch2FASetup(userId) {
   return apiFetch(`${API_URL}/2fa/setup?userId=${encodeURIComponent(userId)}`);
 }
@@ -5963,8 +5976,10 @@ const EXAMPLE_FULL = `версия "1.0"
           }}
           onUpdateUser={async (updates) => {
             try {
-              const { _silent, ...serverUpdates } = updates;
-              const updated = await updateUser(currentUser.id, serverUpdates, currentUser);
+              const { _silent, _localUser, ...serverUpdates } = updates;
+              const updated = _localUser
+                ? { ...currentUser, ..._localUser }
+                : await updateUser(currentUser.id, serverUpdates, currentUser);
               setCurrentUser(updated);
               saveSession(updated);
               if (!_silent) showToast('Профиль обновлён', 'success');
@@ -8243,6 +8258,12 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onLoadP
   const [confirmDelete, setConfirmDelete] = useState(null);
   const avatarInputRef = React.useRef(null);
 
+  const onUploadAvatar = async (dataUrl) => {
+    const updated = await uploadAvatar(user.id, dataUrl, user);
+    await onUpdateUser({ _silent: true, _localUser: updated });
+    return updated;
+  };
+
   // Синхронизируем newAvatar если user.photo_url изменился снаружи
   React.useEffect(() => {
     setNewAvatar(user.photo_url || '');
@@ -8346,7 +8367,7 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onLoadP
       setSaveSuccess(false);
       setAvatarSaving(true);
       try {
-        const updated = await onUpdateUser({ photo_url: optimized || null, _silent: true });
+        const updated = await onUploadAvatar(optimized || null);
         setNewAvatar(updated?.photo_url || optimized || '');
         setSaveSuccess(true);
         setTimeout(() => setSaveSuccess(false), 2500);
