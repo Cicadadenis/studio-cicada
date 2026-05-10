@@ -288,6 +288,17 @@ function clearSession() {
   clearJwt();
 }
 
+/** Свежие plan/subscription из БД (после выдачи подписки в админке и т.д.). */
+async function fetchSessionUserFromServer() {
+  if (!getStoredJwt()) return null;
+  try {
+    const data = await apiFetch(`${API_URL}/me`);
+    return data?.user ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // Re-export from users.js for compatibility
 
 // ─── BLOCK INFO CONTEXT ──────────────────────────────────────────────────────
@@ -3861,6 +3872,53 @@ const EXAMPLE_FULL = `версия "1.0"
     window.addEventListener('cicada:session-expired', handleExpired);
     return () => window.removeEventListener('cicada:session-expired', handleExpired);
   }, [showToast]);
+
+  // Подтягиваем план/подписку с сервера: админ изменил профиль → без выхода из аккаунта
+  useEffect(() => {
+    if (!currentUser?.id || !getStoredJwt()) return undefined;
+    let cancelled = false;
+    const sync = () => {
+      fetchSessionUserFromServer().then((u) => {
+        if (cancelled || !u) return;
+        setCurrentUser((prev) => {
+          if (!prev || String(prev.id) !== String(u.id)) return prev;
+          const merged = { ...prev, ...u };
+          saveSession(merged);
+          return merged;
+        });
+      });
+    };
+    sync();
+    const interval = setInterval(sync, 20_000);
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') sync();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('focus', sync);
+    window.addEventListener('pageshow', sync);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('focus', sync);
+      window.removeEventListener('pageshow', sync);
+    };
+  }, [currentUser?.id]);
+
+  useEffect(() => {
+    if (!showProfileModal || !currentUser?.id || !getStoredJwt()) return undefined;
+    let cancelled = false;
+    fetchSessionUserFromServer().then((u) => {
+      if (cancelled || !u) return;
+      setCurrentUser((prev) => {
+        if (!prev || String(prev.id) !== String(u.id)) return prev;
+        const merged = { ...prev, ...u };
+        saveSession(merged);
+        return merged;
+      });
+    });
+    return () => { cancelled = true; };
+  }, [showProfileModal, currentUser?.id]);
 
   // Poll every 5s — syncs bot status across browsers/tabs
   useEffect(() => {

@@ -580,6 +580,17 @@ async function initDBWithRetry({ attempts = 30, delayMs = 2000 } = {}) {
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
+/** BIGINT из pg / BigInt → безопасное число для JSON и сравнений на клиенте. */
+function coerceDbMillis(v) {
+  if (v == null || v === '') return undefined;
+  try {
+    const n = typeof v === 'bigint' ? Number(v) : Number(v);
+    return Number.isFinite(n) ? n : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function rowToUser(row) {
   if (!row) return null;
   return {
@@ -594,7 +605,7 @@ function rowToUser(row) {
     resetToken:           row.reset_token           ?? undefined,
     resetTokenExp:        row.reset_token_exp       ?? undefined,
     plan:                 row.plan,
-    subscriptionExp:      row.subscription_exp      ?? undefined,
+    subscriptionExp:      coerceDbMillis(row.subscription_exp),
     role:                 row.role                  ?? 'user',
     accessLevel:          row.access_level          ?? 'basic',
     banned:               row.banned                ?? false,
@@ -2290,6 +2301,28 @@ app.post('/api/admin/grant-subscription', async (req, res) => {
   recordAdminAction(req, 'grant_subscription', userId, { days, subscriptionExp: newExp });
   console.log(`[Admin] Grant: ${userId} +${days}d until ${new Date(newExp).toISOString()}`);
   res.json({ success: true, subscriptionExp: newExp });
+});
+
+app.post('/api/admin/revoke-subscription', async (req, res) => {
+  if (!isAdminAuthed(req)) return res.status(403).json({ error: 'Forbidden' });
+  const { userId } = req.body;
+  if (!userId) return res.json({ error: 'userId обязателен' });
+
+  const user = await findById(userId);
+  if (!user) return res.json({ error: 'Пользователь не найден' });
+
+  await pool.query("UPDATE users SET plan='trial', subscription_exp=NULL WHERE id=$1", [userId]);
+  pushRing(recentSubscriptions, {
+    at: new Date().toISOString(),
+    userId,
+    source: 'admin_revoke',
+  }, 400);
+  recordAdminAction(req, 'revoke_subscription', userId, {
+    previousPlan: user.plan,
+    previousSubscriptionExp: user.subscriptionExp ?? null,
+  });
+  console.log(`[Admin] Revoke PRO: ${userId}`);
+  res.json({ success: true });
 });
 
 app.get('/api/admin/plans', (req, res) => {

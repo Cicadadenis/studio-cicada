@@ -3963,7 +3963,7 @@ const EXAMPLE_FULL = `версия "1.0"
       fetchSessionUserFromServer().then((u) => {
         if (cancelled || !u) return;
         setCurrentUser((prev) => {
-          if (!prev || prev.id !== u.id) return prev;
+          if (!prev || String(prev.id) !== String(u.id)) return prev;
           const merged = { ...prev, ...u };
           saveSession(merged);
           return merged;
@@ -3971,19 +3971,37 @@ const EXAMPLE_FULL = `версия "1.0"
       });
     };
     sync();
-    const interval = setInterval(sync, 60_000);
+    const interval = setInterval(sync, 20_000);
     const onVisibility = () => {
       if (document.visibilityState === 'visible') sync();
     };
     document.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('focus', sync);
+    window.addEventListener('pageshow', sync);
     return () => {
       cancelled = true;
       clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('focus', sync);
+      window.removeEventListener('pageshow', sync);
     };
   }, [currentUser?.id]);
+
+  /** Открыли профиль — сразу тянем план/подписку (после выдачи из админки не ждём минутный poll). */
+  useEffect(() => {
+    if (!showProfileModal || !currentUser?.id || !getStoredJwt()) return undefined;
+    let cancelled = false;
+    fetchSessionUserFromServer().then((u) => {
+      if (cancelled || !u) return;
+      setCurrentUser((prev) => {
+        if (!prev || String(prev.id) !== String(u.id)) return prev;
+        const merged = { ...prev, ...u };
+        saveSession(merged);
+        return merged;
+      });
+    });
+    return () => { cancelled = true; };
+  }, [showProfileModal, currentUser?.id]);
 
   // Poll every 5s — syncs bot status across browsers/tabs
   useEffect(() => {

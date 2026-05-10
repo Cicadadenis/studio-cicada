@@ -646,7 +646,16 @@
       transition: border-color 0.2s;
     }
     .custom-days-input:focus { border-color: var(--accent); }
-    .sub-modal-actions { display: flex; gap: 10px; }
+    .sub-modal-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+    .btn-revoke-sub {
+      flex: 1; min-width: 120px; padding: 14px;
+      background: transparent; color: #f87171;
+      border: 1.5px solid rgba(248,113,113,0.55); border-radius: 12px;
+      font-size: 14px; font-weight: 600; cursor: pointer;
+      transition: all 0.2s; -webkit-tap-highlight-color: transparent;
+    }
+    .btn-revoke-sub:active { transform: scale(0.98); opacity: 0.9; }
+    .btn-revoke-sub:disabled { opacity: 0.4; cursor: not-allowed; }
     .btn-grant-sub {
       flex: 1; padding: 14px;
       background: linear-gradient(135deg, var(--accent), var(--accent2));
@@ -1747,6 +1756,7 @@
         '</div>' +
         '<div class="sub-modal-actions">' +
           '<button class="btn-cancel" onclick="document.getElementById(&quot;sub-modal-overlay&quot;).remove()">Отмена</button>' +
+          '<button type="button" class="btn-revoke-sub" id="revoke-sub-btn" onclick="revokeSubscription()">Снять премиум</button>' +
           '<button class="btn-grant-sub" id="grant-btn" onclick="grantSubscription()">✓ Выдать</button>' +
         '</div>' +
       '</div>';
@@ -1792,6 +1802,31 @@
     } catch (e) {
       showToast('Ошибка подключения', 'var(--red)');
       btn.disabled = false; btn.textContent = '✓ Выдать';
+    }
+  }
+
+  async function revokeSubscription() {
+    if (!confirm('Снять PRO у этого пользователя?\nПлан станет trial, дата подписки обнулится.')) return;
+    var btn = document.getElementById('revoke-sub-btn');
+    var grantBtn = document.getElementById('grant-btn');
+    if (btn) { btn.disabled = true; btn.textContent = '...'; }
+    if (grantBtn) grantBtn.disabled = true;
+    try {
+      var res = await apiPostJson(API + '/api/admin/revoke-subscription', { userId: grantSubUserId });
+      var data = await res.json();
+      if (data.success || res.ok) {
+        document.getElementById('sub-modal-overlay').remove();
+        showToast('✅ Премиум снят', 'var(--green)');
+        loadUsers();
+      } else {
+        showToast('Ошибка: ' + (data.error || res.status), 'var(--red)');
+        if (btn) { btn.disabled = false; btn.textContent = 'Снять премиум'; }
+        if (grantBtn) grantBtn.disabled = false;
+      }
+    } catch (e) {
+      showToast('Ошибка подключения', 'var(--red)');
+      if (btn) { btn.disabled = false; btn.textContent = 'Снять премиум'; }
+      if (grantBtn) grantBtn.disabled = false;
     }
   }
 
@@ -1860,7 +1895,7 @@
             '<div class="um-card"><div class="um-title">Статус</div>Online: ' + (info.status && info.status.online ? 'Да' : 'Нет') + '<br/>Bot: ' + (info.status && info.status.botRunning ? 'online' : 'offline') + '<br/>Role: ' + escHtml(u.role || 'user') + '<br/>Access: ' + escHtml(u.accessLevel || 'basic') + '<br/>Banned: ' + (u.banned ? 'Да' : 'Нет') + '</div>' +
             '<div class="um-card"><div class="um-title">IP / входы</div>' + escHtml((info.uniqueIps || []).join(', ') || '—') + '<pre style="margin-top:6px;white-space:pre-wrap;color:var(--text2)">' + escHtml(arrToLines(info.loginHistory, function(x){ return '[' + (x.at || '-') + '] ' + (x.method || '-') + ' ' + (x.ip || '-'); })) + '</pre></div>' +
             '<div class="um-card"><div class="um-title">Действия</div><pre style="white-space:pre-wrap;color:var(--text2)">' + escHtml(arrToLines(info.actions, function(x){ return '[' + x.at + '] ' + x.action; })) + '</pre></div>' +
-            '<div class="um-card"><div class="um-title">Подписки</div><pre style="white-space:pre-wrap;color:var(--text2)">' + escHtml(arrToLines(info.subscriptions, function(x){ return '[' + x.at + '] ' + (x.source || '-') + ' до ' + new Date(x.subscriptionExp || 0).toLocaleString('ru-RU'); })) + '</pre></div>' +
+            '<div class="um-card"><div class="um-title">Подписки</div><pre style="white-space:pre-wrap;color:var(--text2)">' + escHtml(arrToLines(info.subscriptions, function(x){ if (x.source === 'admin_revoke') return '[' + x.at + '] ' + (x.source || '-') + ' — PRO снят'; return '[' + x.at + '] ' + (x.source || '-') + ' до ' + new Date(x.subscriptionExp || 0).toLocaleString('ru-RU'); })) + '</pre></div>' +
             '<div class="um-card"><div class="um-title">Ошибки auth/API</div><pre style="white-space:pre-wrap;color:#fca5a5">' + escHtml(arrToLines((info.authErrors || []).concat(info.apiErrors || []), function(x){ return '[' + (x.at || '-') + '] ' + (x.message || x.path || '-'); })) + '</pre></div>' +
             '<div class="um-card"><div class="um-title">Логи бота</div><pre style="max-height:180px;overflow:auto;white-space:pre-wrap;color:var(--text2)">' + escHtml((botLogs && botLogs.logs) || '—') + '</pre></div>' +
           '</div>' +
