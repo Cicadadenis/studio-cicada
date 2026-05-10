@@ -10,6 +10,12 @@ const ROOT_RULES = [
   { key: 'до каждого', re: /^до\s+каждого:\s*$/i, snippet: 'до каждого:' },
   { key: 'после каждого', re: /^после\s+каждого:\s*$/i, snippet: 'после каждого:' },
   { key: 'при старте', re: /^(?:при\s+старте|старт):?\s*$/i, snippet: 'при старте:' },
+  // Любой текст / текст «слово» — как в core/parser.py
+  {
+    key: 'при тексте',
+    re: /^при\s+тексте(?:\s+"[^"]+")?\s*:?\s*$/i,
+    snippet: 'при тексте:',
+  },
   { key: 'при команде', re: /^(?:при\s+команде|команда)\s+"\/?[^"]+"\s*:\s*$/i, snippet: 'при команде "/help":' },
   { key: 'при нажатии', re: /^при\s+нажатии\s+"[^"]+"\s*:\s*$/i, snippet: 'при нажатии "Кнопка":' },
   { key: 'при фото', re: /^при\s+фото:?\s*$/i, snippet: 'при фото:' },
@@ -41,8 +47,8 @@ const INNER_RULES = [
   { key: 'ветка', re: /^"[^"]+"\s*:\s*$/i, snippet: '"вариант":' },
   { key: 'проверить_роль', re: /^проверить_роль\s+.+\s*:\s*$/i, snippet: 'проверить_роль роль:' },
   { key: 'если', re: /^если\s+.+:?\s*$/i, snippet: 'если текст == "да":' },
-  { key: 'пусть', re: /^пусть\s+[а-яёa-z_][а-яёa-z0-9_]*\s*=\s*.+$/i, snippet: 'пусть x = 1' },
-  { key: 'запомни', re: /^запомни\s+[а-яёa-z_][а-яёa-z0-9_]*\s*=\s*.+$/i, snippet: 'запомни имя = текст' },
+  { key: 'пусть', re: /^пусть\s+[а-яёa-z_][а-яёa-z0-9_]*\s*=\s*[\s\S]*$/i, snippet: 'пусть x = 1' },
+  { key: 'запомни', re: /^запомни\s+[а-яёa-z_][а-яёa-z0-9_]*\s*=\s*[\s\S]*$/i, snippet: 'запомни имя = текст' },
   {
     key: 'запомни файл',
     re: /^запомни\s+файл\s*(?:→|->)\s*[а-яёa-z_][а-яёa-z0-9_]*\s*$/i,
@@ -50,7 +56,8 @@ const INNER_RULES = [
   },
   { key: 'спросить', re: /^спросить\s+"[^"]+"\s*(?:→|->)\s*[а-яёa-z_][а-яёa-z0-9_]*\s*$/i, snippet: 'спросить "Имя?" → имя' },
   { key: 'получить', re: /^получить(?:\s+от\s+\S+)?\s+"[^"]+"\s*(?:→|->)\s*[а-яёa-z_][а-яёa-z0-9_]*\s*$/i, snippet: 'получить "ключ" → значение' },
-  { key: 'сохранить', re: /^сохранить(?:_глобально)?\s+"[^"]+"\s*=\s*.+$/i, snippet: 'сохранить "ключ" = значение' },
+  // Значение после = может быть пустым — так иногда генерирует/stacksToDSL
+  { key: 'сохранить', re: /^сохранить(?:_глобально)?\s+"[^"]+"\s*=\s*[\s\S]*$/i, snippet: 'сохранить "ключ" = значение' },
   { key: 'использовать', re: /^использовать\s+[а-яёa-z_][а-яёa-z0-9_]*\s*$/i, snippet: 'использовать главное_меню' },
   { key: 'опрос', re: /^опрос\s+.+/i, snippet: 'опрос "Вопрос?" "Да" "Нет"' },
   { key: 'пауза', re: /^(?:подождать|пауза)\s+\S+.*$/i, snippet: 'подождать 1' },
@@ -105,7 +112,7 @@ export function lintDSLSchema(code) {
   const lines = String(code || '').replace(/\r\n/g, '\n').split('\n');
   let inCommands = false;
   let commandsIndent = -1;
-  /** @type {{ kind: 'random' | 'inlineKb' | 'menu' | 'buttonsMatrix', base: number } | null} */
+  /** @type {{ kind: 'random' | 'inlineKb' | 'menu' | 'buttonsMatrix' | 'poll', base: number } | null} */
   let nestedBlock = null;
 
   lines.forEach((raw, idx) => {
@@ -156,6 +163,7 @@ export function lintDSLSchema(code) {
       )
         ok = true;
       else if (kind === 'menu' && /^\-\s+"[^"]+"\s*$/.test(trimmed)) ok = true;
+      else if (kind === 'poll' && /^\-\s+"[^"]+"\s*$/.test(trimmed)) ok = true;
       if (ok) return;
       nestedBlock = null;
     }
@@ -168,6 +176,8 @@ export function lintDSLSchema(code) {
       else if (/^меню\s+"[^"]+"\s*:\s*$/i.test(trimmed)) nestedBlock = { kind: 'menu', base: indent };
       else if (/^кнопки:\s*$/i.test(trimmed) || /^кнопки\s*$/i.test(trimmed))
         nestedBlock = { kind: 'buttonsMatrix', base: indent };
+      // Многострочный опрос из dslCodegen.emitPoll — только заголовок, варианты строками "- ..."
+      else if (/^опрос\s+"[^"]+"\s*$/i.test(trimmed)) nestedBlock = { kind: 'poll', base: indent };
       return;
     }
 
