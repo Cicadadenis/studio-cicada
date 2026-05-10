@@ -739,25 +739,38 @@
         <div id="security-summary" class="loading" style="padding:20px">Загрузка...</div>
       </div>
       <div class="table-wrap" style="padding:14px;margin-top:10px">
-        <div class="section-title" style="margin-bottom:10px">Groq токены (.env)</div>
-        <p style="font-size:12px;color:var(--text3);margin:0 0 10px;line-height:1.5">
-          <strong>Ротация ключей:</strong> с каждым запросом к ИИ порядок ключей сдвигается (round-robin). Если один ключ вернёт
-          <code>401</code>, <code>403</code>, <code>429</code> или сеть оборвётся — пробуется следующий, пока не кончится пул.
-          Если ключи от <em>одного</em> аккаунта Groq, суточная квота токенов (TPD) часто общая, тогда «запасные» ключи не спасут.
+        <div class="section-title" style="margin-bottom:10px">ИИ: Claude (Anthropic) или Groq</div>
+        <p style="font-size:12px;color:var(--text3);margin:0 0 12px;line-height:1.5">
+          <strong>Провайдер</strong> записывается в <code>AI_PROVIDER</code>. <em>Авто</em> — пустое значение: выбор как в сервере (приоритет: ключ Anthropic → ключи Groq → Ollama).
+          Три поля Groq → в .env как <code>GROQ_TOKEN</code>, <code>GROQ_TOKEN_2</code>, <code>GROQ_TOKEN_3</code> с ротацией на каждый запрос.
         </p>
-        <div style="display:grid;gap:8px">
-          <input class="search-box" id="groq-token-1" placeholder="GROQ_TOKEN" />
-          <input class="search-box" id="groq-token-2" placeholder="GROQ_TOKEN_2" />
-          <input class="search-box" id="groq-token-3" placeholder="GROQ_TOKEN_3" />
+        <label style="font-size:11px;color:var(--text3)">Провайдер (AI_PROVIDER)</label>
+        <select class="search-box" id="llm-ai-provider" style="margin-top:4px;max-width:440px;display:block">
+          <option value="">Авто (по ключам в .env)</option>
+          <option value="anthropic">Claude (Anthropic)</option>
+          <option value="groq">Groq</option>
+          <option value="ollama">Ollama (локально)</option>
+        </select>
+        <div style="margin-top:14px;padding:12px;border:1px solid var(--border);border-radius:10px;background:rgba(0,0,0,.12)">
+          <div style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--text1)">Anthropic</div>
+          <label style="font-size:11px;color:var(--text3)">ANTHROPIC_API_KEY</label>
+          <input class="search-box" type="password" id="anthropic-api-key" placeholder="Новый ключ — вставьте и сохраните; пустое поле не меняет сохранённый" autocomplete="off" style="margin-top:4px" />
+          <div id="anthropic-key-hint" style="font-size:11px;color:var(--text3);margin-top:6px">—</div>
+          <label style="font-size:11px;color:var(--text3);margin-top:10px;display:block">ANTHROPIC_MODEL</label>
+          <input class="search-box" id="llm-anthropic-model" placeholder="например claude-sonnet-4-6" style="margin-top:4px" />
         </div>
-        <button class="btn-save-prices" style="margin-top:10px" onclick="saveGroqTokens()">Сохранить токены</button>
-        <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
-          <div class="section-title" style="margin-bottom:8px">Модель ИИ (.env)</div>
-          <p style="font-size:12px;color:var(--text3);margin:0 0 8px;line-height:1.45">
-            Для облака Groq читается <code>GROQ_MODEL</code> (если пусто — подставится <code>OLLAMA_MODEL</code>, затем значение по умолчанию).
-            Локальный Ollama: в .env задайте <code>AI_PROVIDER=ollama</code> и <code>OLLAMA_URL</code> (не из этой формы).
+        <div style="margin-top:14px;padding:12px;border:1px solid var(--border);border-radius:10px;background:rgba(0,0,0,.12)">
+          <div style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--text1)">Groq — три токена (.env)</div>
+          <p style="font-size:12px;color:var(--text3);margin:0 0 10px;line-height:1.5">
+            <strong>Ротация:</strong> с каждым запросом к ИИ порядок ключей сдвигается (round-robin). При
+            <code>401</code>, <code>403</code>, <code>429</code> или обрыве сети пробуется следующий. Если ключи одного аккаунта Groq, суточная квота (TPD) часто общая.
           </p>
-          <label style="font-size:11px;color:var(--text3)">GROQ_MODEL</label>
+          <div style="display:grid;gap:8px">
+            <input class="search-box" id="groq-token-1" placeholder="GROQ_TOKEN" />
+            <input class="search-box" id="groq-token-2" placeholder="GROQ_TOKEN_2" />
+            <input class="search-box" id="groq-token-3" placeholder="GROQ_TOKEN_3" />
+          </div>
+          <label style="font-size:11px;color:var(--text3);margin-top:12px;display:block">GROQ_MODEL</label>
           <input class="search-box" id="llm-groq-model" placeholder="например llama-3.3-70b-versatile" list="datalist-groq-models" style="margin-top:4px" />
           <datalist id="datalist-groq-models">
             <option value="llama-3.3-70b-versatile"></option>
@@ -767,14 +780,14 @@
             <option value="qwen-qwq-32b"></option>
             <option value="deepseek-r1-distill-qwen-32b"></option>
           </datalist>
-          <label style="font-size:11px;color:var(--text3);margin-top:10px;display:block">OLLAMA_MODEL</label>
-          <input class="search-box" id="llm-ollama-model" placeholder="локальная модель, напр. qwen2.5:3b" style="margin-top:4px" />
-          <div style="font-size:11px;color:var(--text3);margin-top:8px;line-height:1.45">
-            Сейчас: провайдер <code id="llm-resolved-provider">…</code> · модель в запросах <code id="llm-effective-model">…</code>
-            <span id="llm-env-provider-wrap" style="display:none"> · <code>AI_PROVIDER</code>=<code id="llm-env-provider"></code></span>
-          </div>
-          <button class="btn-save-prices" style="margin-top:10px" onclick="saveLlmModels()">Сохранить модели</button>
         </div>
+        <label style="font-size:11px;color:var(--text3);margin-top:12px;display:block">OLLAMA_MODEL</label>
+        <input class="search-box" id="llm-ollama-model" placeholder="локальная модель, напр. qwen2.5:3b" style="margin-top:4px" />
+        <p style="font-size:12px;color:var(--text3);margin:10px 0 0;line-height:1.45">
+          Локальный Ollama: задайте <code>OLLAMA_URL</code> в .env. Сейчас активны: провайдер <code id="llm-resolved-provider">…</code> · модель <code id="llm-effective-model">…</code>
+          <span id="llm-env-provider-wrap" style="display:none"> · в .env <code>AI_PROVIDER</code>=<code id="llm-env-provider"></code></span>
+        </p>
+        <button class="btn-save-prices" style="margin-top:12px" onclick="saveAiSettings()">Сохранить настройки ИИ</button>
         <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
           <div class="section-title" style="margin-bottom:8px">Лимиты Groq по каждому ключу</div>
           <p style="font-size:12px;color:var(--text3);margin:0 0 10px;line-height:1.45">
@@ -1092,6 +1105,17 @@
       var lmRes = await fetch(API + '/api/admin/llm-model', { credentials: 'include' });
       if (lmRes.ok) {
         var m = await lmRes.json();
+        var pr = document.getElementById('llm-ai-provider');
+        if (pr) pr.value = m.aiProviderEnv || '';
+        var am = document.getElementById('llm-anthropic-model');
+        if (am) am.value = m.anthropicModel || '';
+        var hint = document.getElementById('anthropic-key-hint');
+        if (hint) {
+          hint.textContent =
+            m.anthropicKeyConfigured
+              ? 'В .env уже есть ключ: ' + (m.anthropicKeyHint || '***')
+              : 'Ключ Anthropic в .env не задан';
+        }
         var g = document.getElementById('llm-groq-model');
         var o = document.getElementById('llm-ollama-model');
         if (g) g.value = m.groqModel || '';
@@ -1112,31 +1136,41 @@
     } catch (e) {}
   }
 
-  async function saveGroqTokens() {
+  async function saveAiSettings() {
     var token1 = (document.getElementById('groq-token-1') || {}).value || '';
     var token2 = (document.getElementById('groq-token-2') || {}).value || '';
     var token3 = (document.getElementById('groq-token-3') || {}).value || '';
-    try {
-      var res = await apiPostJson(API + '/api/admin/groq-tokens', { token1: token1, token2: token2, token3: token3 });
-      var data = await res.json();
-      if (data.success) showToast('GROQ токены сохранены в .env', 'var(--green)');
-      else showToast('Ошибка: ' + (data.error || '?'), 'var(--red)');
-    } catch (e) {
-      showToast('Ошибка подключения', 'var(--red)');
-    }
-  }
-
-  async function saveLlmModels() {
     var groqModel = (document.getElementById('llm-groq-model') || {}).value || '';
     var ollamaModel = (document.getElementById('llm-ollama-model') || {}).value || '';
+    var anthropicModel = (document.getElementById('llm-anthropic-model') || {}).value || '';
+    var aiProvider = (document.getElementById('llm-ai-provider') || {}).value || '';
+    var anthropicApiKey = (document.getElementById('anthropic-api-key') || {}).value || '';
     try {
-      var res = await apiPostJson(API + '/api/admin/llm-model', { groqModel: groqModel, ollamaModel: ollamaModel });
+      var tokRes = await apiPostJson(API + '/api/admin/groq-tokens', {
+        token1: token1,
+        token2: token2,
+        token3: token3,
+      });
+      var tokData = await tokRes.json();
+      if (!tokRes.ok || !tokData.success) {
+        showToast('Токены Groq: ' + (tokData.error || tokRes.statusText || '?'), 'var(--red)');
+        return;
+      }
+      var res = await apiPostJson(API + '/api/admin/llm-model', {
+        groqModel: groqModel,
+        ollamaModel: ollamaModel,
+        anthropicModel: anthropicModel,
+        aiProvider: aiProvider,
+        anthropicApiKey: anthropicApiKey,
+      });
       var data = await res.json();
-      if (data.success) {
-        showToast('Модели сохранены в .env', 'var(--green)');
+      if (res.ok && data.success) {
+        var pk = document.getElementById('anthropic-api-key');
+        if (pk) pk.value = '';
+        showToast('Настройки ИИ сохранены в .env', 'var(--green)');
         loadGroqTokens();
       } else {
-        showToast('Ошибка: ' + (data.error || '?'), 'var(--red)');
+        showToast('Модели / провайдер: ' + (data.error || res.statusText || '?'), 'var(--red)');
       }
     } catch (e) {
       showToast('Ошибка подключения', 'var(--red)');

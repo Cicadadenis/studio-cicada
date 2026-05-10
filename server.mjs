@@ -3037,6 +3037,8 @@ function resolveAiProvider() {
   const explicit = trimEnvStr(process.env.AI_PROVIDER).toLowerCase();
   if (explicit === 'groq') return 'groq';
   if (explicit === 'ollama') return 'ollama';
+  if (explicit === 'anthropic') return 'anthropic';
+  if (trimEnvStr(process.env.ANTHROPIC_API_KEY)) return 'anthropic';
   if (GROQ_TOKENS.length > 0) return 'groq';
   const ollamaUrl = trimEnvStr(process.env.OLLAMA_URL).toLowerCase();
   if (ollamaUrl.includes('groq.com')) return 'groq';
@@ -3145,6 +3147,13 @@ async function probeGroqKeyLimits(slotName, apiKey) {
 
 function getLlmChatConfig() {
   const provider = resolveAiProvider();
+  if (provider === 'anthropic') {
+    let base = trimEnvStr(process.env.ANTHROPIC_BASE_URL) || 'https://api.anthropic.com/v1';
+    base = base.replace(/\/+$/, '');
+    const model =
+      trimEnvStr(process.env.ANTHROPIC_MODEL) || 'claude-sonnet-4-6';
+    return { provider: 'anthropic', baseUrl: base, model, requireAuth: true };
+  }
   if (provider === 'groq') {
     let base = trimEnvStr(process.env.GROQ_BASE_URL);
     if (!base) {
@@ -3167,14 +3176,34 @@ function getLlmChatConfig() {
   return { provider: 'ollama', baseUrl: base, model, requireAuth: false };
 }
 
+function llmConfigHint() {
+  const p = getLlmChatConfig().provider;
+  if (p === 'anthropic') {
+    return 'ANTHROPIC_API_KEY, ANTHROPIC_MODEL, ANTHROPIC_BASE_URL (при Groq: AI_PROVIDER=groq и GROQ_*; при Ollama: AI_PROVIDER=ollama и OLLAMA_*).';
+  }
+  if (p === 'groq') {
+    return 'GROQ_API_KEY / GROQ_TOKEN, GROQ_BASE_URL, GROQ_MODEL (или OLLAMA_* для локального Ollama; для Anthropic: ANTHROPIC_API_KEY).';
+  }
+  return 'OLLAMA_URL, OLLAMA_MODEL (или GROQ_*, ANTHROPIC_API_KEY при смене AI_PROVIDER).';
+}
+
 function chatCompletionsUrl(baseUrlV1) {
   return `${baseUrlV1.replace(/\/+$/, '')}/chat/completions`;
 }
 
 const _initialLlm = getLlmChatConfig();
 console.log(
-  `[AI] provider=${_initialLlm.provider} model=${_initialLlm.model} url=${chatCompletionsUrl(_initialLlm.baseUrl)} ` +
-    `auth=${_initialLlm.requireAuth ? (GROQ_TOKENS.length > 0 ? `bearer_keys:${GROQ_TOKENS.length}` : 'MISSING_KEY') : 'none'}`,
+  `[AI] provider=${_initialLlm.provider} model=${_initialLlm.model} url=${
+    _initialLlm.provider === 'anthropic'
+      ? `${_initialLlm.baseUrl}/messages`
+      : chatCompletionsUrl(_initialLlm.baseUrl)
+  } auth=${(() => {
+    if (!_initialLlm.requireAuth) return 'none';
+    if (_initialLlm.provider === 'anthropic') {
+      return trimEnvStr(process.env.ANTHROPIC_API_KEY) ? 'anthropic_key' : 'MISSING_KEY';
+    }
+    return GROQ_TOKENS.length > 0 ? `bearer_keys:${GROQ_TOKENS.length}` : 'MISSING_KEY';
+  })()}`,
 );
 
 function updateEnvFileValues(updates) {
@@ -3223,10 +3252,14 @@ app.post('/api/admin/groq-tokens', (req, res) => {
 app.get('/api/admin/llm-model', (req, res) => {
   if (!isAdminAuthed(req)) return res.status(403).json({ error: 'Forbidden' });
   const cfg = getLlmChatConfig();
+  const ak = trimEnvStr(process.env.ANTHROPIC_API_KEY);
   res.json({
     groqModel: trimEnvStr(process.env.GROQ_MODEL),
     ollamaModel: trimEnvStr(process.env.OLLAMA_MODEL),
+    anthropicModel: trimEnvStr(process.env.ANTHROPIC_MODEL),
     aiProviderEnv: trimEnvStr(process.env.AI_PROVIDER),
+    anthropicKeyHint: ak ? maskGroqKeyHint(ak) : '',
+    anthropicKeyConfigured: Boolean(ak),
     resolvedProvider: resolveAiProvider(),
     effectiveModel: cfg.model,
   });
@@ -3234,19 +3267,45 @@ app.get('/api/admin/llm-model', (req, res) => {
 
 app.post('/api/admin/llm-model', (req, res) => {
   if (!isAdminAuthed(req)) return res.status(403).json({ error: 'Forbidden' });
-  const { groqModel, ollamaModel } = req.body || {};
+  const { groqModel, ollamaModel, anthropicModel, anthropicApiKey } = req.body || {};
   const gm = trimEnvStr(groqModel);
   const om = trimEnvStr(ollamaModel);
-  updateEnvFileValues({
+  const am = trimEnvStr(anthropicModel);
+  const apRaw = trimEnvStr(req.body?.aiProvider ?? req.body?.ai_provider).toLowerCase();
+  let providerVal = '';
+  if (!apRaw || apRaw === 'auto') providerVal = '';
+  else if (apRaw === 'anthropic' || apRaw === 'groq' || apRaw === 'ollama') providerVal = apRaw;
+  else {
+    return res.status(400).json({
+      error: 'AI_PROVIDER: допустимо пусто/auto, anthropic, groq или ollama',
+    });
+  }
+  const newAnthropicKey = trimEnvStr(anthropicApiKey);
+
+  const updates = {
     GROQ_MODEL: gm,
     OLLAMA_MODEL: om,
-  });
+    ANTHROPIC_MODEL: am,
+    AI_PROVIDER: providerVal,
+  };
+  if (newAnthropicKey) {
+    updates.ANTHROPIC_API_KEY = newAnthropicKey;
+  }
+  updateEnvFileValues(updates);
+
   process.env.GROQ_MODEL = gm;
   process.env.OLLAMA_MODEL = om;
+  process.env.ANTHROPIC_MODEL = am;
+  process.env.AI_PROVIDER = providerVal;
+  if (newAnthropicKey) process.env.ANTHROPIC_API_KEY = newAnthropicKey;
+
   const cfg = getLlmChatConfig();
   recordAdminAction(req, 'update_llm_model', null, {
     groqModel: gm || '(пусто)',
     ollamaModel: om || '(пусто)',
+    anthropicModel: am || '(пусто)',
+    aiProvider: providerVal || '(auto)',
+    anthropicKeyRotated: Boolean(newAnthropicKey),
     effectiveModel: cfg.model,
     resolvedProvider: resolveAiProvider(),
   });
@@ -3290,7 +3349,161 @@ function parseLlmErrorBody(bodyText) {
   }
 }
 
+function openAiMessagesToAnthropicPayload(messages) {
+  const systemParts = [];
+  const tail = [];
+  for (const m of messages) {
+    const role = m.role;
+    const content = typeof m.content === 'string' ? m.content : String(m.content ?? '');
+    if (role === 'system') {
+      systemParts.push(content);
+    } else if (role === 'user' || role === 'assistant') {
+      tail.push({ role, content });
+    }
+  }
+  const merged = [];
+  for (const m of tail) {
+    const last = merged[merged.length - 1];
+    if (last && last.role === m.role) {
+      last.content = `${last.content}\n\n${m.content}`;
+    } else {
+      merged.push({ role: m.role, content: m.content });
+    }
+  }
+  if (merged.length && merged[0].role === 'assistant') {
+    systemParts.push(
+      'Контекст (ответ ассистента, заданный до первого сообщения пользователя):\n' + merged.shift().content,
+    );
+  }
+  return {
+    system: systemParts.length ? systemParts.join('\n\n') : undefined,
+    messages: merged,
+  };
+}
+
+function anthropicResponseToOpenAiShape(data) {
+  const blocks = data?.content;
+  let text = '';
+  if (Array.isArray(blocks)) {
+    for (const b of blocks) {
+      if (b?.type === 'text' && typeof b.text === 'string') text += b.text;
+    }
+  }
+  return {
+    choices: [{ message: { content: text } }],
+  };
+}
+
+/** Anthropic Messages API — тот же контракт ответа, что у OpenAI chat.completions (choices[0].message.content). */
+async function callAnthropicMessages(messages, options = {}) {
+  const maxTokens = Number(options.max_tokens) > 0 ? Number(options.max_tokens) : 2800;
+  const temperature = typeof options.temperature === 'number' ? options.temperature : 0.25;
+  const cfg = getLlmChatConfig();
+  const apiKey = trimEnvStr(process.env.ANTHROPIC_API_KEY);
+  if (!apiKey) {
+    const e = new Error(
+      'Нет ключа Anthropic: задайте ANTHROPIC_API_KEY в .env (без пробелов вокруг «=») и перезапустите backend.',
+    );
+    e.llmKind = 'API';
+    e.httpStatus = 401;
+    throw e;
+  }
+  const base = cfg.baseUrl.replace(/\/+$/, '');
+  const url = `${base}/messages`;
+  const payload = openAiMessagesToAnthropicPayload(messages);
+  if (!payload.messages.length) {
+    const e = new Error('Пустой диалог для Anthropic (нет сообщений user/assistant).');
+    e.llmKind = 'API';
+    throw e;
+  }
+  const body = {
+    model: cfg.model,
+    max_tokens: maxTokens,
+    temperature,
+    messages: payload.messages,
+  };
+  if (payload.system) body.system = payload.system;
+
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    const cause = err?.cause || err;
+    const code = cause?.code;
+    const e = new Error(
+      code === 'ECONNREFUSED' || code === 'ENOTFOUND'
+        ? `Сервис Anthropic недоступен (${url}). Проверьте сеть и ANTHROPIC_BASE_URL при прокси.`
+        : `Ошибка сети при запросе к ИИ: ${err.message}`,
+    );
+    e.llmKind = 'NETWORK';
+    throw e;
+  }
+
+  const bodyText = await res.text();
+
+  if (res.status === 401 || res.status === 403) {
+    const j = parseLlmErrorBody(bodyText);
+    const apiBrief =
+      j?.error?.message || j?.message || (bodyText && bodyText.slice(0, 300)) || res.statusText;
+    const e = new Error(apiBrief || `HTTP ${res.status}`);
+    e.llmKind = 'API';
+    e.httpStatus = res.status;
+    throw e;
+  }
+
+  if (res.status === 429) {
+    const j = parseLlmErrorBody(bodyText);
+    const raw =
+      j?.error?.message ||
+      j?.message ||
+      'Лимит запросов к Anthropic. Подождите или проверьте план в консоли Anthropic.';
+    const e = new Error(raw);
+    e.llmKind = 'RATE_LIMIT';
+    throw e;
+  }
+
+  if (!res.ok) {
+    const j = parseLlmErrorBody(bodyText);
+    const apiMsg =
+      j?.error?.message || j?.message || (bodyText && bodyText.slice(0, 500)) || res.statusText;
+    console.error('[AI] Anthropic HTTP', res.status, bodyText.slice(0, 800));
+    const e = new Error(apiMsg || `HTTP ${res.status}`);
+    e.llmKind = 'API';
+    e.httpStatus = res.status;
+    throw e;
+  }
+
+  let data;
+  try {
+    data = JSON.parse(bodyText);
+  } catch {
+    const e = new Error('Ответ ИИ не является JSON.');
+    e.llmKind = 'BAD_RESPONSE';
+    throw e;
+  }
+  if (data?.error) {
+    const apiMsg = data.error?.message || JSON.stringify(data.error);
+    const e = new Error(apiMsg);
+    e.llmKind = 'API';
+    throw e;
+  }
+
+  return anthropicResponseToOpenAiShape(data);
+}
+
 async function callGroq(messages, options = {}) {
+  const _route = getLlmChatConfig();
+  if (_route.provider === 'anthropic') {
+    return callAnthropicMessages(messages, options);
+  }
   const maxTokens = Number(options.max_tokens) > 0 ? Number(options.max_tokens) : 2800;
   const temperature = typeof options.temperature === 'number' ? options.temperature : 0.25;
   const cfg = getLlmChatConfig();
@@ -3924,7 +4137,7 @@ app.post('/api/ai-generate', requireUserAuth, async (req, res) => {
         res,
         authUser,
         502,
-        'Провайдер ИИ вернул ошибку. Проверьте GROQ_API_KEY / GROQ_TOKEN, GROQ_BASE_URL, GROQ_MODEL (или OLLAMA_* для локального Ollama) и лимиты. ' +
+        `Провайдер ИИ вернул ошибку. Проверьте ${llmConfigHint()} и лимиты. ` +
           (e.message?.length < 400 ? e.message : ''),
       );
     }
@@ -4004,7 +4217,7 @@ app.post(
       if (kind === 'API' || kind === 'BAD_RESPONSE') {
         return res.status(502).json({
           error:
-            'Провайдер ИИ вернул ошибку. Проверьте GROQ_API_KEY, GROQ_BASE_URL и лимиты. ' +
+            `Провайдер ИИ вернул ошибку. Проверьте ${llmConfigHint()} и лимиты. ` +
             (e.message?.length < 320 ? e.message : ''),
         });
       }

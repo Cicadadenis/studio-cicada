@@ -41,6 +41,10 @@ services:
       EMAIL_FROM: ${EMAIL_FROM:-}
       OLLAMA_URL: ${OLLAMA_URL:-https://api.groq.com/openai}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama-3.3-70b-versatile}
+      AI_PROVIDER: ${AI_PROVIDER:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-6}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
       GROQ_TOKEN: ${GROQ_TOKEN:-}
       GROQ_TOKEN_2: ${GROQ_TOKEN_2:-}
       GROQ_TOKEN_3: ${GROQ_TOKEN_3:-}
