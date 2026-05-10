@@ -1613,25 +1613,33 @@ class Executor:
         """Интерполирует {var} в строке ключа БД."""
         if '{' not in str(key):
             return str(key)
-        from cicada.parser import parse_string_expr
+        template = str(key)
+        token_re = re.compile(r"\{([^{}]+)\}")
+        unresolved = []
 
-        def _fallback_render(raw_template: str) -> str:
-            def repl(match):
-                name = match.group(1).strip()
-                if name == "chat_id" and hasattr(ctx, "chat_id"):
-                    return str(ctx.chat_id)
-                if name == "user_id" and hasattr(ctx, "user_id"):
-                    return str(ctx.user_id)
-                return str(ctx.get(name, ""))
-            return re.sub(r"\{([^}]+)\}", repl, raw_template)
+        def repl(match):
+            name = match.group(1).strip()
+            try:
+                value = _get_var(name, ctx, strict=True)
+            except Exception:
+                unresolved.append(name)
+                return match.group(0)
+            if value is None:
+                unresolved.append(name)
+                return match.group(0)
+            return str(value)
 
-        try:
-            rendered = self._render_parts(parse_string_expr(f'"{key}"'), ctx)
-            if isinstance(rendered, str) and "{" in rendered and "}" in rendered:
-                return _fallback_render(rendered)
-            return rendered
-        except Exception:
-            return _fallback_render(str(key))
+        rendered = token_re.sub(repl, template)
+        if unresolved:
+            raise CicadaRuntimeError(
+                f"Не удалось интерполировать шаблон '{template}': "
+                f"не определены переменные {', '.join(sorted(set(unresolved)))}"
+            )
+        if "{" in rendered or "}" in rendered:
+            raise CicadaRuntimeError(
+                f"Некорректный шаблон '{template}': шаблон должен быть интерполирован полностью"
+            )
+        return rendered
 
     def _exec_save_to_db(self, stmt: SaveToDB, ctx):
         value = self._resolve_val(stmt.value, ctx)

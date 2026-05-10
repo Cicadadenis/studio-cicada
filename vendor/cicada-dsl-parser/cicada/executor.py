@@ -930,28 +930,32 @@ class Executor:
         """Рендерит {переменные} в строковых шаблонах ключей БД."""
         if not isinstance(template, str) or ("{" not in template and "}" not in template):
             return template
-        def _fallback_render(raw_template: str) -> str:
-            # Fallback для служебных переменных, чтобы ключи вроде f_{chat_id}
-            # работали даже если контекст ещё не положил chat_id/user_id в vars.
-            def repl(match):
-                name = match.group(1).strip()
-                if name == "chat_id" and hasattr(ctx, "chat_id"):
-                    return str(ctx.chat_id)
-                if name == "user_id" and hasattr(ctx, "user_id"):
-                    return str(ctx.user_id)
-                return str(ctx.get(name, ""))
+        token_re = re.compile(r"\{([^{}]+)\}")
+        unresolved = []
 
-            import re as _re
-            return _re.sub(r"\{([^}]+)\}", repl, raw_template)
+        def repl(match):
+            name = match.group(1).strip()
+            try:
+                value = _get_var(name, ctx, strict=True)
+            except Exception:
+                unresolved.append(name)
+                return match.group(0)
+            if value is None:
+                unresolved.append(name)
+                return match.group(0)
+            return str(value)
 
-        try:
-            rendered = self._render_parts(parse_string_expr(f'"{template}"'), ctx)
-            # parse_string_expr может вернуть цельной строкой без интерполяции в ряде legacy-кейсов.
-            if isinstance(rendered, str) and "{" in rendered and "}" in rendered:
-                return _fallback_render(rendered)
-            return rendered
-        except Exception:
-            return _fallback_render(template)
+        rendered = token_re.sub(repl, template)
+        if unresolved:
+            raise CicadaRuntimeError(
+                f"Не удалось интерполировать шаблон '{template}': "
+                f"не определены переменные {', '.join(sorted(set(unresolved)))}"
+            )
+        if "{" in rendered or "}" in rendered:
+            raise CicadaRuntimeError(
+                f"Некорректный шаблон '{template}': шаблон должен быть интерполирован полностью"
+            )
+        return rendered
 
     def _resolve_db_key(self, key, ctx) -> str:
         """Вычисляет ключ БД и поддерживает шаблоны вида "f_{chat_id}"."""
