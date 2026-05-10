@@ -107,6 +107,7 @@ export function validateDSL(code, stacks, blockTypes = []) {
   // поэтому «кнопки»/«inline-кнопки» должны иметь «ответ» в той же линейной части
   // текущего обработчика/шага, а не только внутри вложенного условия.
   const pendingTextByIndent = new Map();
+  const bodyStateByIndent = new Map();
   lines.forEach((line, i) => {
     const l = line.trim();
     if (!l || l.startsWith('#')) return;
@@ -115,11 +116,37 @@ export function validateDSL(code, stacks, blockTypes = []) {
     for (const key of [...pendingTextByIndent.keys()]) {
       if (key > indent) pendingTextByIndent.delete(key);
     }
+    for (const key of [...bodyStateByIndent.keys()]) {
+      if (key >= indent) bodyStateByIndent.delete(key);
+    }
+
+    const parentIndent = indent - 4;
+    if (parentIndent >= 0 && !bodyStateByIndent.has(parentIndent)) {
+      bodyStateByIndent.set(parentIndent, { messageCount: 0, buttonsCount: 0, seenButtons: false, afterButtonsOnlyStop: false });
+    }
+
+    const state = parentIndent >= 0 ? bodyStateByIndent.get(parentIndent) : null;
 
     const isKeyboard = /^кнопки(?:\s|:|$)/i.test(l) || /^inline-кнопки:?\s*$/i.test(l);
     if (isKeyboard && !pendingTextByIndent.get(indent)) {
       const label = l.startsWith('inline-кнопки') ? 'Inline-кнопки' : 'Кнопки';
       errors.push(`❌ Строка ${i+1}: блок «${label}» должен идти после блока «Ответ» в том же шаге/обработчике`);
+    }
+    if (isKeyboard && state) {
+      state.buttonsCount += 1;
+      if (state.buttonsCount > 1) {
+        errors.push(`❌ Строка ${i+1}: в одном шаге/обработчике допускается только один блок «Кнопки»`);
+      }
+      if (state.messageCount === 0) {
+        errors.push(`❌ Строка ${i+1}: «Кнопки» должны идти после одного или нескольких блоков «Ответ»`);
+      }
+      state.seenButtons = true;
+      state.afterButtonsOnlyStop = true;
+    } else if (state?.afterButtonsOnlyStop) {
+      const isStop = /^(?:стоп|завершить|завершить сценарий|вернуть)\b/i.test(l);
+      if (!isStop) {
+        errors.push(`❌ Строка ${i+1}: после блока «Кнопки» разрешена только инструкция «стоп»`);
+      }
     }
 
     if (
@@ -128,6 +155,11 @@ export function validateDSL(code, stacks, blockTypes = []) {
       l === 'рандом' ||
       /^отправить\s+файл\s+/i.test(l)
     ) {
+      if (state?.seenButtons) {
+        errors.push(`❌ Строка ${i+1}: блок «Ответ» не может идти после блока «Кнопки»`);
+      } else if (state) {
+        state.messageCount += 1;
+      }
       pendingTextByIndent.set(indent, true);
       return;
     }
@@ -443,4 +475,3 @@ export function validateDSL(code, stacks, blockTypes = []) {
     changedLineIndexes: lint.changedLines,
   };
 }
-
