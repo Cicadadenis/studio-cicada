@@ -1991,8 +1991,108 @@ function buildAutoFixFromValidation(code, validationResult) {
 }
 
 function normalizeDslUI(input) {
-  const fakeValidation = { errors: ['UI_STATE_INVALID'], warnings: [], fixes: [] };
-  return buildAutoFixFromValidation(String(input || ''), fakeValidation).correctedCode;
+  const source = String(input || '');
+  const lines = source.split('\n');
+  const blockBodies = new Map();
+
+  // 1) Собираем блоки для развёртки `использовать <блок>`
+  for (let i = 0; i < lines.length; i += 1) {
+    const t = lines[i].trim();
+    const m = t.match(/^блок\s+([^\s:]+)\s*:\s*$/i);
+    if (!m) continue;
+    const name = m[1];
+    const baseIndent = getLineIndent(lines[i]);
+    const body = [];
+    let j = i + 1;
+    while (j < lines.length) {
+      const nt = lines[j].trim();
+      const ind = getLineIndent(lines[j]);
+      if (nt && ind <= baseIndent) break;
+      body.push(lines[j]);
+      j += 1;
+    }
+    blockBodies.set(name, body);
+  }
+
+  // 2) Разворачиваем `использовать` + нормализуем body
+  const out = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const trim = line.trim();
+    const indent = getLineIndent(line);
+    out.push(line);
+    if (!trim.endsWith(':')) continue;
+
+    const bodyStart = i + 1;
+    let j = bodyStart;
+    while (j < lines.length) {
+      const t = lines[j].trim();
+      const ind = getLineIndent(lines[j]);
+      if (t && ind <= indent) break;
+      j += 1;
+    }
+    const body = lines.slice(bodyStart, j);
+    if (!body.length) continue;
+
+    const logic = [];
+    const answers = [];
+    const stopLines = [];
+    let buttons = null;
+
+    for (let k = 0; k < body.length; k += 1) {
+      const ln = body[k];
+      const t = ln.trim();
+      if (!t) { logic.push(ln); continue; }
+
+      const useMatch = t.match(/^использовать\s+([^\s]+)\s*$/i);
+      if (useMatch && blockBodies.has(useMatch[1])) {
+        const blockLines = blockBodies.get(useMatch[1]) || [];
+        blockLines.forEach((bLine) => {
+          const bt = bLine.trim();
+          if (/^(?:ответ|ответ_md)\s+/i.test(bt)) answers.push(bLine);
+          else if (/^кнопки(?:\s|:|$)/i.test(bt) || /^inline-кнопки:?\s*$/i.test(bt)) {
+            if (!buttons) buttons = [bLine];
+          } else if (/^(?:стоп|завершить|завершить сценарий|вернуть)\b/i.test(bt)) {
+            stopLines.push(bLine);
+          } else logic.push(bLine);
+        });
+        continue;
+      }
+
+      if (/^(?:стоп|завершить|завершить сценарий|вернуть)\b/i.test(t)) { stopLines.push(ln); continue; }
+      if (/^(?:ответ|ответ_md)\s+/i.test(t)) { answers.push(ln); continue; }
+      if (/^кнопки(?:\s|:|$)/i.test(t) || /^inline-кнопки:?\s*$/i.test(t)) {
+        if (!buttons) {
+          const btnChunk = [ln];
+          const lnIndent = getLineIndent(ln);
+          let x = k + 1;
+          while (x < body.length) {
+            const nt = body[x].trim();
+            const nIndent = getLineIndent(body[x]);
+            if (nt && nIndent <= lnIndent) break;
+            btnChunk.push(body[x]);
+            x += 1;
+          }
+          buttons = btnChunk;
+        }
+        continue;
+      }
+      logic.push(ln);
+    }
+
+    if (trim.startsWith('иначе') && answers.length === 0) {
+      answers.push(`${' '.repeat(indent + 4)}ответ "..."`);
+    }
+
+    const normalized = [...logic, ...answers];
+    if (buttons) normalized.push(...buttons);
+    if (buttons || stopLines.length > 0) normalized.push(`${' '.repeat(indent + 4)}стоп`);
+
+    normalized.forEach((ln) => out.push(ln));
+    i = j - 1;
+  }
+
+  return out.join('\n');
 }
 
 function fixDslSchema(input) {
@@ -2110,6 +2210,7 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
       setPreviewCorrected(fixed);
       setHighlightRows(fixed.split('\n').map((_, idx) => idx));
     }
+    setTimeout(() => { check(); }, 0);
   };
 
   const resetPreview = () => {
@@ -2211,7 +2312,7 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
             }}
             title="Нормализовать структуру DSL по UI-правилам"
           >
-            {'🛠 Исправить схему'}
+            {'🛠 Исправить DSL'}
           </button>
         </div>
       </div>
