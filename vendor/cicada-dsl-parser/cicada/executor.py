@@ -930,21 +930,32 @@ class Executor:
         """Рендерит {переменные} в строковых шаблонах ключей БД."""
         if not isinstance(template, str) or ("{" not in template and "}" not in template):
             return template
-        try:
-            return self._render_parts(parse_string_expr(f'"{template}"'), ctx)
-        except Exception:
-            # Fallback для служебных переменных, чтобы ключи вроде f_{chat_id}
-            # работали даже если контекст ещё не положил chat_id/user_id в vars.
-            def repl(match):
-                name = match.group(1).strip()
-                if name == "chat_id" and hasattr(ctx, "chat_id"):
-                    return str(ctx.chat_id)
-                if name == "user_id" and hasattr(ctx, "user_id"):
-                    return str(ctx.user_id)
-                return str(ctx.get(name, ""))
+        token_re = re.compile(r"\{([^{}]+)\}")
+        unresolved = []
 
-            import re as _re
-            return _re.sub(r"\{([^}]+)\}", repl, template)
+        def repl(match):
+            name = match.group(1).strip()
+            try:
+                value = _get_var(name, ctx, strict=True)
+            except Exception:
+                unresolved.append(name)
+                return match.group(0)
+            if value is None:
+                unresolved.append(name)
+                return match.group(0)
+            return str(value)
+
+        rendered = token_re.sub(repl, template)
+        if unresolved:
+            raise CicadaRuntimeError(
+                f"Не удалось интерполировать шаблон '{template}': "
+                f"не определены переменные {', '.join(sorted(set(unresolved)))}"
+            )
+        if "{" in rendered or "}" in rendered:
+            raise CicadaRuntimeError(
+                f"Некорректный шаблон '{template}': шаблон должен быть интерполирован полностью"
+            )
+        return rendered
 
     def _resolve_db_key(self, key, ctx) -> str:
         """Вычисляет ключ БД и поддерживает шаблоны вида "f_{chat_id}"."""
@@ -1884,6 +1895,17 @@ class Executor:
     def _resume_after_wait(self, ctx):
         """После ответа на «спросить»: выполнить хвост текущего шага, затем продолжить FSM."""
         pending = getattr(ctx, "_pending_stmts", None)
+        # Legacy parser может разрезать шаг после `спросить` на отдельный шаг и
+        # оставлять в pending технический EndScenario. В этом случае продолжение
+        # должно идти через FSM, иначе теряем инструкции следующего шага.
+        if (
+            pending
+            and len(pending) == 1
+            and pending[0].__class__.__name__ == "EndScenario"
+            and getattr(ctx, "scenario", None)
+        ):
+            pending = []
+            ctx._pending_stmts = []
         if pending:
             ctx._pending_stmts = []
             self._exec_body(pending, ctx)

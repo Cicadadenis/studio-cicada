@@ -1571,19 +1571,32 @@ class Executor:
         """Подставляет {переменные} в строковых ключах БД (например file_{chat_id})."""
         if not isinstance(template, str) or ("{" not in template and "}" not in template):
             return template
-        try:
-            return self._render_parts(parse_string_expr(f'"{template}"'), ctx)
-        except Exception:
-            # Если парсер/строгий eval не подхватил служебные поля — chat_id/user_id с атрибутов ctx.
-            def repl(match):
-                name = match.group(1).strip()
-                if name == "chat_id" and hasattr(ctx, "chat_id"):
-                    return str(ctx.chat_id)
-                if name == "user_id" and hasattr(ctx, "user_id"):
-                    return str(ctx.user_id)
-                return str(ctx.get(name, ""))
+        token_re = re.compile(r"\{([^{}]+)\}")
+        unresolved = []
 
-            return re.sub(r"\{([^}]+)\}", repl, template)
+        def repl(match):
+            name = match.group(1).strip()
+            try:
+                value = _get_var(name, ctx, strict=True)
+            except Exception:
+                unresolved.append(name)
+                return match.group(0)
+            if value is None:
+                unresolved.append(name)
+                return match.group(0)
+            return str(value)
+
+        rendered = token_re.sub(repl, template)
+        if unresolved:
+            raise CicadaRuntimeError(
+                f"Не удалось интерполировать шаблон '{template}': "
+                f"не определены переменные {', '.join(sorted(set(unresolved)))}"
+            )
+        if "{" in rendered or "}" in rendered:
+            raise CicadaRuntimeError(
+                f"Некорректный шаблон '{template}': шаблон должен быть интерполирован полностью"
+            )
+        return rendered
 
     def _resolve_db_key(self, key, ctx) -> str:
         """Ключ save/get/delete: выражение или строка с шаблоном {…}."""
