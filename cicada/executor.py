@@ -1571,9 +1571,7 @@ class Executor:
         """Подставляет {переменные} в строковых ключах БД (например file_{chat_id})."""
         if not isinstance(template, str) or ("{" not in template and "}" not in template):
             return template
-        try:
-            return self._render_parts(parse_string_expr(f'"{template}"'), ctx)
-        except Exception:
+        def _fallback_render(raw_template: str) -> str:
             # Если парсер/строгий eval не подхватил служебные поля — chat_id/user_id с атрибутов ctx.
             def repl(match):
                 name = match.group(1).strip()
@@ -1583,7 +1581,15 @@ class Executor:
                     return str(ctx.user_id)
                 return str(ctx.get(name, ""))
 
-            return re.sub(r"\{([^}]+)\}", repl, template)
+            return re.sub(r"\{([^}]+)\}", repl, raw_template)
+        try:
+            rendered = self._render_parts(parse_string_expr(f'"{template}"'), ctx)
+            # parse_string_expr может вернуть строку без интерполяции в legacy-кейсах.
+            if isinstance(rendered, str) and "{" in rendered and "}" in rendered:
+                return _fallback_render(rendered)
+            return rendered
+        except Exception:
+            return _fallback_render(template)
 
     def _resolve_db_key(self, key, ctx) -> str:
         """Ключ save/get/delete: выражение или строка с шаблоном {…}."""

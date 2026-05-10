@@ -1614,8 +1614,24 @@ class Executor:
         if '{' not in str(key):
             return str(key)
         from cicada.parser import parse_string_expr
-        parts = parse_string_expr(f'"{key}"')
-        return self._render_parts(parts, ctx)
+
+        def _fallback_render(raw_template: str) -> str:
+            def repl(match):
+                name = match.group(1).strip()
+                if name == "chat_id" and hasattr(ctx, "chat_id"):
+                    return str(ctx.chat_id)
+                if name == "user_id" and hasattr(ctx, "user_id"):
+                    return str(ctx.user_id)
+                return str(ctx.get(name, ""))
+            return re.sub(r"\{([^}]+)\}", repl, raw_template)
+
+        try:
+            rendered = self._render_parts(parse_string_expr(f'"{key}"'), ctx)
+            if isinstance(rendered, str) and "{" in rendered and "}" in rendered:
+                return _fallback_render(rendered)
+            return rendered
+        except Exception:
+            return _fallback_render(str(key))
 
     def _exec_save_to_db(self, stmt: SaveToDB, ctx):
         value = self._resolve_val(stmt.value, ctx)
