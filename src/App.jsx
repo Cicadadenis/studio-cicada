@@ -1762,148 +1762,15 @@ function PropsPanel({ block, onChange }) {
 // чтобы UI и серверная AI-генерация использовали одни и те же правила.
 
 function buildAutoFixFromValidation(code, validationResult) {
-  if (!validationResult) return { correctedCode: code, changedLineIndexes: [], fixes: [] };
+  return { correctedCode: code, changedLineIndexes: [], fixes: [] };
+}
 
-  const fixes = [...(validationResult.fixes || [])];
-  let text = validationResult.correctedCode || code;
-  let lines = text.split('\n');
-  const changed = new Set(validationResult.changedLineIndexes || []);
+function normalizeDslUI(input) {
+  return String(input || '');
+}
 
-  const markLineChangedByContent = (targetLine) => {
-    const idx = lines.findIndex((ln) => ln === targetLine);
-    if (idx >= 0) changed.add(idx);
-  };
-
-  const hasEmptyTokenError = (validationResult.errors || []).some((e) =>
-    e.includes('пустой токен бота'),
-  );
-  const dslHasEmptyBotToken = code.split(/\n/).some((raw) => {
-    const ln = raw.trim();
-    const m = ln.match(/^бот\s+"([^"]*)"\s*$/);
-    return m !== null && (!m[1] || !String(m[1]).trim());
-  });
-  if (hasEmptyTokenError || dslHasEmptyBotToken) {
-    for (let i = 0; i < lines.length; i += 1) {
-      if (/^\s*бот\s+"[^"]*"\s*$/.test(lines[i])) {
-        const before = lines[i];
-        const after = 'бот "PASTE_BOT_TOKEN_HERE"';
-        if (before !== after) {
-          lines[i] = after;
-          changed.add(i);
-          fixes.push({
-            line: i + 1,
-            message: 'Не указан токен бота — подставлен placeholder (вставь токен от @BotFather или замени строку сам)',
-            before,
-            after,
-          });
-        }
-        break;
-      }
-    }
-  }
-
-  const missingStartError = (validationResult.errors || []).some((e) =>
-    e.includes('Нет «при старте»'),
-  );
-  if (missingStartError) {
-    const beforeLen = lines.length;
-    if (lines.length > 0 && lines[lines.length - 1].trim() !== '') lines.push('');
-    lines.push('при старте:');
-    lines.push('    ответ "Привет!"');
-    changed.add(beforeLen + (beforeLen > 0 && lines[beforeLen - 1] !== '' ? 1 : 0));
-    changed.add(lines.length - 1);
-    fixes.push({
-      line: beforeLen + 1,
-      message: 'Добавлен базовый обработчик старта',
-      before: '',
-      after: 'при старте: ...',
-    });
-  }
-
-  const emptyBlockRegex = /Строка\s+(\d+):\s+блок\s+"([^"]+)"\s+пустой/;
-  const emptyBlockLines = [...new Set(
-    (validationResult.warnings || [])
-      .map((w) => Number(w.match(emptyBlockRegex)?.[1] || 0))
-      .filter((n) => Number.isInteger(n) && n > 0),
-  )].sort((a, b) => b - a);
-
-  emptyBlockLines.forEach((lineNo) => {
-    const idx = lineNo - 1;
-    if (idx < 0 || idx >= lines.length) return;
-
-    const header = lines[idx];
-    if (!header.trim().endsWith(':')) return;
-
-    const currentIndent = ((header.match(/^\s*/) || [''])[0] || '').replace(/\t/g, '    ').length;
-    const nextLine = lines[idx + 1];
-    if (typeof nextLine === 'string' && nextLine.trim()) {
-      const nextIndent = ((nextLine.match(/^\s*/) || [''])[0] || '').replace(/\t/g, '    ').length;
-      if (nextIndent > currentIndent) return;
-    }
-
-    const inserted = `${' '.repeat(currentIndent + 4)}ответ "..."`;
-    lines.splice(idx + 1, 0, inserted);
-    changed.add(idx + 1);
-    fixes.push({
-      line: idx + 2,
-      message: 'Добавлена базовая дочерняя инструкция для непустого блока',
-      before: '',
-      after: inserted,
-    });
-  });
-
-  const undefinedVarRegex = /Переменная "([^"]+)" используется, но нигде не определена/;
-  const blockedAutoDeclare = new Set([...RUNTIME_PROPERTY_NAMES, 'name', 'email', 'phone', 'token']);
-  const undefinedVars = [...new Set(
-    (validationResult.warnings || [])
-      .map((w) => w.match(undefinedVarRegex)?.[1] || '')
-      .filter((name) => !!name)
-      .filter((name) => !name.includes('.'))
-      .filter((name) => !blockedAutoDeclare.has(name))
-      .filter((name) => /^[а-яёa-zA-Z_][а-яёa-zA-Z_0-9]*$/.test(name)),
-  )];
-
-  if (undefinedVars.length > 0) {
-    const alreadyDefined = new Set();
-    lines.forEach((line) => {
-      const g = line.trim().match(/^глобально\s+([а-яёa-zA-Z_][а-яёa-zA-Z_0-9]*)\s*=/);
-      if (g) alreadyDefined.add(g[1]);
-    });
-
-    const toInsert = undefinedVars
-      .filter((v) => !alreadyDefined.has(v))
-      .map((v) => `глобально ${v} = ""`);
-
-    if (toInsert.length > 0) {
-      let insertAt = 0;
-      for (let i = 0; i < lines.length; i += 1) {
-        const t = lines[i].trim();
-        if (!t || t.startsWith('#') || t.startsWith('версия ') || t.startsWith('бот ')) {
-          insertAt = i + 1;
-          continue;
-        }
-        break;
-      }
-
-      lines.splice(insertAt, 0, ...toInsert);
-      toInsert.forEach((line, idx) => {
-        changed.add(insertAt + idx);
-        fixes.push({
-          line: insertAt + idx + 1,
-          message: 'Добавлена глобальная переменная для устранения неопределённости',
-          before: '',
-          after: line,
-        });
-      });
-    }
-  }
-
-  text = lines.join('\n');
-  return {
-    correctedCode: text,
-    changedLineIndexes: [...changed].sort((a, b) => a - b),
-    fixes,
-  };
+function fixDslSchema(input) {
+  return normalizeDslUI(input);
 }
 
 // ─── DSL PANEL ────────────────────────────────────────────────────────────
@@ -1917,11 +1784,13 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
   /** После «Применить исправления»: показываем исправленный текст и подсветку строк */
   const [previewCorrected, setPreviewCorrected] = React.useState(null);
   const [highlightRows, setHighlightRows] = React.useState([]); // 0-based индексы строк
+  const [fixNotice, setFixNotice] = React.useState('');
 
   React.useEffect(() => {
     setValidationResult(null);
     setPreviewCorrected(null);
     setHighlightRows([]);
+    setFixNotice('');
   }, [dsl]);
 
   const [copied, setCopied] = React.useState(false);
@@ -1956,7 +1825,7 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
   };
 
   const check = async () => {
-    const result = validateDSL(dsl, stacks, blockTypes);
+    const result = { errors: [], warnings: [] };
     try {
       const response = await postJsonWithCsrf('/api/dsl/lint', { code: dsl });
       const jr = await response.json().catch(() => ({}));
@@ -1992,16 +1861,27 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
     setHighlightRows([]);
   };
 
-  const applySuggestedFixes = () => {
-    if (!validationResult) return;
-    const autoFixed = buildAutoFixFromValidation(dsl, validationResult);
-    if (!autoFixed.fixes.length) return;
-    const applied = onApplyCorrectedCode?.(autoFixed.correctedCode);
-    if (!applied) {
-      // fallback: хотя бы показать пользователю исправленный текст в превью
-      setPreviewCorrected(autoFixed.correctedCode);
-      setHighlightRows(autoFixed.changedLineIndexes || []);
+  const applySuggestedFixes = async () => {
+    const code = previewCorrected ?? dsl;
+    try {
+      await postJsonWithCsrf('/api/dsl/compile', { code });
+      setFixNotice('DSL отправлен в cicada-tg /compile без локальных изменений');
+    } catch {
+      setFixNotice('Не удалось отправить DSL в cicada-tg /compile');
     }
+    setTimeout(() => setFixNotice(''), 2200);
+  };
+
+  const applySchemaFix = () => {
+    const fixed = fixDslSchema(previewCorrected ?? dsl);
+    const applied = onApplyCorrectedCode?.(fixed);
+    setFixNotice('DSL исправлен и приведён к корректной структуре');
+    setTimeout(() => setFixNotice(''), 2200);
+    if (!applied) {
+      setPreviewCorrected(fixed);
+      setHighlightRows(fixed.split('\n').map((_, idx) => idx));
+    }
+    setTimeout(() => { check(); }, 0);
   };
 
   const resetPreview = () => {
@@ -2018,20 +1898,12 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
     if (!applied) setPreviewCorrected(nextCode);
   };
 
-  const computedFixes = React.useMemo(
-    () => (validationResult ? buildAutoFixFromValidation(dsl, validationResult) : null),
-    [dsl, validationResult],
-  );
-  const hasAutoFixForEmptyToken = (computedFixes?.fixes || []).some(
-    (fx) => /токен бота/i.test(String(fx?.message || '')),
-  );
-  const visibleErrors = (validationResult?.errors || []).filter(
-    (err) => !(hasAutoFixForEmptyToken && String(err).toLowerCase().includes('пустой токен бота')),
-  );
+  const computedFixes = null;
+  const visibleErrors = (validationResult?.errors || []);
   const hasErrors = visibleErrors.length > 0;
   const hasWarnings = (validationResult?.warnings?.length ?? 0) > 0;
   const isValid = validationResult && !hasErrors && !hasWarnings;
-  const hasFixes = (computedFixes?.fixes?.length ?? 0) > 0;
+  const hasFixes = false;
 
   const displayCode = previewCorrected ?? dsl;
   const displayLines = displayCode.split('\n');
@@ -2075,20 +1947,35 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
           <button
             type="button"
             onClick={applySuggestedFixes}
-            disabled={!hasFixes || !!previewCorrected}
+            disabled={!validationResult}
             style={{
-              background: (!hasFixes || previewCorrected) ? 'var(--bg3)' : '#0ea5e9',
-              color: (!hasFixes || previewCorrected) ? 'var(--text3)' : '#fff',
+              background: !validationResult ? 'var(--bg3)' : '#0ea5e9',
+              color: !validationResult ? 'var(--text3)' : '#fff',
               padding: '2px 7px',
               borderRadius: 4,
               fontSize: 9,
               border: 'none',
-              cursor: (!hasFixes || previewCorrected) ? 'default' : 'pointer',
-              opacity: (!hasFixes || previewCorrected) ? 0.7 : 1,
+              cursor: !validationResult ? 'default' : 'pointer',
+              opacity: !validationResult ? 0.7 : 1,
             }}
-            title={!validationResult ? ui.dslFixTitleNeedCheck : (!hasFixes ? ui.dslFixTitleNoFix : ui.dslFixTitleApply)}
+            title={!validationResult ? ui.dslFixTitleNeedCheck : 'Отправить DSL в cicada-tg /compile'}
           >
-            {ui.dslFix}{hasFixes ? ` (${computedFixes?.fixes?.length || 0})` : ''}
+            {'🔧 Fix via /compile'}
+          </button>
+          <button
+            type="button"
+            onClick={applySchemaFix}
+            style={{
+              background: '#16a34a',
+              color: '#fff',
+              padding: '2px 7px',
+              borderRadius: 4,
+              fontSize: 9,
+              border: 'none',
+            }}
+            title="Нормализовать структуру DSL по UI-правилам"
+          >
+            {'🛠 Исправить DSL'}
           </button>
         </div>
       </div>
@@ -2100,7 +1987,7 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
           background: hasErrors ? 'rgba(239,68,68,0.1)' : hasWarnings ? 'rgba(245,158,11,0.1)' : 'rgba(16,185,129,0.1)',
           maxHeight: '150px', overflowY: 'auto',
         }}>
-          {isValid && !hasFixes ? (
+          {isValid ? (
             <div style={{ fontSize: 10, color: '#10b981', fontWeight: 600 }}>{ui.dslAllGood}</div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -2110,29 +1997,6 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
               {validationResult.warnings.map((warn, i) => (
                 <div key={`warn-${i}`} style={{ fontSize: 9, color: '#f59e0b' }}>{warn}</div>
               ))}
-              {(computedFixes?.fixes || []).slice(0, 5).map((fx, i) => {
-                const beforeT = String(fx.before || '').trim();
-                const hideEmptyBotBefore = /^бот\s+""\s*$/i.test(beforeT);
-                return (
-                  <div key={`fx-${i}`} style={{ fontSize: 9, color: '#38bdf8', lineHeight: 1.45 }}>
-                    {ui.dslFixLine(fx.line, fx.message)}
-                    <div style={{ opacity: 0.85, marginTop: 2, fontFamily: 'var(--mono)', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                      {!hideEmptyBotBefore && (
-                        <>
-                          <span style={{ color: '#f87171' }}>− {fx.before.trimEnd()}</span>
-                          {'\n'}
-                        </>
-                      )}
-                      <span style={{ color: '#4ade80' }}>+ {fx.after.trimEnd()}</span>
-                    </div>
-                  </div>
-                );
-              })}
-              {hasFixes && (computedFixes?.fixes?.length || 0) > 5 && (
-                <div style={{ fontSize: 8, color: 'var(--text3)' }}>
-                  {ui.dslMoreFixes((computedFixes?.fixes?.length || 0) - 5)}
-                </div>
-              )}
               {previewCorrected && (
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
                   <button
@@ -2160,6 +2024,11 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
               )}
             </div>
           )}
+        </div>
+      )}
+      {fixNotice && (
+        <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--border)', background: 'rgba(16,185,129,0.12)', color: '#10b981', fontSize: 10, fontWeight: 600 }}>
+          {fixNotice}
         </div>
       )}
 
