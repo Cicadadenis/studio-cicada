@@ -12,6 +12,90 @@ function getBlockDef(type, blockTypes = []) {
   return (blockTypes || []).find((b) => b.type === type);
 }
 
+function parseDslBodies(code) {
+  const lines = code.split('\n');
+  const root = { indent: -1, text: '__root__', children: [], line: 0 };
+  const stack = [root];
+  lines.forEach((raw, idx) => {
+    const text = raw.trim();
+    if (!text || text.startsWith('#')) return;
+    const indent = getLineIndent(raw);
+    const node = { indent, text, children: [], line: idx + 1 };
+    while (stack.length > 1 && stack[stack.length - 1].indent >= indent) stack.pop();
+    stack[stack.length - 1].children.push(node);
+    if (text.endsWith(':')) stack.push(node);
+  });
+  return root;
+}
+
+function analyzeBodyUiState(nodes, errors, ctx = { scope: 'body' }) {
+  const state = { messages: [], buttons: null, terminal: false };
+  let seenButtons = false;
+
+  const isMessage = (t) => /^(?:ответ|ответ_md)\s+/i.test(t) || t === 'рандом:' || t === 'рандом';
+  const isButtons = (t) => /^кнопки(?:\s|:|$)/i.test(t) || /^inline-кнопки:?\s*$/i.test(t);
+  const isStop = (t) => /^(?:стоп|завершить|завершить сценарий|вернуть)\b/i.test(t);
+  const isIf = (t) => /^если\b/i.test(t);
+  const isElse = (t) => /^иначе\b/i.test(t);
+
+  const mergeBranchUi = (baseState, ifState, elseState, line) => {
+    const out = { ...baseState };
+    out.messages = [...baseState.messages, ...ifState.messages];
+    if (elseState?.messages?.length) out.messages.push(...elseState.messages);
+
+    const ifButtons = ifState.buttons ? JSON.stringify(ifState.buttons) : null;
+    const elseButtons = elseState?.buttons ? JSON.stringify(elseState.buttons) : null;
+    if (ifButtons && elseButtons && ifButtons !== elseButtons) {
+      errors.push(`❌ Строка ${line}: UI-расхождение в ветках if/else — блок «Кнопки» должен быть детерминированным (одинаковым в обеих ветках)`);
+    }
+    out.buttons = ifState.buttons || elseState?.buttons || out.buttons;
+    out.terminal = Boolean(ifState.terminal && (elseState ? elseState.terminal : true));
+    return out;
+  };
+
+  for (let i = 0; i < nodes.length; i += 1) {
+    const node = nodes[i];
+    const t = node.text;
+
+    if (isMessage(t)) {
+      if (seenButtons) errors.push(`❌ Строка ${node.line}: блок «Ответ» не может идти после блока «Кнопки»`);
+      state.messages.push(t);
+      continue;
+    }
+    if (isButtons(t)) {
+      if (seenButtons || state.buttons) errors.push(`❌ Строка ${node.line}: в одном body допускается только один блок «Кнопки»`);
+      if (state.messages.length === 0) errors.push(`❌ Строка ${node.line}: «Кнопки» должны идти после блока «Ответ»`);
+      seenButtons = true;
+      state.buttons = [t];
+      continue;
+    }
+    if (isStop(t)) {
+      state.terminal = true;
+      continue;
+    }
+    if (seenButtons) {
+      errors.push(`❌ Строка ${node.line}: после блока «Кнопки» разрешена только инструкция «стоп»`);
+    }
+
+    if (isIf(t)) {
+      const ifState = analyzeBodyUiState(node.children || [], errors, { scope: 'if' });
+      let elseState = null;
+      if (nodes[i + 1] && isElse(nodes[i + 1].text)) {
+        elseState = analyzeBodyUiState(nodes[i + 1].children || [], errors, { scope: 'else' });
+        i += 1;
+      }
+      const merged = mergeBranchUi(state, ifState, elseState, node.line);
+      state.messages = merged.messages;
+      state.buttons = merged.buttons;
+      state.terminal = merged.terminal;
+      seenButtons = Boolean(state.buttons);
+      continue;
+    }
+  }
+
+  return state;
+}
+
 export function getLineIndent(rawLine) {
   return (rawLine.replace(/\t/g, '    ').match(/^(\s*)/)?.[1]?.length) ?? 0;
 }
@@ -26,6 +110,15 @@ export function validateDSL(code, stacks, blockTypes = []) {
     const formatted = formatDSLDiagnostic(diag);
     if (diag.severity === 'error') errors.push(formatted);
     else warnings.push(formatted);
+  });
+
+  // AST-like нормализация UI-состояния по телам (через дерево по отступам):
+  // messages[], buttons[], terminal + детерминированное слияние if/else.
+  const dslTree = parseDslBodies(code);
+  dslTree.children.forEach((rootNode) => {
+    if (rootNode.children?.length) {
+      analyzeBodyUiState(rootNode.children, errors, { scope: rootNode.text });
+    }
   });
 
   // ═══════════════════════════════════════════════════════════════════════
