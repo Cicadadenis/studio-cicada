@@ -72,8 +72,7 @@ export default function DSLPanel({ flow, token, schemaVersions }) {
 
   return (
     <div style={{ display:'flex', flexDirection:'column', minHeight:0, flex:1 }}>
-      <div style={{ padding:'6px 10px', display:'flex', alignItems:'center', justifyContent:'space-between', borderBottom:'1px solid var(--border)', gap:4, flexWrap:'wrap' }}>
-        <span style={{ fontSize:10, color:'var(--text3)', textTransform:'uppercase', letterSpacing:'.1em' }}>DSL · .ccd</span>
+      <div style={{ padding:'6px 10px', display:'flex', alignItems:'center', justifyContent:'flex-end', borderBottom:'1px solid var(--border)', gap:4, flexWrap:'wrap' }}>
         <div style={{ display:'flex', gap:5 }}>
           <button
             onClick={handleCheck}

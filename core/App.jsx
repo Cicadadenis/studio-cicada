@@ -1943,11 +1943,8 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
     }}>
       <div style={{
         padding: '5px 10px', display: 'flex', alignItems: 'center',
-        justifyContent: 'space-between', borderBottom: '1px solid var(--border)',
+        justifyContent: 'flex-end', borderBottom: '1px solid var(--border)',
       }}>
-        <span style={{ fontSize: 9, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '.1em' }}>
-          DSL · .ccd
-        </span>
         <div style={{ display: 'flex', gap: 5 }}>
           <button
             onClick={check}
