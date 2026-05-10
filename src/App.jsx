@@ -1905,7 +1905,7 @@ function buildAutoFixFromValidation(code, validationResult) {
   );
 
   if (hasUiOrderErrors) {
-    const normalizeDslUiBody = (input) => {
+    const normalizeDslUI = (input) => {
       const src = String(input || '').split('\n');
       const out = [];
       for (let i = 0; i < src.length; i += 1) {
@@ -1968,7 +1968,7 @@ function buildAutoFixFromValidation(code, validationResult) {
     };
 
     const beforeNormalize = text;
-    const normalizedText = normalizeDslUiBody(text);
+    const normalizedText = normalizeDslUI(text);
     if (normalizedText !== beforeNormalize) {
       text = normalizedText;
       lines = text.split('\n');
@@ -1988,6 +1988,15 @@ function buildAutoFixFromValidation(code, validationResult) {
     changedLineIndexes: [...changed].sort((a, b) => a - b),
     fixes,
   };
+}
+
+function normalizeDslUI(input) {
+  const fakeValidation = { errors: ['UI_STATE_INVALID'], warnings: [], fixes: [] };
+  return buildAutoFixFromValidation(String(input || ''), fakeValidation).correctedCode;
+}
+
+function fixDslSchema(input) {
+  return normalizeDslUI(input);
 }
 
 // ─── DSL PANEL ────────────────────────────────────────────────────────────
@@ -2092,6 +2101,17 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
     }
   };
 
+  const applySchemaFix = () => {
+    const fixed = fixDslSchema(previewCorrected ?? dsl);
+    const applied = onApplyCorrectedCode?.(fixed);
+    setFixNotice('DSL исправлен и приведён к корректной структуре');
+    setTimeout(() => setFixNotice(''), 2200);
+    if (!applied) {
+      setPreviewCorrected(fixed);
+      setHighlightRows(fixed.split('\n').map((_, idx) => idx));
+    }
+  };
+
   const resetPreview = () => {
     setPreviewCorrected(null);
     setHighlightRows([]);
@@ -2177,6 +2197,21 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
             title={!validationResult ? ui.dslFixTitleNeedCheck : (!hasFixes ? ui.dslFixTitleNoFix : ui.dslFixTitleApply)}
           >
             {'🔧 Исправить ошибки DSL'}{hasFixes ? ` (${computedFixes?.fixes?.length || 0})` : ''}
+          </button>
+          <button
+            type="button"
+            onClick={applySchemaFix}
+            style={{
+              background: '#16a34a',
+              color: '#fff',
+              padding: '2px 7px',
+              borderRadius: 4,
+              fontSize: 9,
+              border: 'none',
+            }}
+            title="Нормализовать структуру DSL по UI-правилам"
+          >
+            {'🛠 Исправить схему'}
           </button>
         </div>
       </div>
@@ -3819,7 +3854,7 @@ const EXAMPLE_FULL = `версия "1.0"
       fullTest: EXAMPLE_FULL_TEST,
     };
 
-    const code = examples[exampleName];
+    const code = fixDslSchema(examples[exampleName]);
     if (!code) {
       showToast('Пример не найден', 'error');
       return;
