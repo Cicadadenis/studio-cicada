@@ -999,8 +999,7 @@ class Executor:
             else:
                 ctx.set(ctx.waiting_for, auto_cast(data))
                 ctx.waiting_for = None
-                if ctx.scenario:
-                    self._continue_scenario(ctx)
+                self._resume_after_wait(ctx)
                 # `вернуть` должен влиять только на текущую обработку тела,
                 # но не на after_each middleware.
                 ctx._return_requested = False
@@ -1063,13 +1062,8 @@ class Executor:
                 ctx.set(ctx.waiting_for, ctx.get("файл_id"))
                 self._log("DEBUG", f"[media] → сохранили файл_id в {ctx.waiting_for!r}, pending_stmts={len(ctx._pending_stmts)}", ctx)
                 ctx.waiting_for = None
-                if ctx.scenario:
-                    self._log("DEBUG", f"[media] → _continue_scenario({ctx.scenario!r})", ctx)
-                    self._continue_scenario(ctx)
-                elif getattr(ctx, "_pending_stmts", None):
-                    pending = ctx._pending_stmts
-                    ctx._pending_stmts = []
-                    self._exec_body(pending, ctx)
+                self._log("DEBUG", f"[media] → _resume_after_wait (scenario={ctx.scenario!r})", ctx)
+                self._resume_after_wait(ctx)
                 ctx._return_requested = False
                 self._run_after_each(ctx)
                 return
@@ -1091,12 +1085,7 @@ class Executor:
             else:
                 ctx.set(ctx.waiting_for, auto_cast(text))
                 ctx.waiting_for = None
-                if ctx.scenario:
-                    self._continue_scenario(ctx)
-                elif getattr(ctx, "_pending_stmts", None):
-                    pending = ctx._pending_stmts
-                    ctx._pending_stmts = []
-                    self._exec_body(pending, ctx)
+                self._resume_after_wait(ctx)
                 ctx._return_requested = False
                 self._run_after_each(ctx)
                 return
@@ -1198,7 +1187,7 @@ class Executor:
     #  Body execution
     # ═══════════════════════════════════════════════════════════════
 
-    def _exec_body(self, stmts: list, ctx) -> bool:
+    def _exec_body(self, stmts: list, ctx, start_index: int = 0) -> bool:
         executed = False
 
         self._reset_pending(ctx)
@@ -1206,9 +1195,9 @@ class Executor:
 
         signal = None
         try:
-            # enumerate: stmts.index(stmt) ломается для равных по значению dataclass-узлов
-            # (например два одинаковых «ответ "..."»), из-за чего обрезается хвост шага.
-            for i, stmt in enumerate(stmts):
+            # Индекс явный (не stmts.index): одинаковые узлы в теле не ломают хвост после «спросить».
+            for i in range(start_index, len(stmts)):
+                stmt = stmts[i]
                 result = self._exec(stmt, ctx)
 
                 if isinstance(stmt, If):
@@ -1235,6 +1224,9 @@ class Executor:
                         ctx._pending_stmts = list(prev) + list(tail)
                     else:
                         ctx._pending_stmts = list(tail)
+                    if getattr(ctx, "scenario", None) and getattr(ctx, "current_step_name", None):
+                        ctx._resume_step_name = ctx.current_step_name
+                        ctx._resume_stmt_index = i + 1
                     break
         except (_BreakSignal, _ContinueSignal) as e:
             signal = e
@@ -1558,13 +1550,20 @@ class Executor:
         ctx.current_step_name = getattr(stmt, "name", None)  # для п. 4
         if not hasattr(ctx, "_pending_stmts"):
             ctx._pending_stmts = []
-        self._exec_body(stmt.body, ctx)
+        resume_name = getattr(ctx, "_resume_step_name", None)
+        start_index = getattr(ctx, "_resume_stmt_index", 0) if resume_name == stmt.name else 0
+        if resume_name == stmt.name:
+            ctx._resume_step_name = None
+            ctx._resume_stmt_index = 0
+        self._exec_body(stmt.body, ctx, start_index=start_index)
 
     def _exec_end_scenario(self, stmt: EndScenario, ctx):
         ctx.scenario          = None
         ctx.step              = 0
         ctx.waiting_for       = None
         ctx.current_step_name = None
+        ctx._resume_step_name = None
+        ctx._resume_stmt_index = 0
 
     def _exec_return(self, stmt: ReturnFromScenario, ctx):
         ctx._return_requested = True
@@ -1917,6 +1916,15 @@ class Executor:
     #  FSM — сценарии
     # ═══════════════════════════════════════════════════════════════
 
+    def _resume_after_wait(self, ctx):
+        """После ответа на «спросить» (текст / файл_id): хвост шага, затем продолжение FSM."""
+        pending = getattr(ctx, "_pending_stmts", None)
+        if pending:
+            ctx._pending_stmts = []
+            self._exec_body(pending, ctx)
+        if ctx.scenario and ctx.waiting_for is None:
+            self._continue_scenario(ctx)
+
     def _start_scenario(self, ctx, name: str):
         if name not in self.program.scenarios:
             raise CicadaRuntimeError(f"Сценарий '{name}' не найден")
@@ -1925,32 +1933,33 @@ class Executor:
         ctx.current_step_name = None
         ctx._transition_made  = False
         ctx._pending_stmts    = []
+        ctx._resume_step_name = None
+        ctx._resume_stmt_index = 0
         ctx.set_step_names(self.program.scenarios[name])
         self._continue_scenario(ctx)
 
     def _continue_scenario(self, ctx):
         if not ctx.scenario:
             return
-
-        # Если есть отложенные инструкции текущего шага — выполняем их первыми
-        pending = getattr(ctx, "_pending_stmts", None)
-        if pending:
-            ctx._pending_stmts = []
-            self._exec_body(pending, ctx)
-            # Если снова ждём ввода — останавливаемся
-            if getattr(ctx, "waiting_for", None):
-                return
-            # Иначе продолжаем к следующему шагу
-            if ctx.scenario:
-                self._continue_scenario(ctx)
-            return
-
         steps = self.program.scenarios.get(ctx.scenario, [])
+        resume_name = getattr(ctx, "_resume_step_name", None)
+        if resume_name:
+            for resume_stmt in steps:
+                if isinstance(resume_stmt, Step) and resume_stmt.name == resume_name:
+                    self._exec(resume_stmt, ctx)
+                    if getattr(ctx, "waiting_for", None) or not getattr(ctx, "scenario", None):
+                        return
+                    break
+            else:
+                ctx._resume_step_name = None
+                ctx._resume_stmt_index = 0
         if ctx.step >= len(steps):
             ctx.scenario          = None
             ctx.step              = 0
             ctx.waiting_for       = None
             ctx.current_step_name = None
+            ctx._resume_step_name = None
+            ctx._resume_stmt_index = 0
             return
         stmt = steps[ctx.step]
         ctx.step += 1

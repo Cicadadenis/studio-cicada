@@ -1149,7 +1149,7 @@ class Executor:
     #  Body execution
     # ═══════════════════════════════════════════════════════════════
 
-    def _exec_body(self, stmts: list, ctx) -> bool:
+    def _exec_body(self, stmts: list, ctx, start_index: int = 0) -> bool:
         executed = False
 
         self._reset_pending(ctx)
@@ -1157,7 +1157,8 @@ class Executor:
 
         signal = None
         try:
-            for i, stmt in enumerate(stmts):
+            for i in range(start_index, len(stmts)):
+                stmt = stmts[i]
                 result = self._exec(stmt, ctx)
 
                 if isinstance(stmt, If):
@@ -1183,6 +1184,9 @@ class Executor:
                         ctx._pending_stmts = list(prev) + list(tail)
                     else:
                         ctx._pending_stmts = list(tail)
+                    if getattr(ctx, "scenario", None) and getattr(ctx, "current_step_name", None):
+                        ctx._resume_step_name = ctx.current_step_name
+                        ctx._resume_stmt_index = i + 1
                     break
         except (_BreakSignal, _ContinueSignal) as e:
             signal = e
@@ -1504,13 +1508,20 @@ class Executor:
 
     def _exec_step(self, stmt: Step, ctx):
         ctx.current_step_name = getattr(stmt, "name", None)  # для п. 4
-        self._exec_body(stmt.body, ctx)
+        resume_name = getattr(ctx, "_resume_step_name", None)
+        start_index = getattr(ctx, "_resume_stmt_index", 0) if resume_name == stmt.name else 0
+        if resume_name == stmt.name:
+            ctx._resume_step_name = None
+            ctx._resume_stmt_index = 0
+        self._exec_body(stmt.body, ctx, start_index=start_index)
 
     def _exec_end_scenario(self, stmt: EndScenario, ctx):
         ctx.scenario          = None
         ctx.step              = 0
         ctx.waiting_for       = None
         ctx.current_step_name = None
+        ctx._resume_step_name = None
+        ctx._resume_stmt_index = 0
 
     def _exec_return(self, stmt: ReturnFromScenario, ctx):
         ctx._return_requested = True
@@ -1899,6 +1910,9 @@ class Executor:
         ctx.step              = 0
         ctx.current_step_name = None
         ctx._transition_made  = False
+        ctx._pending_stmts    = []
+        ctx._resume_step_name = None
+        ctx._resume_stmt_index = 0
         ctx.set_step_names(self.program.scenarios[name])
         self._continue_scenario(ctx)
 
@@ -1906,11 +1920,24 @@ class Executor:
         if not ctx.scenario:
             return
         steps = self.program.scenarios.get(ctx.scenario, [])
+        resume_name = getattr(ctx, "_resume_step_name", None)
+        if resume_name:
+            for resume_stmt in steps:
+                if isinstance(resume_stmt, Step) and resume_stmt.name == resume_name:
+                    self._exec(resume_stmt, ctx)
+                    if getattr(ctx, "waiting_for", None) or not getattr(ctx, "scenario", None):
+                        return
+                    break
+            else:
+                ctx._resume_step_name = None
+                ctx._resume_stmt_index = 0
         if ctx.step >= len(steps):
             ctx.scenario          = None
             ctx.step              = 0
             ctx.waiting_for       = None
             ctx.current_step_name = None
+            ctx._resume_step_name = None
+            ctx._resume_stmt_index = 0
             return
         stmt = steps[ctx.step]
         ctx.step += 1

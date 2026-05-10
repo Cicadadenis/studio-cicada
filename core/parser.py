@@ -664,7 +664,11 @@ def parse_expr(raw: str):
 
 
 def _normalize_expr_operators(src: str) -> str:
-    """Приводит JS-операторы логики к DSL-вариантам вне строковых литералов."""
+    """Приводит JS-операторы логики к DSL-вариантам вне строковых литералов.
+
+    Также «÷» (U+00F7) и «×» (U+00D7) вне кавычек → « / » и « * »,
+    иначе после удаления {} токенизатором остаются два идентификатора подряд и parse_expr падает.
+    """
     out = []
     i = 0
     in_single = False
@@ -690,6 +694,14 @@ def _normalize_expr_operators(src: str) -> str:
             if src.startswith("||", i):
                 out.append(" или ")
                 i += 2
+                continue
+            if ch == "\u00f7":  # ÷
+                out.append(" / ")
+                i += 1
+                continue
+            if ch == "\u00d7":  # ×
+                out.append(" * ")
+                i += 1
                 continue
         out.append(ch)
         i += 1

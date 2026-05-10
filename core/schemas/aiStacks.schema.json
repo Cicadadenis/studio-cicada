@@ -1,0 +1,235 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cicada.local/schemas/aiStacks.schema.json",
+  "title": "Cicada Studio AI editor stacks (JSON AST)",
+  "description": "Массив стеков после normalizeAiGeneratedStacks: проверка до generateDSL.",
+  "type": "array",
+  "minItems": 1,
+  "items": {
+    "type": "object",
+    "required": ["id", "x", "y", "blocks"],
+    "additionalProperties": true,
+    "properties": {
+      "id": { "type": "string", "minLength": 1 },
+      "x": { "type": "number" },
+      "y": { "type": "number" },
+      "blocks": {
+        "type": "array",
+        "minItems": 1,
+        "items": { "$ref": "#/definitions/aiBlock" }
+      }
+    }
+  },
+  "definitions": {
+    "aiBlock": {
+      "type": "object",
+      "required": ["type", "props"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "type": {
+          "type": "string",
+          "enum": [
+            "bot",
+            "start",
+            "callback",
+            "scenario",
+            "step",
+            "message",
+            "buttons",
+            "ask",
+            "remember",
+            "get",
+            "condition",
+            "else",
+            "run",
+            "stop"
+          ]
+        },
+        "props": { "type": "object" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "bot" } } },
+          "then": {
+            "properties": {
+              "props": {
+                "type": "object",
+                "required": ["token"],
+                "additionalProperties": true,
+                "properties": {
+                  "token": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "start" } } },
+          "then": { "properties": { "props": { "type": "object" } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "callback" } } },
+          "then": {
+            "properties": {
+              "props": {
+                "type": "object",
+                "required": ["label"],
+                "additionalProperties": true,
+                "properties": {
+                  "label": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "scenario" } } },
+          "then": {
+            "properties": {
+              "props": {
+                "type": "object",
+                "required": ["name"],
+                "additionalProperties": true,
+                "properties": {
+                  "name": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "step" } } },
+          "then": {
+            "properties": {
+              "props": {
+                "type": "object",
+                "required": ["name"],
+                "additionalProperties": true,
+                "properties": {
+                  "name": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "message" } } },
+          "then": {
+            "properties": {
+              "props": {
+                "type": "object",
+                "required": ["text"],
+                "additionalProperties": true,
+                "properties": {
+                  "text": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "buttons" } } },
+          "then": {
+            "properties": {
+              "props": {
+                "type": "object",
+                "required": ["rows"],
+                "additionalProperties": true,
+                "properties": {
+                  "rows": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "ask" } } },
+          "then": {
+            "properties": {
+              "props": {
+                "type": "object",
+                "required": ["question", "varname"],
+                "additionalProperties": true,
+                "properties": {
+                  "question": { "type": "string", "minLength": 1 },
+                  "varname": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "remember" } } },
+          "then": {
+            "properties": {
+              "props": {
+                "type": "object",
+                "required": ["varname", "value"],
+                "additionalProperties": true,
+                "properties": {
+                  "varname": { "type": "string", "minLength": 1 },
+                  "value": {}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "get" } } },
+          "then": {
+            "properties": {
+              "props": {
+                "type": "object",
+                "required": ["key", "varname"],
+                "additionalProperties": true,
+                "properties": {
+                  "key": { "type": "string", "minLength": 1 },
+                  "varname": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "condition" } } },
+          "then": {
+            "properties": {
+              "props": {
+                "type": "object",
+                "required": ["cond"],
+                "additionalProperties": true,
+                "properties": {
+                  "cond": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "else" } } },
+          "then": { "properties": { "props": { "type": "object" } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "run" } } },
+          "then": {
+            "properties": {
+              "props": {
+                "type": "object",
+                "required": ["name"],
+                "additionalProperties": true,
+                "properties": {
+                  "name": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "stop" } } },
+          "then": { "properties": { "props": { "type": "object" } } }
+        }
+      ]
+    }
+  }
+}
