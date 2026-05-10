@@ -1947,12 +1947,16 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
       borderTop: '1px solid var(--border)',
       flex: isMobile ? 1 : '0 0 280px',
       minHeight: 0,
+      minWidth: 0,
     }}>
       <div style={{
         padding: '5px 10px', display: 'flex', alignItems: 'center',
-        justifyContent: 'flex-end', borderBottom: '1px solid var(--border)',
+        justifyContent: 'flex-start', borderBottom: '1px solid var(--border)',
+        minWidth: 0,
+        overflowX: 'auto',
+        WebkitOverflowScrolling: 'touch',
       }}>
-        <div style={{ display: 'flex', gap: 5 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, justifyContent: 'flex-start', width: '100%', minWidth: 0 }}>
           <button
             onClick={check}
             style={{
@@ -5438,7 +5442,7 @@ const EXAMPLE_FULL = `версия "1.0"
       {currentUser ? (
         /* Main layout */
         <>
-        <div style={{ display:'grid', gridTemplateColumns: isMobileView ? '1fr' : '180px 1fr 270px', overflow:'hidden', flex: 1, position: 'relative' }}>
+        <div style={{ display:'grid', gridTemplateColumns: isMobileView ? '1fr' : '180px 1fr minmax(300px, 360px)', overflow:'hidden', flex: 1, position: 'relative' }}>
 
         {/* Sidebar — hidden on mobile unless blocks tab */}
         {(isMobileView && mobileTab !== 'blocks') ? null : (
@@ -5749,6 +5753,9 @@ const EXAMPLE_FULL = `версия "1.0"
           borderLeft: isMobileView ? 'none' : '1px solid rgba(99,102,241,0.2)', overflow:'hidden',
           background: 'linear-gradient(180deg, #0d0920 0%, #080618 100%)',
           boxShadow: isMobileView ? 'none' : '-4px 0 24px rgba(0,0,0,0.4)',
+          minWidth: 0,
+          position: 'relative',
+          zIndex: 2,
           ...(isMobileView ? { gridColumn: '1', position: 'absolute', top: 0, left: 0, right: 0, bottom: 56, zIndex: 10 } : {}),
         }}
         data-tour={!isMobileView ? 'props-panel-desktop' : undefined}>

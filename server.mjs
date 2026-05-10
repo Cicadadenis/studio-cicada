@@ -1426,6 +1426,8 @@ app.post('/api/dsl/lint', (req, res) => {
 });
 
 const PREVIEW_MAX_CODE_BYTES = Number(process.env.DSL_MAX_CODE_BYTES || 100_000);
+/** Лимит одного файла в превью (base64 приходит в JSON) */
+const PREVIEW_MAX_FILE_BYTES = Number(process.env.PREVIEW_MAX_FILE_BYTES || 12 * 1024 * 1024);
 const SAFE_PREVIEW_SESSION = /^[a-zA-Z0-9._:-]{8,128}$/;
 const SAFE_CHAT_ID = /^\d{1,16}$/;
 
@@ -1437,6 +1439,7 @@ app.post('/api/bot/preview', botPreviewRateLimit, async (req, res) => {
     const text = req.body?.text;
     const callbackData = req.body?.callbackData;
     const chatIdRaw = req.body?.chatId;
+    const captionRaw = req.body?.caption;
 
     if (!sessionId || typeof sessionId !== 'string' || !SAFE_PREVIEW_SESSION.test(sessionId)) {
       return res.status(400).json({ error: 'Некорректный sessionId' });
@@ -1454,6 +1457,85 @@ app.post('/api/bot/preview', botPreviewRateLimit, async (req, res) => {
     if (text != null && typeof text !== 'string') {
       return res.status(400).json({ error: 'text должна быть строкой' });
     }
+    if (captionRaw != null && typeof captionRaw !== 'string') {
+      return res.status(400).json({ error: 'caption должна быть строкой' });
+    }
+
+    let documentPayload = null;
+    let photoPayload = null;
+    const rawDoc = req.body?.document;
+    const rawPhoto = req.body?.photo;
+    if (rawDoc != null && rawPhoto != null) {
+      return res.status(400).json({ error: 'Одновременно document и photo не поддерживаются' });
+    }
+    if (rawDoc != null) {
+      if (typeof rawDoc !== 'object' || Array.isArray(rawDoc)) {
+        return res.status(400).json({ error: 'document должен быть объектом' });
+      }
+      const fileName = typeof rawDoc.fileName === 'string' && rawDoc.fileName.trim()
+        ? rawDoc.fileName.trim().slice(0, 512)
+        : 'file.bin';
+      const mimeType =
+        typeof rawDoc.mimeType === 'string' && rawDoc.mimeType.trim()
+          ? rawDoc.mimeType.trim().slice(0, 256)
+          : 'application/octet-stream';
+      const b64 = typeof rawDoc.data === 'string' ? rawDoc.data.trim() : '';
+      if (!b64) {
+        return res.status(400).json({ error: 'document.data обязателен (base64)' });
+      }
+      let buf;
+      try {
+        buf = Buffer.from(b64, 'base64');
+      } catch {
+        return res.status(400).json({ error: 'Некорректный base64 в document.data' });
+      }
+      if (!buf.length) {
+        return res.status(400).json({ error: 'Пустой файл' });
+      }
+      if (buf.length > PREVIEW_MAX_FILE_BYTES) {
+        return res.status(400).json({
+          error: `Файл слишком большой для превью (>${PREVIEW_MAX_FILE_BYTES} байт)`,
+        });
+      }
+      const fileId = `pv_${crypto.createHash('sha256').update(buf).digest('hex').slice(0, 40)}`;
+      documentPayload = {
+        fileName,
+        mimeType,
+        fileId,
+        fileSize: buf.length,
+      };
+    } else if (rawPhoto != null) {
+      if (typeof rawPhoto !== 'object' || Array.isArray(rawPhoto)) {
+        return res.status(400).json({ error: 'photo должен быть объектом' });
+      }
+      const mimeType =
+        typeof rawPhoto.mimeType === 'string' && rawPhoto.mimeType.trim()
+          ? rawPhoto.mimeType.trim().slice(0, 256)
+          : 'image/jpeg';
+      if (!mimeType.startsWith('image/')) {
+        return res.status(400).json({ error: 'photo.mimeType должен быть image/*' });
+      }
+      const b64 = typeof rawPhoto.data === 'string' ? rawPhoto.data.trim() : '';
+      if (!b64) {
+        return res.status(400).json({ error: 'photo.data обязателен (base64)' });
+      }
+      let buf;
+      try {
+        buf = Buffer.from(b64, 'base64');
+      } catch {
+        return res.status(400).json({ error: 'Некорректный base64 в photo.data' });
+      }
+      if (!buf.length) {
+        return res.status(400).json({ error: 'Пустой файл' });
+      }
+      if (buf.length > PREVIEW_MAX_FILE_BYTES) {
+        return res.status(400).json({
+          error: `Файл слишком большой для превью (>${PREVIEW_MAX_FILE_BYTES} байт)`,
+        });
+      }
+      const fileId = `pvimg_${crypto.createHash('sha256').update(buf).digest('hex').slice(0, 40)}`;
+      photoPayload = { mimeType, fileId, fileSize: buf.length };
+    }
 
     let chatId = '990000001';
     if (chatIdRaw != null && String(chatIdRaw).trim() !== '') {
@@ -1464,6 +1546,9 @@ app.post('/api/bot/preview', botPreviewRateLimit, async (req, res) => {
       chatId = s;
     }
 
+    const cap =
+      captionRaw != null && String(captionRaw).length > 0 ? String(captionRaw) : '';
+
     const out = await sendPreviewRequest({
       sessionId,
       code,
@@ -1471,6 +1556,9 @@ app.post('/api/bot/preview', botPreviewRateLimit, async (req, res) => {
       text: text != null ? text : '',
       callbackData:
         callbackData != null && String(callbackData).length > 0 ? String(callbackData) : null,
+      caption: cap,
+      document: documentPayload,
+      photo: photoPayload,
     });
 
     return res.json(out);
@@ -3731,6 +3819,7 @@ Reply-ряд: кнопки "A" "B". В JSON: "rows":"A, B" (подписи че�
 
 КНОПКИ + ОБРАБОТЧИКИ:
   s0: bot | s1: start→message→buttons→stop | s2: callback→message→stop | … или callback→run→(без stop)
+  После buttons в одном теле нельзя сразу новый message/ask — только stop или run/condition/remember/… (как в few-shot: callback→message→run).
 
 СЦЕНАРИЙ, НЕСКОЛЬКО ВОПРОСОВ:
   start/callback → run(имя) БЕЗ stop | scenario(имя) → step → ask → step → ask → … → message/condition → stop

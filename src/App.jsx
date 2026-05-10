@@ -1,4 +1,5 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import cicadaLogo from './cicada-logo_1778117072446.jpeg';
 import { ModuleLibraryButton, ModuleLibraryModal } from './ModuleLibrary';
 import InstructionsModal from './InstructionsModal.jsx';
@@ -1766,14 +1767,6 @@ function buildAutoFixFromValidation(code, validationResult) {
 }
 
 function normalizeDslUI(input) {
-  return String(input || '');
-}
-
-function fixDslSchema(input) {
-  return normalizeDslUI(input);
-}
-
-function normalizeDslUI(input) {
   const source = String(input || '');
   const lines = source.split('\n');
   const blockBodies = new Map();
@@ -1993,18 +1986,6 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
     setTimeout(() => { check(); }, 0);
   };
 
-  const applySchemaFix = () => {
-    const fixed = fixDslSchema(previewCorrected ?? dsl);
-    const applied = onApplyCorrectedCode?.(fixed);
-    setFixNotice('DSL исправлен и приведён к корректной структуре');
-    setTimeout(() => setFixNotice(''), 2200);
-    if (!applied) {
-      setPreviewCorrected(fixed);
-      setHighlightRows(fixed.split('\n').map((_, idx) => idx));
-    }
-    setTimeout(() => { check(); }, 0);
-  };
-
   const resetPreview = () => {
     setPreviewCorrected(null);
     setHighlightRows([]);
@@ -2035,35 +2016,75 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
       borderTop: '1px solid var(--border)',
       flex: isMobile ? 1 : '0 0 280px',
       minHeight: 0,
+      minWidth: 0,
     }}>
       <div style={{
         padding: '5px 10px', display: 'flex', alignItems: 'center',
-        justifyContent: 'flex-end', borderBottom: '1px solid var(--border)',
+        justifyContent: 'flex-start', borderBottom: '1px solid var(--border)',
+        minWidth: 0,
+        overflowX: 'auto',
+        WebkitOverflowScrolling: 'touch',
       }}>
-        <div style={{ display: 'flex', gap: 5 }}>
+        <div style={{
+          display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'flex-start',
+          width: '100%', minWidth: 0,
+        }}>
           <button
+            type="button"
             onClick={check}
             style={{
+              padding: '4px 10px',
+              borderRadius: 6,
+              fontSize: 10,
+              fontWeight: 600,
+              border: '1px solid transparent',
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+              lineHeight: 1.2,
               background: validationResult
                 ? (hasErrors ? '#ef4444' : hasWarnings ? '#f59e0b' : '#10b981')
                 : 'var(--bg3)',
               color: validationResult ? '#fff' : 'var(--text3)',
-              padding: '2px 7px', borderRadius: 4, fontSize: 9, border: 'none'
             }}
-            onMouseEnter={e => { if (!validationResult) e.target.style.background = 'var(--accent)'; }}
-            onMouseLeave={e => { if (!validationResult) e.target.style.background = 'var(--bg3)'; }}
+            onMouseEnter={e => { if (!validationResult) e.currentTarget.style.background = 'var(--accent)'; }}
+            onMouseLeave={e => { if (!validationResult) e.currentTarget.style.background = 'var(--bg3)'; }}
           >{ui.dslCheck}</button>
           <button
+            type="button"
             onClick={copy}
-            style={{ background: copied ? 'var(--accent)' : 'transparent', color: copied ? '#fff' : 'var(--text3)', padding: '2px 7px', border: `1px solid ${copied ? 'var(--accent)' : 'var(--border2)'}`, borderRadius: 4, fontSize: 9, transition: 'all 0.2s' }}
+            style={{
+              padding: '4px 10px',
+              borderRadius: 6,
+              fontSize: 10,
+              fontWeight: 600,
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+              lineHeight: 1.2,
+              background: copied ? 'var(--accent)' : 'transparent',
+              color: copied ? '#fff' : 'var(--text3)',
+              border: `1px solid ${copied ? 'var(--accent)' : 'var(--border2)'}`,
+              transition: 'background 0.15s, color 0.15s, border-color 0.15s',
+            }}
             onMouseEnter={e => { if (!copied) { e.currentTarget.style.color = 'var(--text)'; } }}
             onMouseLeave={e => { if (!copied) { e.currentTarget.style.color = 'var(--text3)'; } }}
           >{copied ? ui.dslCopied : ui.dslCopy}</button>
           <button
+            type="button"
             onClick={download}
-            style={{ background: 'var(--accent)', color: '#fff', padding: '2px 7px', borderRadius: 4, fontSize: 9, border: 'none' }}
-            onMouseEnter={e => e.target.style.background = 'var(--accent2)'}
-            onMouseLeave={e => e.target.style.background = 'var(--accent)'}
+            style={{
+              padding: '4px 10px',
+              borderRadius: 6,
+              fontSize: 10,
+              fontWeight: 600,
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+              lineHeight: 1.2,
+              background: 'var(--accent)',
+              color: '#fff',
+              border: '1px solid var(--accent)',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent2)'; e.currentTarget.style.borderColor = 'var(--accent2)'; }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'var(--accent)'; e.currentTarget.style.borderColor = 'var(--accent)'; }}
           >{ui.dslDownload}</button>
           <button
             type="button"
@@ -2087,14 +2108,20 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
             type="button"
             onClick={applySchemaFix}
             style={{
+              padding: '4px 10px',
+              borderRadius: 6,
+              fontSize: 10,
+              fontWeight: 600,
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+              lineHeight: 1.2,
               background: '#16a34a',
               color: '#fff',
-              padding: '2px 7px',
-              borderRadius: 4,
-              fontSize: 9,
-              border: 'none',
+              border: '1px solid #15803d',
             }}
             title="Нормализовать структуру DSL по UI-правилам"
+            onMouseEnter={e => { e.currentTarget.style.background = '#15803d'; }}
+            onMouseLeave={e => { e.currentTarget.style.background = '#16a34a'; }}
           >
             {'🛠 Исправить DSL'}
           </button>
@@ -2231,6 +2258,19 @@ function getOrCreatePreviewSessionId() {
   }
 }
 
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => {
+      const s = String(r.result || '');
+      const i = s.indexOf(',');
+      resolve(i >= 0 ? s.slice(i + 1) : s);
+    };
+    r.onerror = () => reject(r.error || new Error('read failed'));
+    r.readAsDataURL(file);
+  });
+}
+
 function previewOutboundToEntries(outbound) {
   const skip = new Set(['answer_callback', 'set_commands']);
   const entries = [];
@@ -2267,9 +2307,17 @@ function previewOutboundToEntries(outbound) {
   return entries;
 }
 
-function OnboardingTour({ steps, stepIndex, onNext, onPrev, onSkip }) {
+function OnboardingTour({ steps, stepIndex, onNext, onPrev, onSkip, labels }) {
   const step = steps[stepIndex];
   const [targetRect, setTargetRect] = useState(null);
+  const L = labels || {};
+  const stepOf = typeof L.tourStepOf === 'function'
+    ? L.tourStepOf(stepIndex + 1, steps.length)
+    : `Шаг ${stepIndex + 1} из ${steps.length}`;
+  const skipLabel = L.tourSkip || 'Пропустить';
+  const backLabel = L.tourBack || 'Назад';
+  const nextLabel = L.tourNext || 'Далее';
+  const doneLabel = L.tourDone || 'Готово';
 
   useEffect(() => {
     if (!step?.selector) {
@@ -2347,7 +2395,7 @@ function OnboardingTour({ steps, stepIndex, onNext, onPrev, onSkip }) {
         }}
       >
         <div style={{ fontSize: 10, color: 'rgba(249,115,22,0.8)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.09em', marginBottom: 6 }}>
-          Шаг {stepIndex + 1} из {steps.length}
+          {stepOf}
         </div>
         <div style={{ fontFamily: 'Syne,system-ui', fontSize: 15, fontWeight: 700, color: '#fff', marginBottom: 7 }}>
           {step.title}
@@ -2360,7 +2408,7 @@ function OnboardingTour({ steps, stepIndex, onNext, onPrev, onSkip }) {
             onClick={onSkip}
             style={{ background: 'transparent', color: 'rgba(255,255,255,0.55)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 8, padding: '7px 10px', fontSize: 12, cursor: 'pointer' }}
           >
-            Пропустить
+            {skipLabel}
           </button>
           <div style={{ display: 'flex', gap: 8 }}>
             <button
@@ -2368,13 +2416,13 @@ function OnboardingTour({ steps, stepIndex, onNext, onPrev, onSkip }) {
               disabled={stepIndex === 0}
               style={{ background: 'rgba(255,255,255,0.05)', color: stepIndex === 0 ? 'rgba(255,255,255,0.28)' : 'rgba(255,255,255,0.8)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 8, padding: '7px 10px', fontSize: 12, cursor: stepIndex === 0 ? 'not-allowed' : 'pointer' }}
             >
-              Назад
+              {backLabel}
             </button>
             <button
               onClick={onNext}
               style={{ background: 'linear-gradient(135deg,#f97316,#dc2626)', color: '#fff', border: 'none', borderRadius: 8, padding: '7px 12px', fontSize: 12, fontWeight: 700, cursor: 'pointer', boxShadow: '0 4px 14px rgba(249,115,22,0.4)' }}
             >
-              {isLast ? 'Готово' : 'Далее'}
+              {isLast ? doneLabel : nextLabel}
             </button>
           </div>
         </div>
@@ -2382,6 +2430,13 @@ function OnboardingTour({ steps, stepIndex, onNext, onPrev, onSkip }) {
     </div>
   );
 }
+
+/** Этапы для оверлея во время AI-генерации схемы бота */
+const AI_GEN_LOADING_STEPS = [
+  'Анализируем сценарий…',
+  'Подбираем блоки и переходы…',
+  'Формируем схему для редактора…',
+];
 
 // ─── MAIN APP ─────────────────────────────────────────────────────────────
 export default function App() {
@@ -2415,10 +2470,14 @@ export default function App() {
   const [userProjects, setUserProjects] = useState([]);
   const [projectName, setProjectName] = useState('');
   const [showExamples, setShowExamples] = useState(false);
+  /** Якорь кнопки «Примеры» — меню рендерим в portal, иначе перекрывается холстом / stacking context шапки */
+  const examplesToggleRef = useRef(null);
+  const [examplesMenuRect, setExamplesMenuRect] = useState(null);
   const [showLibrary, setShowLibrary] = useState(false);
   const [showAIModal, setShowAIModal] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
+  const [aiLoadingStep, setAiLoadingStep] = useState(0);
   const [aiError, setAiError] = useState('');
   const [showPythonConvertModal, setShowPythonConvertModal] = useState(false);
   const [pythonConvertSource, setPythonConvertSource] = useState('');
@@ -2453,83 +2512,166 @@ export default function App() {
   const [tourActive, setTourActive] = useState(false);
   const [tourStep, setTourStep] = useState(0);
 
+  useLayoutEffect(() => {
+    if (!showExamples) {
+      setExamplesMenuRect(null);
+      return;
+    }
+    const el = examplesToggleRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setExamplesMenuRect({
+      top: r.bottom + 6,
+      left: Math.max(8, r.left),
+      minWidth: Math.max(isMobileView ? 200 : 190, r.width),
+    });
+  }, [showExamples, isMobileView]);
+
   const onboardingKey = currentUser
-    ? `cicada_onboarding_v1_${currentUser.id}_${isMobileView ? 'mobile' : 'desktop'}`
+    ? `cicada_onboarding_v2_${currentUser.id}_${isMobileView ? 'mobile' : 'desktop'}`
     : null;
 
   const onboardingSteps = React.useMemo(() => {
+    const ui = builderUi;
     if (isMobileView) {
-      const steps = [
+      const m = [
+        {
+          selector: '[data-tour="mobile-examples"]',
+          title: ui.tourMobileExamplesTitle,
+          text: ui.tourMobileExamplesBody,
+        },
+        {
+          selector: '[data-tour="mobile-ai"]',
+          title: ui.tourMobileAiTitle,
+          text: ui.tourMobileAiBody,
+        },
+        {
+          selector: '[data-tour="mobile-more"]',
+          title: ui.tourMobileMoreTitle,
+          text: ui.tourMobileMoreBody,
+        },
         {
           selector: '[data-tour="mobile-tab-blocks"]',
-          title: 'Панель блоков',
-          text: 'Откройте вкладку «Блоки», чтобы добавлять элементы сценария бота.',
+          title: ui.tourMobileBlocksTitle,
+          text: ui.tourMobileBlocksBody,
           onEnter: () => setMobileTab('blocks'),
         },
         {
           selector: '[data-tour="mobile-tab-canvas"]',
-          title: 'Холст',
-          text: 'На холсте вы соединяете блоки и собираете логику бота.',
+          title: ui.tourMobileCanvasTitle,
+          text: ui.tourMobileCanvasBody,
           onEnter: () => setMobileTab('canvas'),
         },
         {
           selector: '[data-tour="mobile-tab-props"]',
-          title: 'Свойства',
-          text: 'Здесь настраиваются параметры выбранного блока.',
+          title: ui.tourMobilePropsTitle,
+          text: ui.tourMobilePropsBody,
           onEnter: () => setMobileTab('props'),
         },
+        ...(canSeeCode
+          ? [{
+            selector: '[data-tour="mobile-tab-dsl"]',
+            title: ui.tourMobileDslTitle,
+            text: ui.tourMobileDslBody,
+            onEnter: () => setMobileTab('dsl'),
+          }]
+          : []),
         {
           selector: '[data-tour="mobile-run"]',
-          title: 'Запуск',
-          text: 'Кнопкой запуска можно стартовать и останавливать бота.',
+          title: ui.tourRunTitle,
+          text: ui.tourRunBody,
           onEnter: () => setMobileTab('canvas'),
         },
         {
           selector: '[data-tour="profile-button"]',
-          title: 'Профиль',
-          text: 'В профиле находятся проекты, подписка, настройки и поддержка.',
+          title: ui.tourProfileTitle,
+          text: ui.tourProfileBody,
         },
       ];
-      return steps;
+      return m;
     }
-    return [
+
+    const steps = [
       {
         selector: '[data-tour="top-examples-desktop"]',
-        title: 'Примеры',
-        text: 'Быстрый способ загрузить готовый пример и посмотреть, как устроены сценарии.',
+        title: ui.tourExamplesTitle,
+        text: ui.tourExamplesBody,
       },
       {
-        selector: '[data-tour="save-cloud-desktop"]',
-        title: 'Сохранение в облако',
-        text: 'Сохраняйте текущий проект в аккаунт, чтобы открыть его позже с любого устройства.',
+        selector: '[data-tour="top-library-desktop"]',
+        title: ui.tourLibraryTitle,
+        text: ui.tourLibraryBody,
+      },
+      {
+        selector: '[data-tour="top-ai-desktop"]',
+        title: ui.tourAiTitle,
+        text: ui.tourAiBody,
+      },
+      ...(isAdmin
+        ? [{
+          selector: '[data-tour="top-python-desktop"]',
+          title: ui.tourPythonTitle,
+          text: ui.tourPythonBody,
+        }]
+        : []),
+      {
+        selector: '[data-tour="top-clear-desktop"]',
+        title: ui.tourClearTitle,
+        text: ui.tourClearBody,
+      },
+      {
+        selector: '[data-tour="top-files-desktop"]',
+        title: ui.tourFilesTitle,
+        text: ui.tourFilesBody,
+      },
+      {
+        selector: '[data-tour="bot-preview"]',
+        title: ui.tourPreviewTitle,
+        text: ui.tourPreviewBody,
+      },
+      {
+        selector: '[data-tour="top-debug-desktop"]',
+        title: ui.tourDebugTitle,
+        text: ui.tourDebugBody,
       },
       {
         selector: '[data-tour="run-desktop"]',
-        title: 'Старт и стоп',
-        text: 'Запускайте бота и останавливайте его прямо из верхней панели.',
+        title: ui.tourRunTitle,
+        text: ui.tourRunBody,
       },
       {
-        selector: '[data-tour="sidebar-desktop"]',
-        title: 'Блоки',
-        text: 'Слева список блоков, из которых собирается логика бота.',
-      },
-      {
-        selector: '[data-tour="canvas-area"]',
-        title: 'Рабочий холст',
-        text: 'Центральная зона, где редактируется структура вашего бота.',
-      },
-      {
-        selector: '[data-tour="props-panel-desktop"]',
-        title: 'Свойства и код',
-        text: 'Справа находятся свойства выбранного блока и DSL-код.',
+        selector: '[data-tour="top-premium-desktop"]',
+        title: ui.tourPremiumTitle,
+        text: ui.tourPremiumBody,
       },
       {
         selector: '[data-tour="profile-button"]',
-        title: 'Профиль',
-        text: 'Здесь доступны аккаунт, проекты, подписка и поддержка.',
+        title: ui.tourProfileTitle,
+        text: ui.tourProfileBody,
+      },
+      {
+        selector: '[data-tour="top-help-desktop"]',
+        title: ui.tourHelpTitle,
+        text: ui.tourHelpBody,
+      },
+      {
+        selector: '[data-tour="sidebar-desktop"]',
+        title: ui.tourSidebarTitle,
+        text: ui.tourSidebarBody,
+      },
+      {
+        selector: '[data-tour="canvas-area"]',
+        title: ui.tourCanvasTitle,
+        text: ui.tourCanvasBody,
+      },
+      {
+        selector: '[data-tour="props-panel-desktop"]',
+        title: ui.tourPropsTitle,
+        text: ui.tourPropsBody,
       },
     ];
-  }, [isMobileView]);
+    return steps;
+  }, [isMobileView, isAdmin, canSeeCode, builderUi]);
 
   // Если триал-юзер оказался на вкладке dsl — сбросить
   useEffect(() => {
@@ -2637,6 +2779,18 @@ export default function App() {
     setAiPrompt('');
     setAiError('');
   }, [canUseAiGenerator, showToast]);
+
+  useEffect(() => {
+    if (!aiLoading) {
+      setAiLoadingStep(0);
+      return undefined;
+    }
+    setAiLoadingStep(0);
+    const id = setInterval(() => {
+      setAiLoadingStep((n) => (n + 1) % AI_GEN_LOADING_STEPS.length);
+    }, 2100);
+    return () => clearInterval(id);
+  }, [aiLoading]);
 
   const selectedBlock = React.useMemo(() => {
     if (!selectedBlockId) return null;
@@ -3716,33 +3870,38 @@ const EXAMPLE_FULL = `версия "1.0"
       fullTest: EXAMPLE_FULL_TEST,
     };
 
-    const code = fixDslSchema(examples[exampleName]);
-    if (!code) {
+    const raw = examples[exampleName];
+    if (!raw) {
       showToast('Пример не найден', 'error');
       return;
     }
 
-    const parsedStacks = parseDSL(code);
-    if (parsedStacks) {
-      const userTestToken = (currentUser?.test_token || '').trim();
-      const normalizedStacks = userTestToken
-        ? parsedStacks.map((s) => ({
-            ...s,
-            blocks: (s.blocks || []).map((b) =>
-              b.type === 'bot'
-                ? { ...b, props: { ...(b.props || {}), token: userTestToken } }
-                : b,
-            ),
-          }))
-        : parsedStacks;
-      seq = 1;
-      setStacks(normalizedStacks);
-      setSelectedBlockId(null);
-      setSelectedStackId(null);
-      setProjectName(exampleName === 'echo' ? 'Эхо Бот' : exampleName === 'shop' ? 'Магазин Бот' : exampleName === 'fullTest' ? 'Full Test' : 'Все Функции');
-    } else {
-      showToast('Не удалось разобрать пример', 'error');
+    let parsedStacks = parseDSL(raw);
+    if (!parsedStacks) {
+      const normalized = fixDslSchema(raw);
+      parsedStacks = parseDSL(normalized);
     }
+    if (!parsedStacks) {
+      showToast('Не удалось разобрать пример', 'error');
+      return;
+    }
+
+    const userTestToken = (currentUser?.test_token || '').trim();
+    const normalizedStacks = userTestToken
+      ? parsedStacks.map((s) => ({
+          ...s,
+          blocks: (s.blocks || []).map((b) =>
+            b.type === 'bot'
+              ? { ...b, props: { ...(b.props || {}), token: userTestToken } }
+              : b,
+          ),
+        }))
+      : parsedStacks;
+    seq = 1;
+    setStacks(normalizedStacks);
+    setSelectedBlockId(null);
+    setSelectedStackId(null);
+    setProjectName(exampleName === 'echo' ? 'Эхо Бот' : exampleName === 'shop' ? 'Магазин Бот' : exampleName === 'fullTest' ? 'Full Test' : 'Все Функции');
   }, [parseDSL, showToast, currentUser]);
 
   const startFirstWowFlow = useCallback(() => {
@@ -3840,10 +3999,18 @@ const EXAMPLE_FULL = `версия "1.0"
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewErr, setPreviewErr] = useState(null);
   const previewScrollRef = useRef(null);
+  const previewPanelRef = useRef(null);
+  const previewFileInputRef = useRef(null);
+  /** null — позиция по умолчанию (правый нижний угол); иначе фиксированные left/top в px */
+  const [previewPanelPos, setPreviewPanelPos] = useState(null);
+  const previewDragRef = useRef(null);
 
   const [botDebugOpen, setBotDebugOpen] = useState(false);
   const [botDebugLogs, setBotDebugLogs] = useState('');
   const botDebugScrollRef = useRef(null);
+  const botDebugPanelRef = useRef(null);
+  const [botDebugPanelPos, setBotDebugPanelPos] = useState(null);
+  const botDebugDragRef = useRef(null);
   const prevBotRunningRef = useRef(isBotRunning);
   useEffect(() => {
     if (prevBotRunningRef.current && !isBotRunning) setBotDebugOpen(false);
@@ -4039,13 +4206,29 @@ const EXAMPLE_FULL = `версия "1.0"
   }, [stacks]);
 
   const runPreviewStep = useCallback(
-    async ({ text = '', callbackData = null }) => {
+    async ({ text = '', callbackData = null, caption = '', document = null, photo = null }) => {
       setPreviewBusy(true);
       setPreviewErr(null);
       try {
         const code = generateBotDSL();
         const sessionId = getOrCreatePreviewSessionId();
         const token = await getCsrfTokenForRequest();
+        const body = {
+          sessionId,
+          code,
+          chatId: 990000001,
+          text: text != null ? String(text) : '',
+          callbackData: callbackData != null && String(callbackData).length > 0 ? String(callbackData) : null,
+        };
+        if (caption != null && String(caption).trim()) {
+          body.caption = String(caption).trim();
+        }
+        if (document && typeof document === 'object') {
+          body.document = document;
+        }
+        if (photo && typeof photo === 'object') {
+          body.photo = photo;
+        }
         const res = await fetch('/api/bot/preview', {
           method: 'POST',
           credentials: 'include',
@@ -4053,13 +4236,7 @@ const EXAMPLE_FULL = `версия "1.0"
             'Content-Type': 'application/json',
             'x-csrf-token': token,
           },
-          body: JSON.stringify({
-            sessionId,
-            code,
-            chatId: 990000001,
-            text: text != null ? String(text) : '',
-            callbackData: callbackData != null && String(callbackData).length > 0 ? String(callbackData) : null,
-          }),
+          body: JSON.stringify(body),
         });
         const raw = await res.json().catch(() => ({}));
         if (!res.ok) {
@@ -4093,6 +4270,48 @@ const EXAMPLE_FULL = `версия "1.0"
     [runPreviewStep, previewBusy],
   );
 
+  const sendPreviewUserFile = useCallback(
+    async (file) => {
+      if (!file || previewBusy) return;
+      const caption = String(previewDraft ?? '').trim();
+      const name = file.name || 'file';
+      const mime = file.type || 'application/octet-stream';
+      const isImg = /^image\//i.test(mime);
+      let data;
+      try {
+        data = await fileToBase64(file);
+      } catch (e) {
+        setPreviewErr(e.message || String(e));
+        return;
+      }
+      setPreviewMessages((prev) => [
+        ...prev,
+        {
+          role: 'user',
+          kind: isImg ? 'photo' : 'document',
+          fileName: name,
+          mimeType: mime,
+          caption,
+        },
+      ]);
+      if (isImg) {
+        await runPreviewStep({
+          text: '',
+          caption,
+          photo: { mimeType: mime, data },
+        });
+      } else {
+        await runPreviewStep({
+          text: '',
+          caption,
+          document: { fileName: name, mimeType: mime, data },
+        });
+      }
+      setPreviewDraft('');
+    },
+    [runPreviewStep, previewBusy, previewDraft],
+  );
+
   const sendPreviewCallback = useCallback(
     async (data) => {
       const cb = String(data ?? '');
@@ -4110,6 +4329,78 @@ const EXAMPLE_FULL = `версия "1.0"
     setPreviewMessages([]);
     setPreviewErr(null);
     setPreviewDraft('');
+  }, []);
+
+  const startPreviewPanelDrag = useCallback((e) => {
+    if (e.button !== 0) return;
+    const el = e.target;
+    if (el.closest && (el.closest('button') || el.closest('input') || el.closest('a'))) return;
+    const panel = previewPanelRef.current;
+    if (!panel) return;
+    const rect = panel.getBoundingClientRect();
+    setPreviewPanelPos({ left: rect.left, top: rect.top });
+    previewDragRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      originLeft: rect.left,
+      originTop: rect.top,
+      width: rect.width,
+      height: rect.height,
+    };
+    const move = (ev) => {
+      const d = previewDragRef.current;
+      if (!d) return;
+      let left = d.originLeft + (ev.clientX - d.startX);
+      let top = d.originTop + (ev.clientY - d.startY);
+      const margin = 8;
+      left = Math.max(margin, Math.min(left, window.innerWidth - d.width - margin));
+      top = Math.max(margin, Math.min(top, window.innerHeight - d.height - margin));
+      setPreviewPanelPos({ left, top });
+    };
+    const up = () => {
+      previewDragRef.current = null;
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+    e.preventDefault();
+  }, []);
+
+  const startBotDebugPanelDrag = useCallback((e) => {
+    if (e.button !== 0) return;
+    const el = e.target;
+    if (el.closest && (el.closest('button') || el.closest('input') || el.closest('a'))) return;
+    const panel = botDebugPanelRef.current;
+    if (!panel) return;
+    const rect = panel.getBoundingClientRect();
+    setBotDebugPanelPos({ left: rect.left, top: rect.top });
+    botDebugDragRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      originLeft: rect.left,
+      originTop: rect.top,
+      width: rect.width,
+      height: rect.height,
+    };
+    const move = (ev) => {
+      const d = botDebugDragRef.current;
+      if (!d) return;
+      let left = d.originLeft + (ev.clientX - d.startX);
+      let top = d.originTop + (ev.clientY - d.startY);
+      const margin = 8;
+      left = Math.max(margin, Math.min(left, window.innerWidth - d.width - margin));
+      top = Math.max(margin, Math.min(top, window.innerHeight - d.height - margin));
+      setBotDebugPanelPos({ left, top });
+    };
+    const up = () => {
+      botDebugDragRef.current = null;
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+    e.preventDefault();
   }, []);
 
   useEffect(() => {
@@ -4811,31 +5102,12 @@ const EXAMPLE_FULL = `версия "1.0"
         {isMobileView && (
           <div style={{ position: 'relative', flexShrink: 0 }}>
             <button
+              ref={examplesToggleRef}
+              type="button"
+              data-tour="mobile-examples"
               onClick={() => setShowExamples(!showExamples)}
               style={{ background:'transparent', color:'var(--text3)', padding:'6px 10px', border:'1px solid var(--border2)', borderRadius:6, fontSize:12, whiteSpace: 'nowrap' }}
             >{builderUi.examplesOpen}</button>
-            {showExamples && (
-              <>
-                <div style={{ position: 'fixed', inset: 0, zIndex: 299 }} onClick={() => setShowExamples(false)} />
-                <div style={{
-                  position: 'fixed', top: 58, left: 12,
-                  background: 'var(--bg2)', border: '1px solid var(--border)',
-                  borderRadius: 10, minWidth: 200, zIndex: 300,
-                  boxShadow: '0 8px 32px rgba(0,0,0,0.8)', overflow: 'hidden',
-                }}>
-                  {[['echo', builderUi.examplesEcho],['shop', builderUi.examplesShop],['full', builderUi.examplesFull],['fullTest', builderUi.examplesFullTest]].map(([key,label],i,arr) => (
-                    <button key={key}
-                      onClick={() => { loadExampleFromFile(key); setShowExamples(false); }}
-                      style={{ width:'100%', padding:'14px 18px', textAlign:'left', background:'transparent', color:'var(--text)', border:'none', borderBottom: i < arr.length-1 ? '1px solid var(--border)' : 'none', cursor:'pointer', fontSize:14, display: 'block' }}
-                    >{label}</button>
-                  ))}
-                  <button
-                    onClick={() => { setShowLibrary(true); setShowExamples(false); }}
-                    style={{ width:'100%', padding:'14px 18px', textAlign:'left', background:'transparent', color:'#ffd700', border:'none', borderTop:'1px solid var(--border)', cursor:'pointer', fontSize:14, display:'block', fontWeight:700 }}
-                  >{builderUi.moduleLibrary}</button>
-                </div>
-              </>
-            )}
           </div>
         )}
         {!isMobileView && <div className="tb-divider" />}
@@ -4844,33 +5116,14 @@ const EXAMPLE_FULL = `версия "1.0"
           <>
             <div style={{ position: 'relative' }}>
               <button
+                ref={examplesToggleRef}
+                type="button"
                 className="tb-btn tb-btn-ghost"
                 data-tour="top-examples-desktop"
                 onClick={() => setShowExamples(!showExamples)}
               >⚡ <span style={{ opacity: 0.5, fontSize: 10 }}>▼</span></button>
-              {showExamples && (
-                <>
-                <div style={{ position: 'fixed', inset: 0, zIndex: 99 }} onClick={() => setShowExamples(false)} />
-                <div style={{
-                  position: 'absolute', top: 'calc(100% + 6px)', left: 0,
-                  background: 'var(--bg2)', border: '1px solid rgba(255,255,255,0.1)',
-                  borderRadius: 10, minWidth: 190, zIndex: 100,
-                  boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
-                  overflow: 'hidden',
-                }}>
-                  {[['echo', builderUi.examplesEcho],['shop', builderUi.examplesShop],['full', builderUi.examplesFull],['fullTest', builderUi.examplesFullTest]].map(([key,label],i,arr) => (
-                    <button key={key}
-                      onClick={() => { loadExampleFromFile(key); setShowExamples(false); }}
-                      style={{ width:'100%', padding:'11px 16px', textAlign:'left', background:'transparent', color:'var(--text)', border:'none', borderBottom: i < arr.length-1 ? '1px solid rgba(255,255,255,0.07)' : 'none', cursor:'pointer', fontSize:13, transition:'background 0.15s', fontFamily:'Syne,system-ui' }}
-                      onMouseEnter={e => e.target.style.background = 'rgba(255,255,255,0.06)'}
-                      onMouseLeave={e => e.target.style.background = 'transparent'}
-                    >{label}</button>
-                  ))}
-                </div>
-                </>
-              )}
             </div>
-            <ModuleLibraryButton t={builderUi} lang={uiLang} currentUser={currentUser} onInsert={(code) => {
+            <ModuleLibraryButton t={builderUi} lang={uiLang} currentUser={currentUser} dataTour="top-library-desktop" onInsert={(code) => {
               const parsed = parseDSL(code);
               if (parsed) {
                 setStacks(prev => [...prev, ...parsed]);
@@ -4879,6 +5132,7 @@ const EXAMPLE_FULL = `версия "1.0"
             }} />
             <button
               className="tb-btn tb-btn-ai"
+              data-tour="top-ai-desktop"
               title={canUseAiGenerator ? builderUi.aiTitle : builderUi.aiTitleDisabled}
               onClick={openAiGeneratorModal}
               style={!canUseAiGenerator ? { opacity: 0.45 } : undefined}
@@ -4887,6 +5141,7 @@ const EXAMPLE_FULL = `версия "1.0"
               <button
                 type="button"
                 className="tb-btn tb-btn-ghost"
+                data-tour="top-python-desktop"
                 title={builderUi.adminPythonTitle}
                 onClick={() => {
                   setPythonConvertError('');
@@ -4904,6 +5159,7 @@ const EXAMPLE_FULL = `версия "1.0"
             )}
             <button
               className="tb-btn tb-btn-danger"
+              data-tour="top-clear-desktop"
               title={builderUi.clearCanvas}
               onClick={() => { setStacks([]); setSelectedBlockId(null); setSelectedStackId(null); }}
             >✕</button>
@@ -4911,6 +5167,7 @@ const EXAMPLE_FULL = `версия "1.0"
             <div style={{ position: 'relative' }}>
             <button
               className="tb-btn tb-btn-ghost"
+              data-tour="top-files-desktop"
               title={builderUi.filesMenuTitle}
               onClick={() => setShowFilesMenu(v => !v)}
             >📁 <span style={{ opacity: 0.5, fontSize: 10 }}>▼</span></button>
@@ -4924,7 +5181,6 @@ const EXAMPLE_FULL = `версия "1.0"
                     {currentUser && (
                       <button
                         className="tb-files-menu-item"
-                        data-tour="save-cloud-desktop"
                         onClick={async () => {
                           const name = projectName.trim() || 'Без названия';
                           await saveProjectToCloud(currentUser.id, name, stacks);
@@ -4958,6 +5214,7 @@ const EXAMPLE_FULL = `версия "1.0"
             >💬</button>
             <button
               className="tb-btn tb-btn-ghost"
+              data-tour="top-debug-desktop"
               title={builderUi.debugTitle}
               type="button"
               onClick={() => setBotDebugOpen(v => !v)}
@@ -5004,6 +5261,7 @@ const EXAMPLE_FULL = `версия "1.0"
               <button
                 type="button"
                 onClick={openAiGeneratorModal}
+                data-tour="mobile-ai"
                 title={canUseAiGenerator ? builderUi.aiTitle : builderUi.aiTitleDisabled}
                 style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -5027,6 +5285,7 @@ const EXAMPLE_FULL = `версия "1.0"
             ) : (
               <button
                 onClick={() => setShowProfileModal(true)}
+                data-tour="top-premium-desktop"
                 title="Premium"
                 style={{
                   display: 'flex', alignItems: 'center', gap: 6,
@@ -5090,6 +5349,7 @@ const EXAMPLE_FULL = `версия "1.0"
         {!isMobileView && (
           <button
             className="tb-btn tb-btn-ghost"
+            data-tour="top-help-desktop"
             onClick={() => setShowInstructions(true)}
             style={{ marginLeft: 6 }}
             onMouseEnter={e => { e.currentTarget.style.borderColor = '#fbbf24'; e.currentTarget.style.color = '#fbbf24'; }}
@@ -5099,6 +5359,8 @@ const EXAMPLE_FULL = `версия "1.0"
         {isMobileView && (
           <div style={{ position: 'relative', flexShrink: 0, marginLeft: 4 }}>
             <button
+              type="button"
+              data-tour="mobile-more"
               onClick={() => setMobileMoreOpen(v => !v)}
               style={{
                 background: mobileMoreOpen ? 'rgba(255,255,255,0.1)' : 'transparent',
@@ -5387,6 +5649,146 @@ const EXAMPLE_FULL = `версия "1.0"
           </div>
         </div>
       )}
+      {showAIModal && aiLoading && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 10040,
+            background: 'rgba(8,10,18,0.88)',
+            backdropFilter: 'blur(14px)',
+            WebkitBackdropFilter: 'blur(14px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 20,
+          }}
+          aria-busy="true"
+          aria-live="polite"
+        >
+          <style>{`
+            @keyframes aiGenPulse {
+              0%, 100% { opacity: 0.35; transform: scale(0.92); }
+              50% { opacity: 0.9; transform: scale(1.05); }
+            }
+            @keyframes aiGenSpin {
+              to { transform: rotate(360deg); }
+            }
+            @keyframes aiGenShimmer {
+              0% { background-position: -200% center; }
+              100% { background-position: 200% center; }
+            }
+            @keyframes aiGenDot {
+              0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
+              40% { opacity: 1; transform: translateY(-3px); }
+            }
+          `}</style>
+          <div
+            style={{
+              width: 'min(440px, 100%)',
+              padding: '40px 36px',
+              borderRadius: 22,
+              background: 'linear-gradient(165deg, rgba(28,30,38,0.97) 0%, rgba(12,14,20,0.99) 100%)',
+              border: '1px solid rgba(251,191,36,0.38)',
+              boxShadow:
+                '0 0 0 1px rgba(251,191,36,0.1), 0 28px 90px rgba(0,0,0,0.72), 0 0 140px rgba(251,191,36,0.07)',
+              textAlign: 'center',
+              fontFamily: 'Syne, system-ui, sans-serif',
+            }}
+          >
+            <div style={{ position: 'relative', width: 92, height: 92, margin: '0 auto 26px' }}>
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: -10,
+                  borderRadius: '50%',
+                  background: 'radial-gradient(circle, rgba(251,191,36,0.28) 0%, transparent 68%)',
+                  animation: 'aiGenPulse 2.2s ease-in-out infinite',
+                }}
+              />
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  borderRadius: '50%',
+                  border: '3px solid rgba(251,191,36,0.18)',
+                  borderTopColor: '#fbbf24',
+                  borderRightColor: 'rgba(251,191,36,0.45)',
+                  animation: 'aiGenSpin 1s linear infinite',
+                }}
+              />
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 16,
+                  borderRadius: 18,
+                  background: 'linear-gradient(145deg, rgba(251,191,36,0.2), rgba(245,158,11,0.06))',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: 38,
+                  lineHeight: 1,
+                  boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.08)',
+                }}
+              >
+                ✨
+              </div>
+            </div>
+            <div
+              style={{
+                fontSize: 23,
+                fontWeight: 800,
+                letterSpacing: '-0.02em',
+                background: 'linear-gradient(90deg, #fef3c7, #fbbf24, #d97706, #fbbf24, #fef3c7)',
+                backgroundSize: '200% auto',
+                WebkitBackgroundClip: 'text',
+                backgroundClip: 'text',
+                color: 'transparent',
+                animation: 'aiGenShimmer 2.8s linear infinite',
+                marginBottom: 14,
+              }}
+            >
+              Создаём вашего бота
+            </div>
+            <div
+              style={{
+                fontSize: 14,
+                fontWeight: 600,
+                color: 'rgba(226,232,240,0.92)',
+                lineHeight: 1.55,
+                minHeight: 46,
+                transition: 'opacity 0.35s ease',
+              }}
+            >
+              {AI_GEN_LOADING_STEPS[aiLoadingStep]}
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'center',
+                gap: 6,
+                marginTop: 18,
+              }}
+            >
+              {[0, 1, 2].map((i) => (
+                <span
+                  key={i}
+                  style={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: '50%',
+                    background: '#fbbf24',
+                    animation: `aiGenDot 1.2s ease-in-out ${i * 0.18}s infinite`,
+                  }}
+                />
+              ))}
+            </div>
+            <div style={{ marginTop: 22, fontSize: 11, color: 'rgba(148,163,184,0.88)', lineHeight: 1.45 }}>
+              Подождите — AI собирает схему блоков. Обычно это от нескольких секунд до минуты.
+            </div>
+          </div>
+        </div>
+      )}
       {showPythonConvertModal && isAdmin && (
         <div style={{
           position: 'fixed', inset: 0, zIndex: 9999,
@@ -5533,10 +5935,77 @@ const EXAMPLE_FULL = `версия "1.0"
         <BlockInfoModal block={blockInfo} onClose={() => setBlockInfo(null)} />
       )}
 
+      {showExamples && typeof document !== 'undefined' && createPortal(
+        <>
+          <div
+            role="presentation"
+            style={{ position: 'fixed', inset: 0, zIndex: 10050 }}
+            onClick={() => setShowExamples(false)}
+          />
+          <div
+            role="menu"
+            style={{
+              position: 'fixed',
+              top: examplesMenuRect?.top ?? 68,
+              left: examplesMenuRect?.left ?? 12,
+              minWidth: examplesMenuRect?.minWidth ?? 200,
+              zIndex: 10051,
+              background: 'var(--bg2)',
+              border: `1px solid ${isMobileView ? 'var(--border)' : 'rgba(255,255,255,0.1)'}`,
+              borderRadius: 10,
+              boxShadow: '0 8px 32px rgba(0,0,0,0.75)',
+              overflow: 'hidden',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {[['echo', builderUi.examplesEcho], ['shop', builderUi.examplesShop], ['full', builderUi.examplesFull], ['fullTest', builderUi.examplesFullTest]].map(([key, label], i, arr) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => { loadExampleFromFile(key); setShowExamples(false); }}
+                style={{
+                  width: '100%',
+                  padding: isMobileView ? '14px 18px' : '11px 16px',
+                  textAlign: 'left',
+                  background: 'transparent',
+                  color: 'var(--text)',
+                  border: 'none',
+                  borderBottom: i < arr.length - 1 ? (isMobileView ? '1px solid var(--border)' : '1px solid rgba(255,255,255,0.07)') : 'none',
+                  cursor: 'pointer',
+                  fontSize: isMobileView ? 14 : 13,
+                  fontFamily: isMobileView ? 'inherit' : 'Syne,system-ui',
+                  display: 'block',
+                }}
+              >{label}</button>
+            ))}
+            {isMobileView && (
+              <button
+                type="button"
+                onClick={() => { setShowLibrary(true); setShowExamples(false); }}
+                style={{
+                  width: '100%',
+                  padding: '14px 18px',
+                  textAlign: 'left',
+                  background: 'transparent',
+                  color: '#ffd700',
+                  border: 'none',
+                  borderTop: '1px solid var(--border)',
+                  cursor: 'pointer',
+                  fontSize: 14,
+                  display: 'block',
+                  fontWeight: 700,
+                }}
+              >{builderUi.moduleLibrary}</button>
+            )}
+          </div>
+        </>,
+        document.body,
+      )}
+
       {currentUser ? (
         /* Main layout */
         <>
-        <div style={{ display:'grid', gridTemplateColumns: isMobileView ? '1fr' : '180px 1fr 270px', overflow:'hidden', flex: 1, position: 'relative' }}>
+        <div style={{ display:'grid', gridTemplateColumns: isMobileView ? '1fr' : '180px 1fr minmax(300px, 360px)', overflow:'hidden', flex: 1, position: 'relative' }}>
 
         {/* Sidebar — hidden on mobile unless blocks tab */}
         {(isMobileView && mobileTab !== 'blocks') ? null : (
@@ -5847,6 +6316,9 @@ const EXAMPLE_FULL = `версия "1.0"
           borderLeft: isMobileView ? 'none' : '1px solid rgba(99,102,241,0.2)', overflow:'hidden',
           background: 'linear-gradient(180deg, #0d0920 0%, #080618 100%)',
           boxShadow: isMobileView ? 'none' : '-4px 0 24px rgba(0,0,0,0.4)',
+          minWidth: 0,
+          position: 'relative',
+          zIndex: 2,
           ...(isMobileView ? { gridColumn: '1', position: 'absolute', top: 0, left: 0, right: 0, bottom: 56, zIndex: 6 } : {}),
         }}
         data-tour={!isMobileView ? 'props-panel-desktop' : undefined}>
@@ -5890,7 +6362,7 @@ const EXAMPLE_FULL = `версия "1.0"
           ].map(tab => (
             <button
               key={tab.key}
-              data-tour={tab.key === 'canvas' ? 'mobile-tab-canvas' : tab.key === 'blocks' ? 'mobile-tab-blocks' : tab.key === 'props' ? 'mobile-tab-props' : undefined}
+              data-tour={tab.key === 'canvas' ? 'mobile-tab-canvas' : tab.key === 'blocks' ? 'mobile-tab-blocks' : tab.key === 'props' ? 'mobile-tab-props' : tab.key === 'dsl' ? 'mobile-tab-dsl' : undefined}
               onClick={() => setMobileTab(tab.key)}
               className={`editor-mobile-tab${mobileTab === tab.key ? ' active' : ''}`}
             >
@@ -5954,6 +6426,7 @@ const EXAMPLE_FULL = `версия "1.0"
         <OnboardingTour
           steps={onboardingSteps}
           stepIndex={tourStep}
+          labels={builderUi}
           onPrev={() => setTourStep(s => Math.max(0, s - 1))}
           onNext={() => {
             if (tourStep >= onboardingSteps.length - 1) finishTour();
@@ -6028,11 +6501,22 @@ const EXAMPLE_FULL = `версия "1.0"
 
       {currentUser && previewPanelOpen && (
         <div
+          ref={previewPanelRef}
           style={{
             position: 'fixed',
-            ...(isMobileView
-              ? { left: 8, right: 8, bottom: 72, top: '12vh', maxHeight: '70vh' }
-              : { right: 20, bottom: 20, width: 340, height: 'min(480px, 52vh)' }),
+            ...(previewPanelPos
+              ? {
+                  left: previewPanelPos.left,
+                  top: previewPanelPos.top,
+                  right: 'auto',
+                  bottom: 'auto',
+                  ...(isMobileView
+                    ? { width: 'calc(100vw - 16px)', maxWidth: 420, height: 'min(480px, 52vh)' }
+                    : { width: 340, height: 'min(480px, 52vh)' }),
+                }
+              : isMobileView
+                ? { left: 8, right: 8, bottom: 72, top: '12vh', maxHeight: '70vh' }
+                : { right: 20, bottom: 20, width: 340, height: 'min(480px, 52vh)' }),
             zIndex: 9600,
             display: 'flex',
             flexDirection: 'column',
@@ -6044,11 +6528,17 @@ const EXAMPLE_FULL = `версия "1.0"
             fontFamily: 'Syne,system-ui, sans-serif',
           }}
         >
-          <div style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            padding: '10px 12px', borderBottom: '1px solid rgba(255,255,255,0.07)',
-            background: 'rgba(56,189,248,0.06)',
-          }}>
+          <div
+            role="presentation"
+            onMouseDown={startPreviewPanelDrag}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '10px 12px', borderBottom: '1px solid rgba(255,255,255,0.07)',
+              background: 'rgba(56,189,248,0.06)',
+              cursor: 'grab',
+              userSelect: 'none',
+            }}
+          >
             <div style={{ fontSize: 13, fontWeight: 800, color: '#e2e8f0' }}>
               Чат-превью
             </div>
@@ -6091,7 +6581,7 @@ const EXAMPLE_FULL = `версия "1.0"
           >
             {previewMessages.length === 0 && (
               <div style={{ fontSize: 11, color: 'rgba(148,163,184,0.85)', padding: '8px 0' }}>
-                Например, отправьте <strong>/start</strong> или текст. Нажимайте кнопки — для превью это те же сообщения/callback.
+            Например, отправьте <strong>/start</strong>, текст или файл (как в Telegram). Нажимайте кнопки — для превью это те же сообщения/callback.
               </div>
             )}
             {previewMessages.map((m, i) => (
@@ -6122,7 +6612,13 @@ const EXAMPLE_FULL = `версия "1.0"
                   <div style={{ marginBottom: 8 }}>{m.text}</div>
                 )}
                 {m.role === 'bot' && m.kind === 'text' && <span>{m.text}</span>}
-                {m.role === 'user' && <span>{m.text}</span>}
+                {m.role === 'user' && m.kind === 'text' && <span>{m.text}</span>}
+                {m.role === 'user' && (m.kind === 'document' || m.kind === 'photo') && (
+                  <span>
+                    {m.kind === 'photo' ? '🖼 ' : '📎 '}{m.fileName || 'файл'}
+                    {m.caption ? `\n${m.caption}` : ''}
+                  </span>
+                )}
                 {m.role === 'bot' && m.kind === 'sys' && (
                   <span style={{ opacity: 0.75, fontFamily: 'var(--mono,monospace)', fontSize: 10 }}>{m.text}</span>
                 )}
@@ -6210,7 +6706,38 @@ const EXAMPLE_FULL = `версия "1.0"
               {previewErr}
             </div>
           )}
-          <div style={{ display: 'flex', gap: 6, padding: 10, borderTop: '1px solid rgba(255,255,255,0.07)' }}>
+          <div style={{ display: 'flex', gap: 6, padding: 10, borderTop: '1px solid rgba(255,255,255,0.07)', alignItems: 'center' }}>
+            <input
+              ref={previewFileInputRef}
+              type="file"
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) sendPreviewUserFile(f);
+                e.target.value = '';
+              }}
+            />
+            <button
+              type="button"
+              disabled={previewBusy}
+              title="Прикрепить файл"
+              aria-label="Прикрепить файл"
+              onClick={() => previewFileInputRef.current?.click()}
+              style={{
+                flexShrink: 0,
+                width: 38,
+                height: 38,
+                borderRadius: 10,
+                border: '1px solid rgba(255,255,255,0.14)',
+                background: 'rgba(15,23,42,0.75)',
+                color: '#94a3b8',
+                fontSize: 18,
+                lineHeight: 1,
+                cursor: previewBusy ? 'wait' : 'pointer',
+              }}
+            >
+              📎
+            </button>
             <button
               type="button"
               disabled={previewBusy}
@@ -6260,11 +6787,22 @@ const EXAMPLE_FULL = `версия "1.0"
 
       {botDebugOpen && (
         <div
+          ref={botDebugPanelRef}
           style={{
             position: 'fixed',
-            ...(isMobileView
-              ? { left: 8, right: 8, bottom: 72, top: '14vh', maxHeight: '62vh' }
-              : { left: 20, bottom: 20, width: 'min(420px, 38vw)', height: 'min(440px, 52vh)' }),
+            ...(botDebugPanelPos
+              ? {
+                  left: botDebugPanelPos.left,
+                  top: botDebugPanelPos.top,
+                  right: 'auto',
+                  bottom: 'auto',
+                  ...(isMobileView
+                    ? { width: 'calc(100vw - 16px)', maxWidth: 480, height: 'min(440px, 52vh)' }
+                    : { width: 'min(420px, 38vw)', height: 'min(440px, 52vh)' }),
+                }
+              : isMobileView
+                ? { left: 8, right: 8, bottom: 72, top: '14vh', maxHeight: '62vh' }
+                : { left: 20, bottom: 20, width: 'min(420px, 38vw)', height: 'min(440px, 52vh)' }),
             zIndex: 9598,
             display: 'flex',
             flexDirection: 'column',
@@ -6276,12 +6814,18 @@ const EXAMPLE_FULL = `версия "1.0"
             fontFamily: 'var(--mono, ui-monospace, monospace)',
           }}
         >
-          <div style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            padding: '10px 12px', borderBottom: '1px solid rgba(255,255,255,0.07)',
-            background: 'rgba(250,204,21,0.06)',
-            fontFamily: 'Syne,system-ui, sans-serif',
-          }}>
+          <div
+            role="presentation"
+            onMouseDown={startBotDebugPanelDrag}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '10px 12px', borderBottom: '1px solid rgba(255,255,255,0.07)',
+              background: 'rgba(250,204,21,0.06)',
+              fontFamily: 'Syne,system-ui, sans-serif',
+              cursor: 'grab',
+              userSelect: 'none',
+            }}
+          >
             <div style={{ fontSize: 13, fontWeight: 800, color: '#fef08a' }}>
               Отладка · cicada --dev
             </div>

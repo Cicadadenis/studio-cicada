@@ -8,6 +8,9 @@ import {
   isRuntimeVar,
 } from '../runtime/rules.js';
 
+/** В JS `\b` не работает для кириллицы (только ASCII [A-Za-z0-9_]). */
+const CY_END = '(?![а-яёА-ЯЁa-zA-Z_0-9])';
+
 function getBlockDef(type, blockTypes = []) {
   return (blockTypes || []).find((b) => b.type === type);
 }
@@ -34,9 +37,22 @@ function analyzeBodyUiState(nodes, errors, ctx = { scope: 'body' }) {
 
   const isMessage = (t) => /^(?:ответ|ответ_md)\s+/i.test(t) || t === 'рандом:' || t === 'рандом';
   const isButtons = (t) => /^кнопки(?:\s|:|$)/i.test(t) || /^inline-кнопки:?\s*$/i.test(t);
-  const isStop = (t) => /^(?:стоп|завершить|завершить сценарий|вернуть)\b/i.test(t);
-  const isIf = (t) => /^если\b/i.test(t);
-  const isElse = (t) => /^иначе\b/i.test(t);
+  const isStop = (t) =>
+    new RegExp(`^(?:стоп|завершить\\s+сценарий|завершить|вернуть)${CY_END}`, 'i').test(t);
+  const isIf = (t) => new RegExp(`^если${CY_END}`, 'i').test(t);
+  const isElse = (t) => new RegExp(`^иначе${CY_END}`, 'i').test(t);
+  /** Не новый «Ответ»/спросить, но допустимо после клавиатуры (как в AI few-shot: callback → run). */
+  const allowedAfterButtons = (t) =>
+    isStop(t) ||
+    new RegExp(`^перейти${CY_END}`, 'i').test(t) ||
+    new RegExp(`^запустить${CY_END}`, 'i').test(t) ||
+    new RegExp(`^использовать${CY_END}`, 'i').test(t) ||
+    isElse(t) ||
+    new RegExp(`^(?:пауза|подождать|печатает)${CY_END}`, 'i').test(t) ||
+    new RegExp(`^лог${CY_END}`, 'i').test(t) ||
+    /^пусть\s+/i.test(t) ||
+    /^запомни\s+/i.test(t) ||
+    new RegExp(`^отправить\\s+файл${CY_END}`, 'i').test(t);
 
   const mergeBranchUi = (baseState, ifState, elseState, line) => {
     const out = { ...baseState };
@@ -74,10 +90,6 @@ function analyzeBodyUiState(nodes, errors, ctx = { scope: 'body' }) {
       state.terminal = true;
       continue;
     }
-    if (seenButtons) {
-      errors.push(`❌ Строка ${node.line}: UI_STATE_INVALID: instruction after buttons block is not allowed (допустим только «стоп»)`);
-    }
-
     if (isIf(t)) {
       const ifState = analyzeBodyUiState(node.children || [], errors, { scope: 'if' });
       let elseState = null;
@@ -90,6 +102,12 @@ function analyzeBodyUiState(nodes, errors, ctx = { scope: 'body' }) {
       state.buttons = merged.buttons;
       state.terminal = merged.terminal;
       seenButtons = Boolean(state.buttons);
+      continue;
+    }
+    if (seenButtons && !allowedAfterButtons(t)) {
+      errors.push(
+        `❌ Строка ${node.line}: UI_STATE_INVALID: instruction after buttons block is not allowed (допустимы «стоп», «перейти»/«запустить», «использовать», пауза/печатает/лог, «запомни»/«пусть», «отправить файл», «иначе» или ветвление «если»)`,
+      );
       continue;
     }
   }
@@ -237,9 +255,33 @@ export function validateDSL(code, stacks, blockTypes = []) {
       state.seenButtons = true;
       state.afterButtonsOnlyStop = true;
     } else if (state?.afterButtonsOnlyStop) {
-      const isStop = /^(?:стоп|завершить|завершить сценарий|вернуть)\b/i.test(l);
-      if (!isStop) {
-        errors.push(`❌ Строка ${i+1}: после блока «Кнопки» разрешена только инструкция «стоп»`);
+      const allowedAfterKb =
+        new RegExp(`^(?:стоп|завершить\\s+сценарий|завершить|вернуть)${CY_END}`, 'i').test(l) ||
+        new RegExp(`^перейти${CY_END}`, 'i').test(l) ||
+        new RegExp(`^запустить${CY_END}`, 'i').test(l) ||
+        new RegExp(`^использовать${CY_END}`, 'i').test(l) ||
+        new RegExp(`^иначе${CY_END}`, 'i').test(l) ||
+        new RegExp(`^(?:пауза|подождать|печатает)${CY_END}`, 'i').test(l) ||
+        new RegExp(`^лог${CY_END}`, 'i').test(l) ||
+        /^пусть\s+/i.test(l) ||
+        /^запомни\s+/i.test(l) ||
+        new RegExp(`^отправить\\s+файл${CY_END}`, 'i').test(l) ||
+        new RegExp(`^если${CY_END}`, 'i').test(l);
+      if (!allowedAfterKb) {
+        errors.push(
+          `❌ Строка ${i + 1}: после блока «Кнопки» недопустимая инструкция (допустимы «стоп», «перейти»/«запустить», «использовать», пауза/печатает/лог, «запомни»/«пусть», «отправить файл», «если»/«иначе»)`,
+        );
+      } else {
+        const clearsAfterKbContext =
+          new RegExp(`^(?:стоп|завершить\\s+сценарий|завершить|вернуть)${CY_END}`, 'i').test(l) ||
+          new RegExp(`^перейти${CY_END}`, 'i').test(l) ||
+          new RegExp(`^запустить${CY_END}`, 'i').test(l) ||
+          new RegExp(`^использовать${CY_END}`, 'i').test(l) ||
+          new RegExp(`^если${CY_END}`, 'i').test(l) ||
+          new RegExp(`^иначе${CY_END}`, 'i').test(l);
+        if (clearsAfterKbContext) {
+          state.afterButtonsOnlyStop = false;
+        }
       }
     }
 
@@ -259,8 +301,11 @@ export function validateDSL(code, stacks, blockTypes = []) {
     }
 
     if (
-      /^(?:при|сценарий|шаг|блок|если|иначе|переключить)\b/i.test(l) ||
-      /^(?:спросить|фото|видео|аудио|документ|стикер|контакт|локация|опрос|стоп|перейти|запустить|использовать)\b/i.test(l)
+      new RegExp(`^(?:при|сценарий|шаг|блок|если|иначе|переключить)${CY_END}`, 'i').test(l) ||
+      new RegExp(
+        `^(?:спросить|фото|видео|аудио|документ|стикер|контакт|локация|опрос|стоп|перейти|запустить|использовать)${CY_END}`,
+        'i',
+      ).test(l)
     ) {
       pendingTextByIndent.set(indent, false);
     }

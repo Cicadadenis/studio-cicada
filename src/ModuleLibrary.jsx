@@ -3263,13 +3263,15 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
 //     // setStacks(prev => [...prev, ...parseDSL(code)])
 //   }} />
 // ─────────────────────────────────────────────────────────────────────────────
-export function ModuleLibraryButton({ onInsert, currentUser, t = getConstructorStrings('ru'), lang = 'ru' }) {
+export function ModuleLibraryButton({ onInsert, currentUser, t = getConstructorStrings('ru'), lang = 'ru', dataTour }) {
   const [open, setOpen] = useState(false);
 
   return (
     <>
       <button
+        type="button"
         className="tb-btn tb-btn-ghost"
+        data-tour={dataTour || undefined}
         onClick={() => setOpen(true)}
         title={t.libButtonTooltip}
       >

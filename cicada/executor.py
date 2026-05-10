@@ -1022,8 +1022,8 @@ class Executor:
         # Сбрасываем флаг "вернуть" для каждого входящего update.
         ctx._return_requested = False
         ctx.set("сообщение_id", msg.get("message_id", 0))
-        text = msg.get("text", "")
-        ctx.set("текст", text)  # Устанавливаем текст ДО middleware
+        text = msg.get("text") or msg.get("caption") or ""
+        ctx.set("текст", text)  # Устанавливаем текст ДО middleware (caption — для фото/документов)
 
         for h in self.program.handlers:
             if h.kind == "before_each":

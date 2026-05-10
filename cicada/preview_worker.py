@@ -29,9 +29,11 @@ from cicada.parser import Parser
 
 from cicada.preview_helpers import (
     callback_update,
+    document_message_update,
     dsl_code_hash,
     ensure_bot_line,
     message_update,
+    photo_message_update,
 )
 
 
@@ -43,6 +45,28 @@ def _build_update(req: dict):
     cb = req.get("callbackData")
     if cb is not None and cb != "":
         return callback_update(str(cb), chat_id)
+
+    doc = req.get("document")
+    if isinstance(doc, dict) and doc.get("fileId"):
+        cap = req.get("caption")
+        if cap is None or not isinstance(cap, str):
+            cap = ""
+        return document_message_update(
+            chat_id,
+            file_name=str(doc.get("fileName") or "file.bin"),
+            file_id=str(doc.get("fileId")),
+            mime_type=str(doc.get("mimeType") or "application/octet-stream"),
+            file_size=int(doc.get("fileSize") or 0),
+            caption=cap,
+        )
+
+    photo = req.get("photo")
+    if isinstance(photo, dict) and photo.get("fileId"):
+        cap = req.get("caption")
+        if cap is None or not isinstance(cap, str):
+            cap = ""
+        return photo_message_update(chat_id, file_id=str(photo.get("fileId")), caption=cap)
+
     text = req.get("text")
     if text is None:
         text = ""
