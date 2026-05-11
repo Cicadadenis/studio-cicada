@@ -67,7 +67,7 @@ const INNER_RULES = [
   { key: 'стоп', re: /^(?:стоп|вернуть|завершить.*|прервать|продолжить)$/i, snippet: 'стоп' },
   { key: 'вернуть значение', re: /^вернуть\s+.+/i, snippet: 'вернуть значение' },
   { key: 'повторить шаг', re: /^повторить\s+шаг\s*$/i, snippet: 'повторить шаг' },
-  { key: 'http', re: /^(?:http_(?:get|post|patch|put|delete|заголовки)|запрос\s+(?:GET|POST|PUT|PATCH|DELETE)).+$/i, snippet: 'http_get "https://api" → ответ' },
+  { key: 'http', re: /^(?:fetch|fetch_json|http_(?:get|post|patch|put|delete|заголовки)|запрос\s+(?:GET|POST|PUT|PATCH|DELETE)).+$/i, snippet: 'fetch "https://api" → ответ' },
   { key: 'запрос_бд', re: /^запрос_бд\s+"[^"]+"\s*(?:→|->)\s*\S+/i, snippet: 'запрос_бд "select 1" → rows' },
   { key: 'классифицировать', re: /^классифицировать\s+\[[^\]]+\]\s*(?:→|->)\s*\S+/i, snippet: 'классифицировать ["заказ", "помощь"] → намерение' },
   { key: 'событие', re: /^событие\s+"[^"]+".*$/i, snippet: 'событие "opened"' },

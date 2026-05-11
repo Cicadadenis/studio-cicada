@@ -3255,18 +3255,6 @@ function ModuleLibraryModal({ onClose, onInsert, onInsertAndRun, currentUser, t 
                                   cursor:"pointer",
                                 }}
                               >{t.libInsertEditor}</button>
-                              {typeof onInsertAndRun === "function" && (
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); onInsertAndRun(mod.code); onClose(); }}
-                                  style={{
-                                    marginTop:8, width:"100%", padding:"10px",
-                                    background:"rgba(167,139,250,0.2)",
-                                    border:"1px solid rgba(167,139,250,0.55)", borderRadius:10, color:"#ddd6fe",
-                                    fontWeight:700, fontFamily:"Syne,system-ui", fontSize:12,
-                                    cursor:"pointer",
-                                  }}
-                                >▶ Запустить пример</button>
-                              )}
                             </>
                           )}
                         </div>
@@ -3306,17 +3294,6 @@ function ModuleLibraryModal({ onClose, onInsert, onInsertAndRun, currentUser, t 
                 }}
                 onClick={handleInsert}
               >{t.libInsertEditor}</button>
-              {typeof onInsertAndRun === "function" && (
-                <button
-                  style={{
-                    background:"rgba(167,139,250,0.2)",
-                    border:"1px solid rgba(167,139,250,0.55)", borderRadius:10, padding:"10px 18px",
-                    color:"#ddd6fe", fontWeight:700, fontFamily:"Syne,system-ui",
-                    fontSize:12, cursor:"pointer", whiteSpace:"nowrap",
-                  }}
-                  onClick={() => { onInsertAndRun(selected.code); onClose(); }}
-                >▶ Запустить пример</button>
-              )}
             </div>
           </div>
         )}

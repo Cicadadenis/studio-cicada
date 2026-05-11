@@ -204,6 +204,7 @@ const BUILTIN_DSL_CASES = [
 function repoExampleCcdCases() {
   const pairs = [
     ['examples/echo-bot.ccd', 'репо: Echo Bot (examples/echo-bot.ccd)'],
+    ['examples/weather-bot.ccd', 'репо: погода (examples/weather-bot.ccd)'],
     ['examples/shop-bot.ccd', 'репо: магазин — каталог/корзина (examples/shop-bot.ccd)'],
     ['examples/demo-bot.ccd', 'репо: демо — квиз/медиа/inline (examples/demo-bot.ccd)'],
     ['examples/qr-bot.ccd', 'репо: QR-код (examples/qr-bot.ccd)'],

@@ -319,6 +319,10 @@ function parseNode(line) {
   }
   // http_get "url" → var
   {
+    const fetchMatch = t.match(/^fetch "([^"]+)"\s*(?:→|->)\s*(\S+)/);
+    if (fetchMatch) return { type: 'http', props: { method: 'GET', url: fetchMatch[1], varname: fetchMatch[2] }, root: false };
+  }
+  {
     const hgMatch = t.match(/^http_get "([^"]+)"\s*(?:→|->)\s*(\S+)/);
     if (hgMatch) return { type: 'http', props: { method: 'GET', url: hgMatch[1], varname: hgMatch[2] }, root: false };
   }

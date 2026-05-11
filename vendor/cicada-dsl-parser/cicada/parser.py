@@ -1808,13 +1808,18 @@ class Parser:
         if m:
             return DownloadFile("файл_id", m.group(1))
 
+        # fetch "url" → переменная — короткий alias для http_get
+        m = re.match(r'^fetch\s+"([^"]+)"\s*(?:→|->)\s*(\w+)$', line)
+        if m:
+            return HttpGet(url=m.group(1), variable=m.group(2))
+
         # http_get "url" → переменная
-        m = re.match(r'^http_get\s+"([^"]+)"\s*→\s*(\w+)$', line)
+        m = re.match(r'^http_get\s+"([^"]+)"\s*(?:→|->)\s*(\w+)$', line)
         if m:
             return HttpGet(url=m.group(1), variable=m.group(2))
 
         # http_post "url" с "data" → переменная
-        m = re.match(r'^http_post\s+"([^"]+)"\s+с\s+"([^"]+)"\s*→\s*(\w+)$', line)
+        m = re.match(r'^http_post\s+"([^"]+)"\s+с\s+"([^"]+)"\s*(?:→|->)\s*(\w+)$', line)
         if m:
             return HttpPost(url=m.group(1), data=m.group(2), variable=m.group(3))
 

@@ -497,8 +497,8 @@ export function validateDSL(code, stacks, blockTypes = []) {
     // сохранить "key" = val — ключ доступен как переменная через persistent storage
     const m3 = l.match(/^сохранить\s+"([^"]+)"/);
     if (m3) definedVars.add(m3[1]);
-    // запрос → var, http_get ... → var
-    const m4 = l.match(/^(?:http_\w+|запрос|вызвать)\s+.*(?:→|->)\s*([а-яёa-zA-Z_][а-яёa-zA-Z_0-9]*)$/);
+    // запрос → var, http_get/fetch ... → var
+    const m4 = l.match(/^(?:http_\w+|fetch|fetch_json|запрос|вызвать)\s+.*(?:→|->)\s*([а-яёa-zA-Z_][а-яёa-zA-Z_0-9]*)$/);
     if (m4) definedVars.add(m4[1]);
     const m5 = l.match(/^для каждого\s+([а-яёa-zA-Z_][а-яёa-zA-Z_0-9]*)\s+в\s+/);
     if (m5) definedVars.add(m5[1]);
@@ -513,7 +513,7 @@ export function validateDSL(code, stacks, blockTypes = []) {
     'запрос_бд','классифицировать','проверить_роль','событие','оплата',
     'блок','сценарий','шаг','повторять','пока','для','в','раз','при',
     'ответ_md','все_ключи','сохранить_глобально','от','удалить','http_заголовки',
-    'http_get','http_post','http_patch','http_put','http_delete','json','таймаут',
+    'http_get','http_post','http_patch','http_put','http_delete','fetch','fetch_json','json','таймаут',
     'секунд','подождать','вызвать','проверить','подписку','роль','переслать',
     'сообщение','уведомить','рассылка','группе','RUB',
     'нажатии','команда','команде','версия','бот','команды','до','после','каждого','старте',

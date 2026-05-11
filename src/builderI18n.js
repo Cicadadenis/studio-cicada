@@ -426,6 +426,7 @@ export const CONSTRUCTOR_I18N = {
   ru: {
     examplesOpen: 'Примеры ▼',
     examplesEcho: '🔄 Эхо Бот',
+    examplesWeather: '☀️ Бот погода',
     examplesShop: '🛍️ Магазин Бот',
     examplesModular: '🧩 Модульный проект',
     examplesFull: '⚡ Все Функции',
@@ -620,6 +621,7 @@ export const CONSTRUCTOR_I18N = {
   en: {
     examplesOpen: 'Examples ▼',
     examplesEcho: '🔄 Echo bot',
+    examplesWeather: '☀️ Weather bot',
     examplesShop: '🛍️ Shop bot',
     examplesModular: '🧩 Modular project',
     examplesFull: '⚡ Full demo',
@@ -812,6 +814,7 @@ export const CONSTRUCTOR_I18N = {
   uk: {
     examplesOpen: 'Приклади ▼',
     examplesEcho: '🔄 Ехо-бот',
+    examplesWeather: '☀️ Бот погоди',
     examplesShop: '🛍️ Бот магазину',
     examplesModular: '🧩 Модульний проєкт',
     examplesFull: '⚡ Усі функції',
