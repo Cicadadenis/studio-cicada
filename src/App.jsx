@@ -3401,6 +3401,55 @@ export default function App() {
     return stacks.length > 0 ? stacks : null;
   }, []);
 
+  const mergeLibraryStacks = useCallback((prevStacks, incomingStacks) => {
+    if (!Array.isArray(incomingStacks) || incomingStacks.length === 0) return prevStacks;
+    const result = [...prevStacks];
+
+    const rootKey = (stack) => {
+      const root = stack?.blocks?.[0];
+      if (!root) return '';
+      const p = root.props || {};
+      if (root.type === 'global') return `global:${p.varname || ''}`;
+      if (root.type === 'command') return `command:${p.cmd || ''}`;
+      if (root.type === 'callback') return `callback:${p.label || ''}`;
+      if (root.type === 'block' || root.type === 'scenario') return `${root.type}:${p.name || ''}`;
+      return `${root.type}`;
+    };
+    const blockKey = (b) => `${b?.type || ''}:${JSON.stringify(b?.props || {})}`;
+
+    const rootIndex = new Map(result.map((s, i) => [rootKey(s), i]));
+    for (const stack of incomingStacks) {
+      const k = rootKey(stack);
+      const i = rootIndex.get(k);
+      if (i == null || !k) {
+        result.push(stack);
+        rootIndex.set(k, result.length - 1);
+        continue;
+      }
+      const target = result[i];
+      const seen = new Set((target.blocks || []).map(blockKey));
+      for (const b of (stack.blocks || [])) {
+        const bk = blockKey(b);
+        if (!seen.has(bk)) {
+          target.blocks.push({ ...b, id: uid() });
+          seen.add(bk);
+        }
+      }
+    }
+
+    // Удаляем повторы глобальных переменных по varname (синхронизация библиотек без дублей).
+    const seenGlobals = new Set();
+    return result.filter((stack) => {
+      const root = stack?.blocks?.[0];
+      if (root?.type !== 'global') return true;
+      const name = root?.props?.varname || '';
+      if (!name) return true;
+      if (seenGlobals.has(name)) return false;
+      seenGlobals.add(name);
+      return true;
+    });
+  }, []);
+
   const applyCorrectedDSLCode = useCallback((code) => {
     const parsedStacks = parseDSL(code);
     if (!parsedStacks || parsedStacks.length === 0) {
@@ -5147,7 +5196,7 @@ const EXAMPLE_FULL = `версия "1.0"
             <ModuleLibraryButton t={builderUi} lang={uiLang} currentUser={currentUser} dataTour="top-library-desktop" onInsert={(code) => {
               const parsed = parseDSL(code);
               if (parsed) {
-                setStacks(prev => [...prev, ...parsed]);
+                setStacks(prev => mergeLibraryStacks(prev, parsed));
                 showToast(builderUi.libInsertSuccess, 'success');
               }
             }} />
@@ -5486,7 +5535,7 @@ const EXAMPLE_FULL = `версия "1.0"
           onInsert={(code) => {
             const parsed = parseDSL(code);
             if (parsed) {
-              setStacks(prev => [...prev, ...parsed]);
+              setStacks(prev => mergeLibraryStacks(prev, parsed));
               showToast(builderUi.libInsertSuccess, 'success');
             }
             setShowLibrary(false);
