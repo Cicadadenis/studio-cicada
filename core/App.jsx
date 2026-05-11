@@ -696,7 +696,7 @@ const DEFAULT_PROPS = {
   // ── Новые типы ────────────────────────────────────────────────────────────
   check_sub:   { channel: '@mychannel', varname: 'подписан' },
   member_role: { channel: '@mychannel', user_id: 'пользователь.id', varname: 'роль_участника' },
-  forward_msg: { mode: 'message', target: '', caption: '' },
+  forward_msg: { mode: 'message', target: 'ADMIN_ID', caption: '' },
   broadcast:   { mode: 'all', text: 'Привет всем!', tag: '' },
   db_delete:   { key: 'мой_ключ' },
   save_global: { key: 'global_key', value: 'значение' },
@@ -1481,6 +1481,7 @@ function BlockStack({ stack, selectedId, onSelectBlock, onDeleteBlock, onDragSta
         position: 'absolute', left: stack.x, top: stack.y,
         zIndex: stack.dragging ? 1000 : (isDragTarget ? 500 : 1),
         opacity: stack.dragging ? 0.45 : 1,
+        touchAction: 'none',
         borderRadius: newBlockDrop ? 10 : 0,
         outline: newBlockDrop === 'invalid'
           ? '2px solid rgba(248,113,113,0.95)'
@@ -1827,6 +1828,14 @@ function buildAutoFixFromValidation(code, validationResult) {
   };
 }
 
+function isStaleForwardInputDiagnostic(diag, code) {
+  if (!diag || !['DSL001', 'DSL003'].includes(String(diag.code || ''))) return false;
+  const lineNo = Number(diag.line || 0);
+  if (!Number.isInteger(lineNo) || lineNo < 1) return false;
+  const line = String(code || '').replace(/\r\n/g, '\n').split('\n')[lineNo - 1]?.trim() || '';
+  return /^переслать\s+(?:текст|фото|документ|голосовое|аудио|стикер)(?:\s+"[^"]*")?\s*$/i.test(line);
+}
+
 // ─── DSL PANEL ────────────────────────────────────────────────────────────
 function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
   const dsl = generateDSL(stacks);
@@ -1881,7 +1890,8 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
 
       if (response.ok && pyAvailable) {
         if (Array.isArray(jr.diagnostics) && jr.diagnostics.length > 0) {
-          const pyMsgs = jr.diagnostics.map(
+          const coreDiagnostics = jr.diagnostics.filter((d) => !isStaleForwardInputDiagnostic(d, dsl));
+          const pyMsgs = coreDiagnostics.map(
             (d) => `${formatDSLDiagnostic(d)} [ядро Cicada]`,
           );
           result.errors = (result.errors || []).filter((e) =>
@@ -1907,11 +1917,13 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
     setValidationResult(result);
     setPreviewCorrected(null);
     setHighlightRows([]);
+    return result;
   };
 
-  const applySuggestedFixes = () => {
-    if (!validationResult) return;
-    const autoFixed = buildAutoFixFromValidation(dsl, validationResult);
+  const applySuggestedFixes = async () => {
+    const activeResult = validationResult || await check();
+    if (!activeResult) return;
+    const autoFixed = buildAutoFixFromValidation(dsl, activeResult);
     if (!autoFixed.fixes.length) return;
     const applied = onApplyCorrectedCode?.(autoFixed.correctedCode);
     if (!applied) {
@@ -1996,7 +2008,6 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
           <button
             type="button"
             onClick={applySuggestedFixes}
-            disabled={!hasFixes || !!previewCorrected}
             style={{
               background: (!hasFixes || previewCorrected) ? 'var(--bg3)' : '#0ea5e9',
               color: (!hasFixes || previewCorrected) ? 'var(--text3)' : '#fff',
@@ -2004,10 +2015,10 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
               borderRadius: 4,
               fontSize: 9,
               border: 'none',
-              cursor: (!hasFixes || previewCorrected) ? 'default' : 'pointer',
-              opacity: (!hasFixes || previewCorrected) ? 0.7 : 1,
+              cursor: 'pointer',
+              opacity: (!hasFixes || previewCorrected) ? 0.9 : 1,
             }}
-            title={!validationResult ? 'Сначала нажми «проверить»' : (!hasFixes ? 'Нет доступных автоисправлений' : 'Применить автоисправления')}
+            title={!validationResult ? 'Проверить и применить автоисправления' : (!hasFixes ? 'Нет доступных автоисправлений' : 'Применить автоисправления')}
           >
             Исправить{hasFixes ? ` (${computedFixes?.fixes?.length || 0})` : ''}
           </button>
@@ -5522,6 +5533,7 @@ const EXAMPLE_FULL = `версия "1.0"
           style={{
             position:'relative', overflow:'hidden',
             cursor: canvasDrag ? 'grabbing' : 'default',
+            touchAction: 'none',
             background: 'linear-gradient(160deg, #06030f 0%, #0a0518 50%, #080615 100%)',
             ...(isMobileView ? { gridColumn: '1', display: mobileTab === 'canvas' ? 'block' : 'none' } : {}),
           }}
@@ -5547,6 +5559,7 @@ const EXAMPLE_FULL = `версия "1.0"
           }}
           onTouchMove={e => {
             if (e.touches.length === 1) {
+              e.preventDefault();
               const touch = e.touches[0];
               handleMouseMove({ clientX: touch.clientX, clientY: touch.clientY });
             } else if (e.touches.length === 2 && canvasRef.current?._pinch) {

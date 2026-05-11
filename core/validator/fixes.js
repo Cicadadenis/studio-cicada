@@ -13,6 +13,12 @@ const REPLY_KNOPKI_PIPE_FIX =
 const MISSING_BUTTONS_FIX =
   'В обработчике нажатия нет кнопок: добавлена кнопка «🏠 Главная».';
 
+const BARE_FORWARD_FIX =
+  'Пересылка сообщения: добавлен получатель ADMIN_ID, потому что строка «переслать» без адресата не поддерживается ядром.';
+
+const FORWARD_MESSAGE_PREFIX_FIX =
+  'Пересылка сообщения: добавлено слово «сообщение» для совместимости с ядром Cicada.';
+
 /**
  * Поле блока «Кнопки» (props.rows): запятая = в одном ряду, Enter = новый ряд.
  * Модели часто ошибочно подставляют | как в inline — заменяем на запятую по строкам.
@@ -883,6 +889,31 @@ export function fixArrowOnLine(line) {
 }
 
 /**
+ * Исправляет голую инструкцию `переслать`, которую старый UI мог сгенерировать
+ * при пустом поле получателя.
+ * @param {string} line
+ * @returns {{ line: string, changed: boolean }}
+ */
+export function fixBareForwardOnLine(line) {
+  if (!/^\s*переслать\s*$/i.test(line)) return { line, changed: false };
+  const indent = line.match(/^\s*/)?.[0] ?? '';
+  return { line: `${indent}переслать сообщение ADMIN_ID`, changed: true };
+}
+
+/**
+ * Старые версии ядра принимают только `переслать сообщение USER_ID`.
+ * Короткий формат `переслать USER_ID` оставляем парсеру, но автофикс
+ * приводит его к максимально совместимому виду.
+ * @param {string} line
+ * @returns {{ line: string, changed: boolean }}
+ */
+export function fixForwardMessagePrefixOnLine(line) {
+  const m = line.match(/^(\s*)переслать\s+(?!(?:сообщение|текст|фото|документ|голосовое|аудио|стикер)(?:\s|$))(.+?)\s*$/i);
+  if (!m) return { line, changed: false };
+  return { line: `${m[1]}переслать сообщение ${m[2].trim()}`, changed: true };
+}
+
+/**
  * Собирает исправления построчно.
  * @param {string} code
  * @returns {{ fixes: Array<{ line: number, message: string, before: string, after: string }>, correctedCode: string, changedLines: number[] }}
@@ -915,7 +946,27 @@ export function collectDSLFixes(code) {
       });
       if (!pipeFix.changed && !changedLines.includes(i)) changedLines.push(i);
     }
-    return fixed;
+    const bareForwardFix = fixBareForwardOnLine(fixed);
+    if (bareForwardFix.changed) {
+      fixes.push({
+        line: i + 1,
+        message: BARE_FORWARD_FIX,
+        before: fixed,
+        after: bareForwardFix.line,
+      });
+      if (!changedLines.includes(i)) changedLines.push(i);
+    }
+    const forwardPrefixFix = fixForwardMessagePrefixOnLine(bareForwardFix.line);
+    if (forwardPrefixFix.changed) {
+      fixes.push({
+        line: i + 1,
+        message: FORWARD_MESSAGE_PREFIX_FIX,
+        before: bareForwardFix.line,
+        after: forwardPrefixFix.line,
+      });
+      if (!changedLines.includes(i)) changedLines.push(i);
+    }
+    return forwardPrefixFix.line;
   });
   const withButtons = injectDefaultButtonsForClickHandlers(newLines, fixes, changedLines);
   return {

@@ -578,7 +578,7 @@ export function emitBlockText(block) {
           : `переслать ${media}`;
       }
       const target = String(p.target || '').trim();
-      return target ? `переслать ${target}` : 'переслать';
+      return `переслать сообщение ${target || 'ADMIN_ID'}`;
     }
     case 'database':
       return `запрос_бд ${q(p.query || 'select 1')} ${ARROW} ${p.varname || 'rows'}`;

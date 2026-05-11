@@ -5,6 +5,7 @@ import { ModuleLibraryButton, ModuleLibraryModal } from './ModuleLibrary';
 import InstructionsModal from './InstructionsModal.jsx';
 import { lintDSLSchema, formatDSLDiagnostic } from '../core/validator/schema.js';
 import { validateDSL } from '../core/validator/uiDslValidator.js';
+import { collectDSLFixes } from '../core/validator/fixes.js';
 import { RUNTIME_PROPERTY_NAMES } from '../core/runtime/rules.js';
 import { generateDSL, stackToDSL } from '../core/stacksToDsl.js';
 import { getCsrfTokenForRequest, resetCsrfPrefetch } from './csrf.js';
@@ -781,7 +782,7 @@ const DEFAULT_PROPS = {
   // ── Новые типы ────────────────────────────────────────────────────────────
   check_sub:   { channel: '@mychannel', varname: 'подписан' },
   member_role: { channel: '@mychannel', user_id: 'пользователь.id', varname: 'роль_участника' },
-  forward_msg: { mode: 'message', target: '', caption: '' },
+  forward_msg: { mode: 'message', target: 'ADMIN_ID', caption: '' },
   broadcast:   { mode: 'all', text: 'Привет всем!', tag: '' },
   db_delete:   { key: 'мой_ключ' },
   save_global: { key: 'global_key', value: 'значение' },
@@ -1626,6 +1627,7 @@ function BlockStack({ stack, selectedId, attentionBlockId, onSelectBlock, onDele
         position: 'absolute', left: stack.x, top: stack.y,
         zIndex: stack.dragging ? 1000 : (isDragTarget ? 500 : 1),
         opacity: stack.dragging ? 0.45 : 1,
+        touchAction: 'none',
         borderRadius: newBlockDrop ? 10 : 0,
         outline: newBlockDrop === 'invalid'
           ? '2px solid rgba(248,113,113,0.95)'
@@ -2126,7 +2128,74 @@ function PropsPanel({ block, onChange, stacks }) {
 // чтобы UI и серверная AI-генерация использовали одни и те же правила.
 
 function buildAutoFixFromValidation(code, validationResult) {
-  return { correctedCode: code, changedLineIndexes: [], fixes: [] };
+  if (!validationResult) return { correctedCode: code, changedLineIndexes: [], fixes: [] };
+  const lint = collectDSLFixes(code);
+  const fixes = [...(lint.fixes || [])];
+  let text = lint.correctedCode || code;
+  let lines = text.split('\n');
+  const changed = new Set(lint.changedLines || []);
+
+  const hasEmptyTokenError = (validationResult.errors || []).some((e) =>
+    String(e).includes('пустой токен бота'),
+  );
+  const dslHasEmptyBotToken = String(code || '').split(/\n/).some((raw) => {
+    const m = raw.trim().match(/^бот\s+"([^"]*)"\s*$/);
+    return m !== null && (!m[1] || !String(m[1]).trim());
+  });
+  if (hasEmptyTokenError || dslHasEmptyBotToken) {
+    for (let i = 0; i < lines.length; i += 1) {
+      if (/^\s*бот\s+"[^"]*"\s*$/.test(lines[i])) {
+        const before = lines[i];
+        const after = 'бот "PASTE_BOT_TOKEN_HERE"';
+        if (before !== after) {
+          lines[i] = after;
+          changed.add(i);
+          fixes.push({
+            line: i + 1,
+            message: 'Не указан токен бота — подставлен placeholder (вставь токен от @BotFather или замени строку сам)',
+            before,
+            after,
+          });
+        }
+        break;
+      }
+    }
+  }
+
+  const missingStartError = (validationResult.errors || []).some((e) =>
+    String(e).includes('Нет «при старте»'),
+  );
+  if (missingStartError) {
+    const beforeLen = lines.length;
+    if (lines.length > 0 && lines[lines.length - 1].trim() !== '') lines.push('');
+    const startIdx = lines.length;
+    lines.push('при старте:');
+    lines.push('    ответ "Привет!"');
+    changed.add(startIdx);
+    changed.add(startIdx + 1);
+    fixes.push({
+      line: startIdx + 1,
+      message: 'Добавлен базовый обработчик старта',
+      before: '',
+      after: 'при старте:\n    ответ "Привет!"',
+    });
+    if (beforeLen === 0) changed.add(0);
+  }
+
+  text = lines.join('\n');
+  return {
+    correctedCode: text,
+    changedLineIndexes: [...changed].sort((a, b) => a - b),
+    fixes,
+  };
+}
+
+function isStaleForwardInputDiagnostic(diag, code) {
+  if (!diag || !['DSL001', 'DSL003'].includes(String(diag.code || ''))) return false;
+  const lineNo = Number(diag.line || 0);
+  if (!Number.isInteger(lineNo) || lineNo < 1) return false;
+  const line = String(code || '').replace(/\r\n/g, '\n').split('\n')[lineNo - 1]?.trim() || '';
+  return /^переслать\s+(?:текст|фото|документ|голосовое|аудио|стикер)(?:\s+"[^"]*")?\s*$/i.test(line);
 }
 
 function normalizeDslUI(input) {
@@ -2290,7 +2359,7 @@ function DSLPane({ stacks, isMobile, onClose, onApplyCorrectedCode }) {
   };
 
   const check = async () => {
-    const result = { errors: [], warnings: [] };
+    const result = validateDSL(dsl, stacks, blockTypes);
     try {
       const response = await postJsonWithCsrf('/api/dsl/lint', { code: dsl });
       const jr = await response.json().catch(() => ({}));
@@ -2298,7 +2367,8 @@ function DSLPane({ stacks, isMobile, onClose, onApplyCorrectedCode }) {
 
       if (response.ok && pyAvailable) {
         if (Array.isArray(jr.diagnostics) && jr.diagnostics.length > 0) {
-          const pyMsgs = jr.diagnostics.map(
+          const coreDiagnostics = jr.diagnostics.filter((d) => !isStaleForwardInputDiagnostic(d, dsl));
+          const pyMsgs = coreDiagnostics.map(
             (d) => `${formatDSLDiagnostic(d)}${ui.dslCoreDiagSuffix}`,
           );
           result.errors = (result.errors || []).filter((e) =>
@@ -2324,6 +2394,7 @@ function DSLPane({ stacks, isMobile, onClose, onApplyCorrectedCode }) {
     setValidationResult(result);
     setPreviewCorrected(null);
     setHighlightRows([]);
+    return result;
   };
 
   const applySchemaFix = () => {
@@ -2335,17 +2406,25 @@ function DSLPane({ stacks, isMobile, onClose, onApplyCorrectedCode }) {
       setPreviewCorrected(fixed);
       setHighlightRows(fixed.split('\n').map((_, idx) => idx));
     }
-    setTimeout(() => { check(); }, 0);
   };
 
 
 
   const applyDetectedFix = async () => {
-    if (!validationResult) {
-      await check();
+    const activeResult = validationResult || await check();
+    if (!activeResult) return;
+    const autoFixed = buildAutoFixFromValidation(previewCorrected ?? dsl, activeResult);
+    if ((autoFixed.fixes || []).length > 0) {
+      const applied = onApplyCorrectedCode?.(autoFixed.correctedCode);
+      setFixNotice(`Применено автоисправлений: ${autoFixed.fixes.length}`);
+      setTimeout(() => setFixNotice(''), 2200);
+      if (!applied) {
+        setPreviewCorrected(autoFixed.correctedCode);
+        setHighlightRows(autoFixed.changedLineIndexes || []);
+      }
       return;
     }
-    if ((validationResult.errors || []).length > 0) {
+    if ((activeResult.errors || []).length > 0) {
       applySchemaFix();
       return;
     }
@@ -2367,12 +2446,15 @@ function DSLPane({ stacks, isMobile, onClose, onApplyCorrectedCode }) {
     if (!applied) setPreviewCorrected(nextCode);
   };
 
-  const computedFixes = null;
+  const computedFixes = React.useMemo(
+    () => (validationResult ? buildAutoFixFromValidation(dsl, validationResult) : null),
+    [dsl, validationResult],
+  );
   const visibleErrors = (validationResult?.errors || []);
   const hasErrors = visibleErrors.length > 0;
   const hasWarnings = (validationResult?.warnings?.length ?? 0) > 0;
-  const isValid = validationResult && !hasErrors && !hasWarnings;
-  const hasFixes = false;
+  const hasFixes = (computedFixes?.fixes?.length ?? 0) > 0;
+  const isValid = validationResult && !hasErrors && !hasWarnings && !hasFixes;
 
   const displayCode = previewCorrected ?? dsl;
   const displayLines = displayCode.split('\n');
@@ -2484,23 +2566,22 @@ function DSLPane({ stacks, isMobile, onClose, onApplyCorrectedCode }) {
           <button
             type="button"
             onClick={applyDetectedFix}
-            disabled={!validationResult || !hasErrors}
             style={{
               padding: '4px 10px',
               borderRadius: 6,
               fontSize: 10,
               fontWeight: 600,
-              cursor: (!validationResult || !hasErrors) ? 'default' : 'pointer',
+              cursor: 'pointer',
               fontFamily: 'inherit',
               lineHeight: 1.2,
-              background: (!validationResult || !hasErrors) ? 'var(--bg3)' : '#0ea5e9',
-              color: (!validationResult || !hasErrors) ? 'var(--text3)' : '#fff',
+              background: (!validationResult || (!hasErrors && !hasFixes)) ? 'var(--bg3)' : '#0ea5e9',
+              color: (!validationResult || (!hasErrors && !hasFixes)) ? 'var(--text3)' : '#fff',
               border: '1px solid transparent',
-              opacity: (!validationResult || !hasErrors) ? 0.7 : 1,
+              opacity: (!validationResult || (!hasErrors && !hasFixes)) ? 0.9 : 1,
             }}
-            title={!validationResult ? ui.dslFixTitleNeedCheck : (!hasErrors ? 'Нет ошибок для исправления' : 'Исправить DSL')}
+            title={!validationResult ? 'Проверить и применить автоисправления' : (!hasErrors && !hasFixes ? 'Нет ошибок для исправления' : 'Исправить DSL')}
           >
-            {'🔧 Исправить'}
+            {`🔧 Исправить${hasFixes ? ` (${computedFixes?.fixes?.length || 0})` : ''}`}
           </button>
         </div>
       </div>
@@ -6709,6 +6790,7 @@ const EXAMPLE_FULL = `версия "1.0"
           style={{
             position:'relative', overflow:'hidden',
             cursor: canvasDrag ? 'grabbing' : 'default',
+            touchAction: 'none',
             background: 'linear-gradient(160deg, #06030f 0%, #0a0518 50%, #080615 100%)',
             ...(isMobileView ? { gridColumn: '1', display: (mobileTab === 'canvas' || mobileTab === 'dsl') ? 'block' : 'none' } : {}),
           }}
@@ -6734,6 +6816,7 @@ const EXAMPLE_FULL = `версия "1.0"
           }}
           onTouchMove={e => {
             if (e.touches.length === 1) {
+              e.preventDefault();
               const touch = e.touches[0];
               handleMouseMove({ clientX: touch.clientX, clientY: touch.clientY });
             } else if (e.touches.length === 2 && canvasRef.current?._pinch) {
