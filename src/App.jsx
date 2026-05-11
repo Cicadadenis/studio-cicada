@@ -839,11 +839,15 @@ function normalizeAiPartialResponse(data) {
   const normalizedFailed = normalizeAiDiagnosticItems(sections.whatFailed);
   const whatWorks = normalizeAiDiagnosticItems(sections.whatWorks);
   const whatWasFixed = normalizedFixed.length ? normalizedFixed : repairActions;
-  const whatFailed = normalizedFailed.length ? normalizedFailed : diagnostics;
   const reasonCodes = Array.isArray(data?.reasonCodes)
     ? data.reasonCodes.filter(Boolean).map(String)
     : (data?.reason ? [String(data.reason)] : []);
   const skeletonFallback = reasonCodes.includes('IR_FALLBACK_SKELETON_USED') || data?.irState === 'SKELETON_IR';
+  const fallbackFailed = normalizedFailed.length ? normalizedFailed : diagnostics;
+  const whatFailed = fallbackFailed.filter((item) => (
+    item?.severity !== 'info' &&
+    item?.code !== 'IR_FALLBACK_SKELETON_USED'
+  ));
   const safeToRun = Boolean(data?.safeToRun ?? data?.safeToExecute);
   const userActions = Array.isArray(data?.userActions) ? data.userActions : [];
   const hasContext = Boolean(
@@ -877,7 +881,9 @@ function normalizeAiPartialResponse(data) {
       whatWasFixed,
       whatFailed: whatFailed.length
         ? whatFailed
-        : [{ code: data?.reason || 'PARTIAL_IR', title: 'Блокирующих диагностик нет', detail: 'Для partial IR не осталось блокирующих ошибок.', severity: 'info' }],
+        : (skeletonFallback
+          ? []
+          : [{ code: data?.reason || 'PARTIAL_IR', title: 'Блокирующих диагностик нет', detail: 'Для partial IR не осталось блокирующих ошибок.', severity: 'info' }]),
     },
     hasContext,
     canRunPartial: safeToRun && Array.isArray(data?.stacks) && data.stacks.length > 0,

@@ -8,9 +8,7 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
 const EXPECTED_VERSION = '0.3.3';
-const CANONICAL_CORE = path.resolve(
-  process.env.CICADA_CANONICAL_CORE || '/usr/local/lib/python3.12/dist-packages/cicada',
-);
+const DEFAULT_CANONICAL_CORE = '/usr/local/lib/python3.12/dist-packages/cicada';
 const SYNCED_DIRS = [
   'cicada',
   'core',
@@ -39,12 +37,38 @@ function listPyFiles(dir) {
   return out.sort();
 }
 
+function runPythonSnippet(snippet) {
+  const env = { ...process.env };
+  delete env.PYTHONPATH;
+  return spawnSync('python3', ['-c', snippet], {
+    cwd: '/',
+    encoding: 'utf8',
+    env,
+  });
+}
+
+function resolveCanonicalCore() {
+  if (process.env.CICADA_CANONICAL_CORE) {
+    return path.resolve(process.env.CICADA_CANONICAL_CORE);
+  }
+  const py = [
+    'import pathlib',
+    'import cicada',
+    'print(pathlib.Path(cicada.__file__).resolve().parent)',
+  ].join('; ');
+  const proc = runPythonSnippet(py);
+  const resolved = String(proc.stdout || '').trim();
+  return resolved || path.resolve(DEFAULT_CANONICAL_CORE);
+}
+
+const CANONICAL_CORE = resolveCanonicalCore();
+
 function readVersion() {
   const py = [
     'import importlib.metadata as m',
     'print(m.version("cicada-tg"))',
   ].join('; ');
-  const proc = spawnSync('python3', ['-c', py], { encoding: 'utf8' });
+  const proc = runPythonSnippet(py);
   if (proc.status !== 0) return null;
   return String(proc.stdout || '').trim();
 }
