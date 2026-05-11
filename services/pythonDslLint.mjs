@@ -91,6 +91,10 @@ export function lintCicadaWithPython(opts) {
   const code = String(opts.code ?? '');
   const cwd  = opts.cwd ?? process.cwd();
   const script = resolveLintScript(cwd);
+  const timeoutMs = Math.max(
+    1_000,
+    Math.min(15_000, Number.isFinite(Number(opts.timeoutMs)) ? Number(opts.timeoutMs) : 15_000),
+  );
 
   // ── скрипт не найден ────────────────────────────────────────────────────
   if (!fs.existsSync(script)) {
@@ -133,7 +137,7 @@ export function lintCicadaWithPython(opts) {
       encoding: 'utf8',
       maxBuffer: 2 * 1024 * 1024,
       windowsHide: true,
-      timeout: 15_000,
+      timeout: timeoutMs,
       env: {
         ...process.env,
         PYTHONUTF8: '1',

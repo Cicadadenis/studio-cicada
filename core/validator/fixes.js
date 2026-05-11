@@ -10,9 +10,6 @@ const ARROW_FIX_DESC =
 const REPLY_KNOPKI_PIPE_FIX =
   'Reply-кнопки: в поле кнопок и в DSL одна строка — через запятую; символ | здесь не разделитель.';
 
-const MISSING_BUTTONS_FIX =
-  'В обработчике нажатия нет кнопок: добавлена кнопка «🏠 Главная».';
-
 const BARE_FORWARD_FIX =
   'Пересылка сообщения: добавлен получатель ADMIN_ID, потому что строка «переслать» без адресата не поддерживается ядром.';
 
@@ -394,7 +391,7 @@ function repairUnsupportedDslBlockComments(text) {
 }
 
 const COLLAPSED_CICADA_STARTERS = [
-  'inline-кнопки из бд ', 'inline-кнопки:', 'при геолокации:', 'при документе:', 'при голосовом:',
+  'inline из бд ', 'inline-кнопки из бд ', 'inline-кнопки:', 'при геолокации:', 'при документе:', 'при голосовом:',
   'при контакте:', 'при стикере:', 'при старте:', 'при фото:',
   'при нажатии ', 'при команде ', 'сценарий ', 'сохранить_глобально ',
   'проверить подписку ', 'переслать сообщение ', 'переслать ', 'запустить ', 'спросить ',
@@ -552,7 +549,9 @@ const AI_BLOCK_TYPE_ALIASES = new Map([
   ['send_message', 'message'], ['reply', 'message'], ['text', 'message'], ['answer', 'message'],
   ['keyboard', 'buttons'], ['reply_keyboard', 'buttons'], ['button', 'buttons'],
   ['inline_keyboard', 'inline'], ['inline_buttons', 'inline'],
+  ['inline_from_db', 'inline_db'], ['inline_db_buttons', 'inline_db'], ['database_inline', 'inline_db'],
   ['question', 'ask'], ['input', 'ask'], ['set', 'remember'], ['variable', 'remember'],
+  ['store', 'save'], ['persist', 'save'], ['save_value', 'save'], ['save_global_value', 'save_global'],
   ['if', 'condition'], ['elseif', 'condition'], ['end', 'stop'], ['finish', 'stop'],
   ['on_start', 'start'], ['on_command', 'command'], ['on_callback', 'callback'],
   ['on_document', 'document_received'],
@@ -588,6 +587,15 @@ function normalizeAiBlockProps(type, props) {
     if (Array.isArray(p.buttons)) p.buttons = p.buttons.map((row) => Array.isArray(row) ? row.join(', ') : String(row)).join('\n');
     p.buttons = firstString(p.buttons, p.rows, p.inline, p.keyboard) ?? p.buttons;
   }
+  if (type === 'inline_db') {
+    p.key = firstString(p.key, p.source, p.collection, p.list, p.from) ?? p.key;
+    p.labelField = firstString(p.labelField, p.label_field, p.textField, p.text_field) ?? p.labelField;
+    p.idField = firstString(p.idField, p.id_field, p.valueField, p.value_field) ?? p.idField;
+    p.callbackPrefix = firstString(p.callbackPrefix, p.callback_prefix, p.prefix) ?? p.callbackPrefix;
+    p.backText = firstString(p.backText, p.back_text) ?? p.backText;
+    p.backCallback = firstString(p.backCallback, p.back_callback) ?? p.backCallback;
+    p.columns = firstString(p.columns, p.cols) ?? p.columns;
+  }
   if (type === 'ask') {
     p.question = firstString(p.question, p.text, p.message, p.prompt) ?? p.question;
     p.varname = firstString(p.varname, p.variable, p.var, p.name, p.save_to) ?? p.varname;
@@ -600,6 +608,10 @@ function normalizeAiBlockProps(type, props) {
   if (type === 'log') p.message = firstString(p.message, p.text, p.event, p.content) ?? p.message;
   if (type === 'remember') {
     p.varname = firstString(p.varname, p.variable, p.var, p.name) ?? p.varname;
+    if (p.value == null && p.text != null) p.value = p.text;
+  }
+  if (type === 'save' || type === 'save_global') {
+    p.key = firstString(p.key, p.name, p.field) ?? p.key;
     if (p.value == null && p.text != null) p.value = p.text;
   }
   return p;
@@ -629,7 +641,7 @@ function ensureAiBotStack(stacks) {
 
 const AI_HANDLER_ROOT_TYPES = new Set(['start', 'callback', 'command']);
 const AI_VISIBLE_OUTPUT_TYPES = new Set([
-  'message', 'buttons', 'inline', 'photo', 'video', 'audio', 'document',
+  'message', 'buttons', 'inline', 'inline_db', 'photo', 'video', 'audio', 'document',
   'contact', 'location', 'poll', 'sticker', 'random',
 ]);
 
@@ -968,58 +980,11 @@ export function collectDSLFixes(code) {
     }
     return forwardPrefixFix.line;
   });
-  const withButtons = injectDefaultButtonsForClickHandlers(newLines, fixes, changedLines);
   return {
     fixes,
-    correctedCode: withButtons.join('\n'),
+    correctedCode: newLines.join('\n'),
     changedLines,
   };
-}
-
-function injectDefaultButtonsForClickHandlers(lines, fixes, changedLines) {
-  const out = [...lines];
-  const isClickStart = (t) => /^при\s+нажатии\s+"[^"]+"\s*:\s*$/i.test(t);
-  const isBlockStart = (t) => /^(блок|сценарий|шаг|при\s+)/i.test(t);
-  const indentOf = (s) => s.match(/^\s*/)?.[0]?.length ?? 0;
-
-  for (let i = 0; i < out.length; i += 1) {
-    if (!isClickStart(out[i].trim())) continue;
-    const baseIndent = indentOf(out[i]);
-    let j = i + 1;
-    let hasReply = false;
-    let hasButtons = false;
-    let hasTerminalNav = false;
-    while (j < out.length) {
-      const line = out[j];
-      const trimmed = line.trim();
-      if (!trimmed) {
-        j += 1;
-        continue;
-      }
-      const indent = indentOf(line);
-      if (indent <= baseIndent && isBlockStart(trimmed)) break;
-      if (/^ответ\s+/i.test(trimmed)) hasReply = true;
-      if (/^(?:кнопки(?:\s|:|$)|inline-кнопки:?\s*$)/i.test(trimmed)) hasButtons = true;
-      if (/^(?:перейти|использовать|запустить|стоп)\b/i.test(trimmed)) hasTerminalNav = true;
-      j += 1;
-    }
-
-    if (hasReply && !hasButtons && !hasTerminalNav) {
-      const insertAt = j;
-      const row = `${' '.repeat(baseIndent + 4)}кнопки "🏠 Главная"`;
-      out.splice(insertAt, 0, row);
-      fixes.push({
-        line: insertAt + 1,
-        message: MISSING_BUTTONS_FIX,
-        before: '',
-        after: row,
-      });
-      changedLines.push(insertAt);
-      i = insertAt;
-    }
-  }
-
-  return out;
 }
 
 /**

@@ -26,13 +26,19 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install cicada-tg==0.3.3
+          npm ci
+
+      - name: Core compatibility guard
+        run: npm run core:guard
 
       - name: Check server syntax
         run: npm run check:server
 
-      - name: Parser smoke (builtin + fixtures/ai-regression)
-        run: npm run ci:parser
+      - name: Compatibility CI
+        run: npm run ci:compat
 
       - name: Build frontend
         run: npm run build

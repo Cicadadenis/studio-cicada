@@ -119,6 +119,7 @@ function semanticValidateUndeclaredVars(stacks, astMode) {
       if (t === 'message') toCheck.push(p.text);
       if (t === 'condition') toCheck.push(p.cond);
       if (t === 'remember') toCheck.push(String(p.value ?? ''));
+      if ((t === 'save' || t === 'save_global') && p.value != null) toCheck.push(String(p.value));
       if (t === 'send_file' && p.file != null) toCheck.push(String(p.file));
 
       for (const str of toCheck) {

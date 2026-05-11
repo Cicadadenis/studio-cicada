@@ -9,7 +9,6 @@ import {
   APP_URL,
   getAiAstMode,
   getAiAllowedMemoryKeys,
-  getAiAstRepairRounds,
 } from './config.js';
 import fs from 'fs';
 import crypto from 'crypto';
@@ -26,13 +25,26 @@ import { sendVerificationEmail, sendPasswordResetEmail, sendEmailChangeCode, sen
 import { startRunner, stopRunner, isRunnerActive, getRunnerStatus, listRunners, getRunnerLogs } from './services/dslRunner.mjs';
 import { lintCicadaWithPython, requireParsedDSL, getDslHintsWithPython } from './services/pythonDslLint.mjs';
 import { sendPreviewRequest } from './services/cicadaPreviewWorker.mjs';
+import { runAiDslValidationPipeline } from './services/aiDslPipeline.mjs';
 import { normalizeAdminTotpSecret, verifyTotp } from './services/adminTotp.mjs';
 import { generateDSL } from './core/stacksToDsl.js';
 import { lintDSLSchema, formatDSLDiagnostic } from './core/validator/schema.js';
-import { validateDSL as validateUiDsl } from './core/validator/uiDslValidator.js';
-import { extractAiGeneratedStacksFromRaw, normalizeAiGeneratedStacks, repairCollapsedCicadaCode, stripThinkingFromAiRaw } from './core/validator/fixes.js';
-import { validateAstSchema } from './core/validator/aiAstValidate.mjs';
-import { semanticValidate } from './core/validator/aiSemanticValidate.mjs';
+import { repairCollapsedCicadaCode, stripThinkingFromAiRaw } from './core/validator/fixes.js';
+import {
+  canonicalIrToEditorStacks,
+  extractAiCanonicalIrFromRaw,
+  normalizeAiCanonicalIr,
+  validateAiCanonicalIr,
+} from './core/ai/aiCanonicalIr.mjs';
+import { buildIrSymbolRegistryPromptContext } from './core/ai/irSymbolRegistry.mjs';
+import { formatIrDiagnostic, validateIrSemanticGate } from './core/ai/irSemanticGate.mjs';
+import { repairIrDeterministic } from './core/ai/irRepairEngine.mjs';
+import {
+  IR_FALLBACK_REASON,
+  IR_FALLBACK_SKELETON_REASON_CODE,
+  IR_SKELETON_STATE,
+  buildIrSkeletonFallback,
+} from './core/ai/irSkeletonFactory.mjs';
 import { isPlaceholderBotToken } from './core/botTokenPlaceholders.mjs';
 
 const { Pool } = pg;
@@ -3754,72 +3766,91 @@ const PYTHON_TO_CICADA_SYSTEM = `Ты переводишь код Telegram-бо�
 
 Сохраняй порядок и смысл обработчиков. Токен из Python не копируй — только YOUR_BOT_TOKEN.`;
 
-// Статический разбор AI-AST: validateAstSchema (JSON-правила) + semanticValidate (переменные, get, режим).
-// См. core/schemas/aiStacks.schema.json и core/validator/aiSemanticValidate.mjs.
+// Статический разбор AI IR: structural validator + strict semantic gate + deterministic repair.
 
-const AI_SYSTEM_PROMPT = `Ты — генератор JSON-схем для визуального редактора Telegram-ботов Cicada Studio.
-Верни ТОЛЬКО валидный JSON-массив стеков. Первый символ [, последний ]. Никакого текста до или после.
+const AI_SYSTEM_PROMPT = `Ты — проектировщик runtime graph для Telegram-ботов Cicada Studio.
+Верни ТОЛЬКО валидный JSON-объект Canonical AI IR. Первый символ {, последний }. Никакого текста до или после.
 
 ═══ БРЕНДИНГ ИИ ═══
 Если в тексте сообщений бота нужно назвать ИИ, используй только название "Cicada 3301".
 Никогда не используй названия моделей/вендоров вроде "Meta Llama 3", "Llama", "Qwen", "OpenAI", "Groq".
 
-═══ СТРОГИЙ WHITELIST AST (поле blocks[].type) ═══
-Выходной формат — JSON-массив стеков (AST редактора). Сервер компилирует JSON → Cicada DSL; не генерируй текст DSL сам.
+═══ CANONICAL AI IR (единственный выходной контракт) ═══
+ИИ НЕ пишет DSL и НЕ пишет editor stacks. ИИ строит runtime graph:
+{
+  "irVersion": 1,
+  "targetCore": "0.3.3",
+  "compatibilityMode": "0.3.3 exact",
+  "intent": {"primary": "..."},
+  "state": {"globals": []},
+  "handlers": [],
+  "blocks": [],
+  "scenarios": [],
+  "transitions": [],
+  "uiStates": []
+}
 
-Разрешены ТОЛЬКО следующие типы блоков:
-  bot, start, callback, scenario, step, message, buttons, ask, remember, get, condition, else, run, stop, send_file
+Сервер сам выполнит: Canonical IR → IR Normalize → IR Semantic Gate → deterministic IR Repair → DSL serialization → runtime validation.
+Не генерируй текст DSL, не генерируй массив stacks, не придумывай синтаксис.
 
-Соответствие инструкциям Cicada в DSL:
-  бот→bot · при старте→start · при нажатии→callback · сценарий→scenario · шаг→step · ответ→message · кнопки→buttons · спросить→ask · запомнить→remember · получить→get · если→condition · иначе→else · запустить→run · стоп→stop · отправить файл→send_file
+Разрешены ТОЛЬКО следующие handler.type:
+  start, command, callback, text
 
-Запрещено придумывать типы вне списка (command, goto, inline, save, http, pause, document, photo, медиа-триггеры document_received и т.д.).
+Разрешены ТОЛЬКО следующие action.type:
+  message, buttons, inline_db, ask, remember, get, save, save_global, condition,
+  run_scenario, goto_command, goto_block, goto_scenario, goto, use_block, stop, send_file, ui_state
+
+Запрещено придумывать type вне списка (legacy callbacks, inline, http, pause, document, photo, media_received, append, insert и т.д.).
 Если нужна другая возможность — только эквивалент из whitelist.
 
-🔥 НЕ используй и не упоминай как блок: сохранить, save, store, append, insert (ни в type, ни в описании логики). В whitelist нет инструкции записи в KV через AI — её не генерировать.
+Для записи в KV используй только save/save_global. Не придумывай append/insert/update_many: если нужно изменить список, сначала собери новое значение в remember, затем save/save_global.
 
 ═══ АЛГОРИТМ ПОСТРОЕНИЯ ГРАФА (выполни мысленно, затем выведи только JSON) ═══
 
 Даже если пользователь написал коротко или расплывчато, всё равно построй полную схему стеков и переходов.
 
 1) ИНТЕНТ — что делает бот, цель и точка входа: /start или первая reply-кнопка.
-2) СОСТОЯНИЯ — логические узлы. Триггеры только start или callback; текст кнопки = callback.label.
-3) ПЕРЕХОДЫ — из экрана с кнопками: отдельный стек callback или run(сценарий). Не оставляй обрывов.
-4) УСЛОВИЯ — condition + else там, где нужна вилка.
-5) ДАННЫЕ — любая {переменная} в message/condition объявлена выше ask/get/remember в том же стеке или это системная переменная. Блок get допустим только если сервер в режиме advanced и ключ get.key входит в разрешённый список (см. политику сервера в конце системного промпта). В safe-режиме get не используй — только remember и ask.
-6) СБОРКА — s0 только bot; координаты/id по правилам ниже; после run в стеке с корнем start/callback нет stop.
+2) СОСТОЯНИЯ — uiStates для экранов: text/message, buttons или inlineDb.
+3) HANDLERS — start, command, callback, text; callback.trigger может быть "" для общего inline-router «при нажатии:».
+4) ПЕРЕХОДЫ — через actions run_scenario/goto_command/goto_block/goto_scenario/use_block и дублируй важные связи в transitions.
+5) УСЛОВИЯ — action condition с then/else.
+6) ДАННЫЕ — любая {переменная} в message/condition объявлена выше ask/get/remember или это системная переменная из registry. get допустим только если сервер в режиме advanced и ключ get.key входит в разрешённый список. В safe-режиме get не используй — только remember/ask/save известных значений.
 
 Промежуточный план не печатай — только JSON.
 
-═══ ТИПЫ БЛОКОВ (только whitelist) ═══
+═══ IR SHAPES ═══
 
-КОРНЕВЫЕ (первый блок стека):
-  bot       {token:"YOUR_BOT_TOKEN"}   — только s0
-  start     {}                           — при старте (/start)
-  callback  {label:"Текст кнопки"}      — при нажатии reply-кнопки
-  scenario  {name:"имя_сценария"}       — объявление FSM-сценария
+handler:
+  {"id":"h_catalog","type":"callback","trigger":"📦 Каталог","actions":[...]}
+  {"id":"h_inline_router","type":"callback","trigger":"","actions":[...]}  // общий handler для inline callback
+  {"id":"h_catalog_cmd","type":"command","trigger":"/catalog","actions":[...]}
 
-ВНУТРИ СТЕКОВ:
-  message    {text:"..."}                      — ответ пользователю; допускает {переменная}
-  buttons    {rows:"A, B\\nновый ряд"}         — подписи через ЗАПЯТУЮ; новый ряд = \\n; не используй синтаксис inline |
-  ask        {question:"...", varname:"имя"}  — ввод текста или file_id через Telegram
-  remember   {varname:"x", value:"..."}       — положить значение в переменную (сессия диалога)
-  get        {key:"ключ", varname:"результат"} — только в режиме advanced; key должен быть в списке сервера (см. конец промпта)
-  condition  {cond:"..."}                     — если
-  else       {}                               — иначе
-  run        {name:"сценарий"}               — запустить сценарий из start/callback
-  step       {name:"шаг"}                     — шаг внутри scenario
-  stop       {}                               — конец цепочки (см. правила run+stop)
-  send_file  {file:"{переменная}"}            — Telegram sendDocument по file_id (вложение). НЕ путать с message: текст с id — это не файл.
+block:
+  {"id":"b_menu","name":"главное_меню","actions":[...]}
 
-═══ DSL, КОТОРЫЙ СТРОИТ РЕДАКТОР ═══
-Reply-ряд: кнопки "A" "B". В JSON: "rows":"A, B" (подписи через запятую и пробел при одном ряду).
+scenario:
+  {"id":"s_checkout","name":"оформление","steps":[{"id":"step_name","name":"имя","actions":[...]}]}
+
+uiState:
+  {"id":"ui_catalog","message":"📦 Категории:","buttons":"📦 Каталог, 🛒 Корзина"}
+  {"id":"ui_categories","message":"Выберите категорию","inlineDb":{"key":"категории","callbackPrefix":"cat:","backText":"⬅️ Назад","backCallback":"back","columns":"2"}}
+
+action examples:
+  {"type":"message","text":"..."}
+  {"type":"buttons","rows":"A, B\\nC"}
+  {"type":"inline_db","key":"категории","callbackPrefix":"cat:","backText":"⬅️ Назад","backCallback":"back","columns":"2"}
+  {"type":"condition","cond":"начинается_с(callback_data, \"cat:\")","then":[...],"else":[...]}
+  {"type":"run_scenario","target":"оформление"}
+  {"type":"goto_command","target":"/catalog"}
+  {"type":"goto_block","target":"главное_меню"}
+  {"type":"use_block","target":"главное_меню"}
 
 ═══ АРХИТЕКТУРА ═══
 
 КНОПКИ + ОБРАБОТЧИКИ:
-  s0: bot | s1: start→message→buttons→stop | s2: callback→message→stop | … или callback→run→(без stop)
-  После buttons в одном теле нельзя сразу новый message/ask — только stop или run/condition/remember/… (как в few-shot: callback→message→run).
+  start handler показывает uiState/menu.
+  Reply buttons требуют отдельный callback handler с trigger == тексту кнопки.
+  Inline из БД требует общий callback handler trigger == "" и conditions по переменной callback_data.
 
 СЦЕНАРИЙ, НЕСКОЛЬКО ВОПРОСОВ:
   start/callback → run(имя) БЕЗ stop | scenario(имя) → step → ask → step → ask → … → message/condition → stop
@@ -3830,22 +3861,18 @@ Reply-ряд: кнопки "A" "B". В JSON: "rows":"A, B" (подписи че�
 
 ═══ СТРОГИЕ ПРАВИЛА ═══
 
-1. s0 — ТОЛЬКО bot.
-2. id стеков s0,s1,… | id блоков b0,b1,… — уникальны глобально.
-3. Координаты: x=40+(i*360), y=40; если стеков >5: y += 320 для i>=5.
-4. Не ставь несколько ask подряд в start/callback. Для 2+ вопросов — scenario+step и run без stop после run.
-5. ЗАПРЕЩЕНО: stop сразу после run в том же стеке с корнем start/callback.
-6. В стеках без run в конце — последний блок stop.
-7. Стек scenario завершается stop после финального действия.
-8. callback.label совпадает с текстом в buttons.rows.
-9. Русские имена переменных: имя, телефон, город.
-10. В JSON bot.token = литерал YOUR_BOT_TOKEN.
-11. В ключе get.key при подстановке chat_id используй только корректные скобки: "поле_{chat_id}", не опечатывай }.
+1. Не указывай bot/token/editor coordinates — это сделает серверный generator.
+2. Не ставь stop сразу после run_scenario в том же handler.
+3. Для 2+ вопросов используй scenarios.steps, а handler только запускает scenario.
+4. Reply callback trigger совпадает с текстом в buttons.rows.
+5. Inline callback router: handler.type callback, trigger "".
+6. Используй только объявленные переменные и canonical system variables; не придумывай бд/callback/data/state.
+7. В ключе get.key при подстановке chat_id используй только корректные скобки: "поле_{chat_id}", не опечатывай }.
 
 ═══ ПЕРЕМЕННЫЕ ═══
 
 Объявление: ask (varname), get (varname), remember (varname).
-Системные без объявления: chat_id, user_id, текст, сообщение_id, имя, фамилия, кнопка.
+Системные без объявления: пользователь, текст, callback_data.
 
 ЗАПРЕЩЕНО ссылаться на {переменная} в message/condition/send_file.props.file, если она не объявлена выше в этом стеке и не системная.
 
@@ -3881,6 +3908,12 @@ const FEW_SHOT_ASSISTANT_5 = `[{"id":"s0","x":40,"y":40,"blocks":[{"id":"b0","ty
 const FEW_SHOT_USER_6 = `бот по кнопке «Город» спрашивает название города, remember кладёт в переменную город_label строку «Город: {город}», затем message с {город_label}`;
 const FEW_SHOT_ASSISTANT_6 = `[{"id":"s0","x":40,"y":40,"blocks":[{"id":"b0","type":"bot","props":{"token":"YOUR_BOT_TOKEN"}}]},{"id":"s1","x":400,"y":40,"blocks":[{"id":"b1","type":"start","props":{}},{"id":"b2","type":"message","props":{"text":"Выберите действие"}},{"id":"b3","type":"buttons","props":{"rows":"🌍 Указать город"}},{"id":"b4","type":"stop","props":{}}]},{"id":"s2","x":760,"y":40,"blocks":[{"id":"b5","type":"callback","props":{"label":"🌍 Указать город"}},{"id":"b6","type":"run","props":{"name":"город_fsm"}}]},{"id":"s3","x":1120,"y":40,"blocks":[{"id":"b7","type":"scenario","props":{"name":"город_fsm"}},{"id":"b8","type":"step","props":{"name":"ввод"}},{"id":"b9","type":"ask","props":{"question":"В каком вы городе?","varname":"город"}},{"id":"b10","type":"remember","props":{"varname":"город_label","value":"Город: {город}"}},{"id":"b11","type":"message","props":{"text":"Запомнил: {город_label}"}},{"id":"b12","type":"stop","props":{}}]}]`;
 
+const IR_FEW_SHOT_USER = `бот принимает заказы: главное меню с кнопкой "Оформить заказ", сценарий спрашивает имя и телефон`;
+const IR_FEW_SHOT_ASSISTANT = `{"irVersion":1,"targetCore":"0.3.3","compatibilityMode":"0.3.3 exact","intent":{"primary":"order_form"},"state":{"globals":[]},"uiStates":[{"id":"ui_start","message":"Добро пожаловать! Выберите действие:","buttons":"Оформить заказ, ℹ️ О нас"}],"handlers":[{"id":"h_start","type":"start","trigger":"","actions":[{"type":"ui_state","uiStateId":"ui_start"},{"type":"stop"}]},{"id":"h_order","type":"callback","trigger":"Оформить заказ","actions":[{"type":"message","text":"Отлично! Заполним данные для заказа."},{"type":"run_scenario","target":"оформление"}]},{"id":"h_about","type":"callback","trigger":"ℹ️ О нас","actions":[{"type":"message","text":"Мы — магазин на Cicada Studio."},{"type":"stop"}]}],"blocks":[],"scenarios":[{"id":"sc_order","name":"оформление","steps":[{"id":"step_name","name":"имя","actions":[{"type":"ask","question":"Введите ваше имя:","varname":"имя"}]},{"id":"step_phone","name":"телефон","actions":[{"type":"ask","question":"Введите ваш телефон:","varname":"телефон"},{"type":"message","text":"✅ Заказ принят! Имя: {имя}, телефон: {телефон}"},{"type":"stop"}]}]}],"transitions":[{"from":"h_order","to":"sc_order","type":"run_scenario"}]}`;
+
+const IR_FEW_SHOT_USER_2 = `магазин: категории и товары через inline-кнопки из БД`;
+const IR_FEW_SHOT_ASSISTANT_2 = `{"irVersion":1,"targetCore":"0.3.3","compatibilityMode":"0.3.3 exact","intent":{"primary":"db_inline_catalog"},"state":{"globals":[{"name":"категории","value":"[\\"Пицца\\", \\"Напитки\\"]"}]},"uiStates":[{"id":"ui_menu","message":"🏠 Главное меню","buttons":"📦 Каталог"},{"id":"ui_categories","message":"📦 Выберите категорию:","inlineDb":{"key":"категории","callbackPrefix":"cat:","backText":"⬅️ Назад","backCallback":"back","columns":"2"}}],"handlers":[{"id":"h_start","type":"start","trigger":"","actions":[{"type":"ui_state","uiStateId":"ui_menu"},{"type":"stop"}]},{"id":"h_catalog","type":"callback","trigger":"📦 Каталог","actions":[{"type":"ui_state","uiStateId":"ui_categories"},{"type":"stop"}]},{"id":"h_inline","type":"callback","trigger":"","actions":[{"type":"condition","cond":"начинается_с(callback_data, \\"cat:\\")","then":[{"type":"remember","varname":"категория","value":"срез(callback_data, 4)"},{"type":"message","text":"Товары категории: {категория}"},{"type":"inline_db","key":"товары","callbackPrefix":"prod:","backText":"⬅️ Категории","backCallback":"back_categories","columns":"1"},{"type":"stop"}],"else":[{"type":"condition","cond":"начинается_с(callback_data, \\"prod:\\")","then":[{"type":"remember","varname":"товар","value":"срез(callback_data, 5)"},{"type":"message","text":"📦 Товар: {товар}\\nЦена и описание берутся из БД."},{"type":"stop"}],"else":[{"type":"ui_state","uiStateId":"ui_categories"},{"type":"stop"}]}]}]}],"blocks":[],"scenarios":[],"transitions":[{"from":"h_catalog","to":"ui_categories","type":"ui_state"},{"from":"h_inline","to":"ui_categories","type":"inline_router"}]}`;
+
 function serverAiAstPolicyAppendix(astMode, allowedMemoryKeys) {
   const lines = [
     '',
@@ -3904,31 +3937,673 @@ function serverAiAstPolicyAppendix(astMode, allowedMemoryKeys) {
   return lines.join('\n');
 }
 
-function validateAiStacksForGenerate(stacks, astMode, allowedMemoryKeys) {
-  return [...validateAstSchema(stacks), ...semanticValidate(stacks, { astMode, allowedMemoryKeys })];
+function readTextFileSafe(filePath, maxChars = 4000) {
+  try {
+    return fs.readFileSync(filePath, 'utf8').slice(0, maxChars);
+  } catch {
+    return '';
+  }
 }
 
-function buildAstRepairUserPrompt(errors, stacksJsonSnippet) {
+function buildAiCoreContextAppendix() {
+  const apiManifest = readTextFileSafe(path.resolve('core/manifests/api-manifest.json'), 5000);
+  const parserCapabilities = readTextFileSafe(path.resolve('core/manifests/parser-capabilities.default.json'), 3000);
+  const featureMatrix = readTextFileSafe(path.resolve('docs/dsl-feature-matrix.md'), 5000);
   return [
-    'Предыдущий ответ НЕ прошёл проверку JSON Schema / семантики. Исправь ТОЛЬКО JSON-массив стеков.',
+    '',
+    '═══ CORE-AWARE GENERATOR CONTEXT (source of truth) ═══',
+    'Use these manifests as constraints. If user asks for unsupported behavior, model it with supported constructs or omit it.',
+    '',
+    'api-manifest.json:',
+    apiManifest || '(missing)',
+    '',
+    'parser-capabilities.default.json:',
+    parserCapabilities || '(missing)',
+    '',
+    'dsl-feature-matrix.md:',
+    featureMatrix || '(missing)',
+  ].join('\n');
+}
+
+function buildIrRepairUserPrompt(errors, irJsonSnippet) {
+  return [
+    'Предыдущий ответ НЕ прошёл проверку Canonical AI IR / core parity. Исправь ТОЛЬКО JSON-объект IR.',
     '',
     'Ошибки:',
     ...errors.slice(0, 20).map((e, i) => `${i + 1}. ${e}`),
     '',
-    'Текущий (неверный) AST для правки (сохрани id стеков/блоков где возможно):',
-    stacksJsonSnippet,
+    'Текущий IR для правки (сохрани handlers/blocks/scenarios где возможно):',
+    irJsonSnippet,
     '',
-    'Вернёшь один JSON-массив [...] без markdown и без текста до/после.',
+    'Вернёшь один JSON-объект {...} без markdown и без текста до/после.',
   ].join('\n');
 }
 
 function buildNonJsonRepairPrompt() {
   return (
-    'Ответ должен быть ОДНИМ JSON-массивом стеков: с символа [ до ]. Без ```, без пояснений. Повтори попытку.'
+    'Ответ должен быть ОДНИМ JSON-объектом Canonical AI IR: с символа { до }. Без ```, без пояснений. Повтори попытку.'
   );
 }
 
 const AI_GENERATE_PUBLIC_ERROR = 'Cicada AI перегружен попробуйте позже';
+const AI_LLM_MAX_ATTEMPTS = 2; // initial generation + one LLM retry
+const AI_IR_REPAIR_MAX_PASSES = 2;
+const AI_GENERATE_TIMEOUT_MS = 9_000;
+const AI_PARTIAL_DIAGNOSTIC_LIMIT = 20;
+const AI_GENERATE_STATUS = Object.freeze({
+  SUCCESS: 'success',
+  PARTIAL_SUCCESS: 'partial_success',
+  FAILED: 'failed',
+});
+const AI_IR_STATE = Object.freeze({
+  FINAL: 'FINAL_IR',
+  PARTIAL: 'PARTIAL_IR',
+  SKELETON: IR_SKELETON_STATE,
+  INVALID: 'INVALID_IR',
+});
+const AI_NEXT_ACTION = Object.freeze({
+  USE_WITH_CAUTION: 'use_with_caution',
+  RETRY: 'retry',
+  FALLBACK_TEMPLATE: 'fallback_template',
+});
+const AI_PARTIAL_REASON_CODES = Object.freeze({
+  IR_REPAIR_LIMIT_REACHED: 'IR_REPAIR_LIMIT_REACHED',
+  UNKNOWN_SYMBOLS_REPLACED: 'UNKNOWN_SYMBOLS_REPLACED',
+  EMPTY_BRANCH_REMOVED: 'EMPTY_BRANCH_REMOVED',
+  TIMEOUT_FALLBACK: 'TIMEOUT_FALLBACK',
+  IR_FALLBACK_SKELETON_USED: IR_FALLBACK_SKELETON_REASON_CODE,
+});
+const AI_PARTIAL_USER_ACTIONS = Object.freeze({
+  RUN_PARTIAL_SCENARIO: 'run_partial_scenario',
+  REGENERATE: 'regenerate',
+  VIEW_DIAGNOSTICS: 'view_diagnostics',
+});
+
+class AiGenerateTimeoutError extends Error {
+  constructor(stage) {
+    super(`AI generation deadline exceeded during ${stage}`);
+    this.name = 'AiGenerateTimeoutError';
+    this.code = 'IR_REPAIR_TIMEOUT';
+    this.stage = stage;
+  }
+}
+
+function irDiagnosticMessages(diagnostics) {
+  return (diagnostics || []).map((d) => formatIrDiagnostic(d)).filter(Boolean);
+}
+
+function aiTimeRemainingMs(deadline) {
+  return Math.max(0, Number(deadline?.expiresAt || 0) - Date.now());
+}
+
+function assertAiDeadline(deadline, stage) {
+  if (deadline && aiTimeRemainingMs(deadline) <= 0) {
+    throw new AiGenerateTimeoutError(stage);
+  }
+}
+
+function withAiDeadline(promise, deadline, stage) {
+  const remaining = aiTimeRemainingMs(deadline);
+  if (remaining <= 0) return Promise.reject(new AiGenerateTimeoutError(stage));
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new AiGenerateTimeoutError(stage)), remaining);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+function aiStageTimeoutMs(deadline, stage, maxMs = 2_500) {
+  const remaining = aiTimeRemainingMs(deadline);
+  if (remaining <= 500) throw new AiGenerateTimeoutError(stage);
+  return Math.max(500, Math.min(maxMs, remaining - 250));
+}
+
+function normalizeAiDiagnosticForResponse(item) {
+  if (typeof item === 'string') return { code: 'IR_DIAGNOSTIC', message: item };
+  if (!item || typeof item !== 'object') return { code: 'IR_DIAGNOSTIC', message: String(item) };
+  return {
+    code: item.code || item.type || 'IR_DIAGNOSTIC',
+    message: item.message || formatIrDiagnostic(item) || String(item),
+    path: item.path,
+    severity: item.severity || 'error',
+    details: item.details,
+  };
+}
+
+function aiArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function uniqueAiCodes(values) {
+  return [...new Set(aiArray(values).filter(Boolean).map((value) => String(value)))];
+}
+
+function aiSectionItem(code, title, detail, severity = 'info') {
+  return { code, title, detail, severity };
+}
+
+function deriveAiRepairReasonCodes(repairActions = []) {
+  const codes = new Set();
+  for (const action of aiArray(repairActions)) {
+    const text = String(action || '');
+    if (/UNKNOWN_SYMBOL|invented symbol aliases/i.test(text)) {
+      codes.add(AI_PARTIAL_REASON_CODES.UNKNOWN_SYMBOLS_REPLACED);
+    }
+    if (/EMPTY_BRANCH|non-empty executable bodies/i.test(text)) {
+      codes.add(AI_PARTIAL_REASON_CODES.EMPTY_BRANCH_REMOVED);
+    }
+  }
+  return [...codes];
+}
+
+function deriveAiReasonCodes({ reason, diagnostics = [], repairActions = [], meta = {} }) {
+  const codes = new Set(deriveAiRepairReasonCodes(repairActions));
+  const normalizedReason = String(reason || '');
+  if (normalizedReason === 'IR_REPAIR_FAILED') {
+    codes.add(AI_PARTIAL_REASON_CODES.IR_REPAIR_LIMIT_REACHED);
+  }
+  if (normalizedReason === IR_FALLBACK_REASON || meta?.fallbackKind === AI_IR_STATE.SKELETON) {
+    codes.add(AI_PARTIAL_REASON_CODES.IR_FALLBACK_SKELETON_USED);
+  }
+  if (normalizedReason === 'IR_REPAIR_TIMEOUT' || /TIMEOUT/i.test(normalizedReason) || meta?.timeoutMs) {
+    codes.add(AI_PARTIAL_REASON_CODES.TIMEOUT_FALLBACK);
+  }
+  if (meta?.fallbackFrom === 'IR_REPAIR_TIMEOUT') {
+    codes.add(AI_PARTIAL_REASON_CODES.TIMEOUT_FALLBACK);
+  }
+  for (const diagnostic of aiArray(diagnostics)) {
+    if (diagnostic?.code === 'IR_REPAIR_TIMEOUT') {
+      codes.add(AI_PARTIAL_REASON_CODES.TIMEOUT_FALLBACK);
+    }
+  }
+  return uniqueAiCodes([...codes]);
+}
+
+function describeAiRepairAction(action) {
+  const detail = String(action || '').trim();
+  if (/skeleton fallback|SKELETON_IR|базовая версия/i.test(detail)) {
+    return aiSectionItem(
+      AI_PARTIAL_REASON_CODES.IR_FALLBACK_SKELETON_USED,
+      'Skeleton IR fallback generated',
+      detail,
+      'info',
+    );
+  }
+  if (/UNKNOWN_SYMBOL|invented symbol aliases/i.test(detail)) {
+    return aiSectionItem(
+      AI_PARTIAL_REASON_CODES.UNKNOWN_SYMBOLS_REPLACED,
+      'Unknown symbols replaced',
+      detail,
+      'warning',
+    );
+  }
+  if (/EMPTY_BRANCH|non-empty executable bodies/i.test(detail)) {
+    return aiSectionItem(
+      AI_PARTIAL_REASON_CODES.EMPTY_BRANCH_REMOVED,
+      'Empty branch removed',
+      detail,
+      'warning',
+    );
+  }
+  return aiSectionItem('IR_AUTO_REPAIR', 'Automatic IR repair', detail, 'info');
+}
+
+function summarizeAiValidIrParts(canonicalIr, classification) {
+  if (!canonicalIr || typeof canonicalIr !== 'object') {
+    return [
+      aiSectionItem(
+        AI_PARTIAL_REASON_CODES.IR_FALLBACK_SKELETON_USED,
+        'Skeleton IR fallback generated',
+        'Запущена базовая версия сценария (без сложной логики).',
+        'info',
+      ),
+    ];
+  }
+  const handlers = aiArray(canonicalIr.handlers);
+  const scenarios = aiArray(canonicalIr.scenarios);
+  const uiStates = aiArray(canonicalIr.uiStates);
+  const blocks = aiArray(canonicalIr.blocks);
+  const works = [];
+  if (canonicalIr.intent?.primary === 'skeleton_fallback' || classification.irState === AI_IR_STATE.SKELETON) {
+    works.push(aiSectionItem(
+      AI_PARTIAL_REASON_CODES.IR_FALLBACK_SKELETON_USED,
+      'Skeleton IR fallback is executable',
+      'Запущена базовая версия сценария (без сложной логики).',
+      'info',
+    ));
+  }
+  if (classification.hasEntryPoint) {
+    works.push(aiSectionItem('ENTRY_POINT_VALID', 'Entry point found', 'The IR contains a /start or start handler.'));
+  } else {
+    works.push(aiSectionItem('ENTRY_POINT_MISSING', 'Entry point missing', 'No /start or start handler was found.', 'error'));
+  }
+  if (handlers.length > 0) {
+    works.push(aiSectionItem('HANDLERS_COMPILED', 'Handlers compiled', `${handlers.length} trigger handler(s) are present in the IR.`));
+  }
+  if (scenarios.length > 0) {
+    works.push(aiSectionItem('SCENARIOS_COMPILED', 'Scenarios compiled', `${scenarios.length} scenario(s) are present in the IR.`));
+  }
+  if (uiStates.length > 0) {
+    works.push(aiSectionItem('UI_STATES_COMPILED', 'UI states compiled', `${uiStates.length} UI state(s) are available for transitions.`));
+  }
+  if (blocks.length > 0) {
+    works.push(aiSectionItem('REUSABLE_BLOCKS_COMPILED', 'Reusable blocks compiled', `${blocks.length} block(s) are available.`));
+  }
+  return works.length > 0
+    ? works
+    : [aiSectionItem('IR_PRESENT', 'IR object recovered', 'A Canonical IR object was recovered, but it has no executable handlers yet.', 'warning')];
+}
+
+function buildAiDiagnosticSections({ canonicalIr, classification, warnings, repairActions, reason, reasonCodes }) {
+  const whatWasFixed = aiArray(repairActions)
+    .slice(0, AI_PARTIAL_DIAGNOSTIC_LIMIT)
+    .map(describeAiRepairAction);
+  const whatFailed = aiArray(warnings).map((diagnostic) => aiSectionItem(
+    diagnostic.code || 'IR_DIAGNOSTIC',
+    diagnostic.code || 'IR diagnostic',
+    diagnostic.path ? `${diagnostic.path}: ${diagnostic.message}` : diagnostic.message,
+    diagnostic.severity || 'error',
+  ));
+  if (whatFailed.length === 0 && reason) {
+    whatFailed.push(aiSectionItem(
+      reason,
+      'Generation stopped before final IR',
+      `Reason: ${reasonCodes.length ? reasonCodes.join(', ') : reason}`,
+      'warning',
+    ));
+  }
+  return {
+    whatWorks: summarizeAiValidIrParts(canonicalIr, classification),
+    whatWasFixed,
+    whatFailed,
+  };
+}
+
+function buildAiUserActions({ partial, safeToRun, hasDiagnostics, hasStacks }) {
+  if (!partial) return [];
+  return [
+    {
+      id: AI_PARTIAL_USER_ACTIONS.RUN_PARTIAL_SCENARIO,
+      label: 'run partial scenario',
+      enabled: Boolean(safeToRun && hasStacks),
+      disabledReason: safeToRun && !hasStacks
+        ? 'No executable stacks were produced for this partial IR.'
+        : 'Partial IR still has blocking diagnostics.',
+    },
+    { id: AI_PARTIAL_USER_ACTIONS.REGENERATE, label: 'regenerate', enabled: true },
+    {
+      id: AI_PARTIAL_USER_ACTIONS.VIEW_DIAGNOSTICS,
+      label: 'view diagnostics',
+      enabled: Boolean(hasDiagnostics),
+    },
+  ];
+}
+
+function hasAiIrEntryPoint(ir) {
+  return (ir?.handlers || []).some(
+    (handler) =>
+      handler?.type === 'start' ||
+      (handler?.type === 'command' && String(handler?.trigger || '').replace(/^\/+/, '') === 'start'),
+  );
+}
+
+function classifyAiIrState({ canonicalIr, diagnostics = [], final = false }) {
+  const normalizedDiagnostics = diagnostics.map(normalizeAiDiagnosticForResponse);
+  const hasIr = Boolean(canonicalIr && typeof canonicalIr === 'object');
+  const hasEntryPoint = hasIr && hasAiIrEntryPoint(canonicalIr);
+  const hasInvalidSymbols = normalizedDiagnostics.some((d) => d.code === 'UNKNOWN_SYMBOL');
+  const hasBrokenTransitions = normalizedDiagnostics.some(
+    (d) => d.code === 'INVALID_TRANSITION' || d.code === 'MISSING_UI_STATE',
+  );
+  const hasEmptyBranches = normalizedDiagnostics.some((d) => d.code === 'EMPTY_BRANCH');
+  const hasBlockingDiagnostics = hasInvalidSymbols || hasBrokenTransitions || hasEmptyBranches || !hasEntryPoint;
+  const safeToExecute = Boolean(hasIr && hasEntryPoint && !hasInvalidSymbols && !hasBrokenTransitions && !hasEmptyBranches);
+  const isSkeleton = canonicalIr?.intent?.primary === 'skeleton_fallback';
+
+  if (isSkeleton) {
+    return {
+      irState: AI_IR_STATE.SKELETON,
+      validity: 'skeleton',
+      safeToExecute: Boolean(hasEntryPoint),
+      nextAction: AI_NEXT_ACTION.USE_WITH_CAUTION,
+      hasEntryPoint,
+      hasInvalidSymbols,
+      hasBrokenTransitions,
+      hasEmptyBranches,
+    };
+  }
+
+  if (final && hasIr && !normalizedDiagnostics.length && hasEntryPoint) {
+    return {
+      irState: AI_IR_STATE.FINAL,
+      validity: 'final',
+      safeToExecute: true,
+      nextAction: null,
+      hasEntryPoint,
+      hasInvalidSymbols: false,
+      hasBrokenTransitions: false,
+      hasEmptyBranches: false,
+    };
+  }
+
+  if (!hasIr || hasInvalidSymbols || hasBrokenTransitions || !hasEntryPoint) {
+    return {
+      irState: AI_IR_STATE.INVALID,
+      validity: 'invalid',
+      safeToExecute: false,
+      nextAction: hasIr ? AI_NEXT_ACTION.RETRY : AI_NEXT_ACTION.FALLBACK_TEMPLATE,
+      hasEntryPoint,
+      hasInvalidSymbols,
+      hasBrokenTransitions,
+      hasEmptyBranches,
+    };
+  }
+
+  return {
+    irState: AI_IR_STATE.PARTIAL,
+    validity: 'partial',
+    safeToExecute,
+    nextAction: safeToExecute && !hasBlockingDiagnostics
+      ? AI_NEXT_ACTION.USE_WITH_CAUTION
+      : AI_NEXT_ACTION.RETRY,
+    hasEntryPoint,
+    hasInvalidSymbols,
+    hasBrokenTransitions,
+    hasEmptyBranches,
+  };
+}
+
+function buildAiGenerationResult({
+  status,
+  reason,
+  canonicalIr,
+  diagnostics,
+  repairActions,
+  meta,
+  final = false,
+  safeToRun,
+  stacks,
+}) {
+  const warnings = (diagnostics || [])
+    .slice(0, AI_PARTIAL_DIAGNOSTIC_LIMIT)
+    .map(normalizeAiDiagnosticForResponse);
+  const classification = classifyAiIrState({ canonicalIr, diagnostics: warnings, final });
+  const resultStatus = status || (
+    classification.irState === AI_IR_STATE.FINAL
+      ? AI_GENERATE_STATUS.SUCCESS
+      : (classification.irState === AI_IR_STATE.PARTIAL ? AI_GENERATE_STATUS.PARTIAL_SUCCESS : AI_GENERATE_STATUS.FAILED)
+  );
+  const partial = resultStatus !== AI_GENERATE_STATUS.SUCCESS;
+  const responseSafeToRun = typeof safeToRun === 'boolean' ? safeToRun : classification.safeToExecute;
+  const reasonCodes = deriveAiReasonCodes({
+    reason,
+    diagnostics: warnings,
+    repairActions,
+    meta,
+  });
+  const diagnosticSections = buildAiDiagnosticSections({
+    canonicalIr,
+    classification,
+    warnings,
+    repairActions,
+    reason,
+    reasonCodes,
+  });
+  const hasDiagnostics = (
+    diagnosticSections.whatWorks.length +
+    diagnosticSections.whatWasFixed.length +
+    diagnosticSections.whatFailed.length
+  ) > 0;
+  const responseStacks = Array.isArray(stacks) ? stacks : null;
+
+  return {
+    status: resultStatus,
+    reason: reason || null,
+    reasonCodes,
+    ir: canonicalIr || null,
+    canonicalIr: canonicalIr || null,
+    irState: classification.irState,
+    validity: classification.validity,
+    warnings,
+    diagnostics: warnings,
+    safeToRun: responseSafeToRun,
+    safeToExecute: responseSafeToRun,
+    nextAction: classification.nextAction,
+    partial,
+    repairActions: (repairActions || []).slice(0, AI_PARTIAL_DIAGNOSTIC_LIMIT),
+    diagnosticSections,
+    userActions: buildAiUserActions({
+      partial,
+      safeToRun: responseSafeToRun,
+      hasDiagnostics,
+      hasStacks: Boolean(responseStacks?.length),
+    }),
+    meta: {
+      ...(meta || {}),
+      hasEntryPoint: classification.hasEntryPoint,
+      hasInvalidSymbols: classification.hasInvalidSymbols,
+      hasBrokenTransitions: classification.hasBrokenTransitions,
+      hasEmptyBranches: classification.hasEmptyBranches,
+    },
+    ...(responseStacks ? { stacks: responseStacks } : {}),
+  };
+}
+
+function fallbackSourceDiagnostics(diagnostics = []) {
+  return aiArray(diagnostics)
+    .slice(0, Math.max(0, AI_PARTIAL_DIAGNOSTIC_LIMIT - 1))
+    .map((item) => {
+      const diagnostic = normalizeAiDiagnosticForResponse(item);
+      return {
+        code: 'IR_FALLBACK_SOURCE_DIAGNOSTIC',
+        severity: diagnostic.severity === 'error' ? 'warning' : diagnostic.severity,
+        path: diagnostic.path,
+        details: diagnostic.details,
+        message: `[${diagnostic.code}] ${diagnostic.message}`,
+      };
+    });
+}
+
+function buildAiSkeletonFallbackResponse({
+  fallbackFrom,
+  prompt,
+  diagnostics,
+  repairActions,
+  meta,
+}) {
+  const skeletonIr = buildIrSkeletonFallback({ prompt, reason: fallbackFrom || IR_FALLBACK_REASON });
+  const skeletonValidation = validateIrSemanticGate(skeletonIr);
+  const skeletonStacks = canonicalIrToEditorStacks(skeletonIr);
+  const hasEntryPoint = hasAiIrEntryPoint(skeletonIr);
+  const fallbackDiagnostics = [
+    {
+      code: AI_PARTIAL_REASON_CODES.IR_FALLBACK_SKELETON_USED,
+      severity: 'info',
+      message: 'Запущена базовая версия сценария (без сложной логики).',
+    },
+    ...fallbackSourceDiagnostics(diagnostics),
+  ];
+
+  return buildAiGenerationResult({
+    status: AI_GENERATE_STATUS.PARTIAL_SUCCESS,
+    reason: IR_FALLBACK_REASON,
+    canonicalIr: skeletonIr,
+    diagnostics: fallbackDiagnostics,
+    repairActions: [
+      ...(repairActions || []),
+      `${AI_IR_STATE.SKELETON}: generated executable skeleton fallback`,
+    ],
+    safeToRun: Boolean(hasEntryPoint),
+    stacks: skeletonStacks,
+    meta: {
+      ...(meta || {}),
+      fallbackKind: AI_IR_STATE.SKELETON,
+      fallbackFrom: fallbackFrom || null,
+      skeletonValidationOk: skeletonValidation.ok,
+      skeletonDiagnostics: skeletonValidation.diagnostics || [],
+    },
+  });
+}
+
+function buildAiPartialResponse({
+  errorCode,
+  canonicalIr,
+  diagnostics,
+  repairActions,
+  meta,
+  safeToRun,
+  prompt,
+}) {
+  const response = buildAiGenerationResult({
+    status: canonicalIr ? AI_GENERATE_STATUS.PARTIAL_SUCCESS : AI_GENERATE_STATUS.FAILED,
+    reason: errorCode,
+    canonicalIr,
+    diagnostics,
+    repairActions,
+    meta,
+    safeToRun,
+  });
+  if (
+    response.irState === AI_IR_STATE.INVALID ||
+    response.safeToRun !== true ||
+    errorCode === 'IR_REPAIR_TIMEOUT' ||
+    errorCode === 'IR_REPAIR_FAILED' ||
+    errorCode === 'IR_INVALID' ||
+    errorCode === 'IR_EXTRACTION_FAILED' ||
+    errorCode === 'RUNTIME_VALIDATION_FAILED'
+  ) {
+    return buildAiSkeletonFallbackResponse({
+      fallbackFrom: errorCode,
+      prompt,
+      diagnostics,
+      repairActions,
+      meta,
+    });
+  }
+  if (!response.safeToRun || !canonicalIr) return response;
+  try {
+    const stacks = canonicalIrToEditorStacks(canonicalIr);
+    if (Array.isArray(stacks) && stacks.length > 0) {
+      return {
+        ...response,
+        stacks,
+        userActions: buildAiUserActions({
+          partial: response.partial,
+          safeToRun: response.safeToRun,
+          hasDiagnostics: true,
+          hasStacks: true,
+        }),
+      };
+    }
+  } catch (e) {
+    console.warn('[AI] partial IR could not be converted to stacks:', e?.message || e);
+  }
+  return response;
+}
+
+function runDeterministicIrRepairLoop(ir, options = {}) {
+  let current = normalizeAiCanonicalIr(ir);
+  const repairNotes = [];
+  const maxRepairPasses = Math.min(
+    AI_IR_REPAIR_MAX_PASSES,
+    Math.max(0, Number(options.maxRepairPasses ?? AI_IR_REPAIR_MAX_PASSES) || 0),
+  );
+  for (let repairPass = 0; repairPass <= maxRepairPasses; repairPass += 1) {
+    assertAiDeadline(options.deadline, `ir-validate-${repairPass}`);
+    const validation = validateIrSemanticGate(current, options);
+    const messages = irDiagnosticMessages(validation.diagnostics);
+    console.log(
+      `[AI] IR validation iteration ${repairPass}/${maxRepairPasses}: ` +
+        `ok=${validation.ok} errors=${messages.length}` +
+        (messages.length ? ` :: ${messages.slice(0, 6).join(' | ')}` : ''),
+    );
+    if (validation.ok) return { ok: true, ir: current, validation, repairNotes };
+    if (repairPass === maxRepairPasses) return { ok: false, ir: current, validation, repairNotes };
+    assertAiDeadline(options.deadline, `ir-repair-${repairPass + 1}`);
+    const repaired = repairIrDeterministic(current, validation.diagnostics, options);
+    repairNotes.push(...repaired.notes.map((note) => `pass ${repairPass + 1}: ${note}`));
+    console.log(
+      `[AI] IR repair pass ${repairPass + 1}/${maxRepairPasses}: ` +
+        `changed=${repaired.changed} actions=${repaired.notes.length}` +
+        (repaired.notes.length ? ` :: ${repaired.notes.slice(0, 8).join(' | ')}` : ''),
+    );
+    current = normalizeAiCanonicalIr(repaired.ir);
+    if (!repaired.changed) return { ok: false, ir: current, validation, repairNotes };
+  }
+  const validation = validateIrSemanticGate(current, options);
+  return { ok: validation.ok, ir: current, validation, repairNotes };
+}
+
+function validateGeneratedAiDsl(dslFromStacks, options = {}) {
+  const deadline = options.deadline;
+  assertAiDeadline(deadline, 'dsl-validation-start');
+  const unsupportedDslComments = findUnsupportedDslBlockComments(dslFromStacks);
+  if (unsupportedDslComments.length > 0) {
+    return {
+      ok: false,
+      retryable: true,
+      diagnostics: unsupportedDslComments.map((row) => ({
+        code: 'UNSUPPORTED_DSL_BLOCK',
+        message: `стр.${row.line}: ${row.text}`,
+      })),
+    };
+  }
+
+  const schemaErrs = lintDSLSchema(dslFromStacks).filter((d) => d.severity === 'error');
+  assertAiDeadline(deadline, 'dsl-schema-validation');
+  if (schemaErrs.length > 0) {
+    return {
+      ok: false,
+      retryable: true,
+      diagnostics: schemaErrs.map((d) => ({
+        code: d.code || 'DSL_SCHEMA_ERROR',
+        message: formatDSLDiagnostic(d),
+      })),
+    };
+  }
+
+  try {
+    requireParsedDSL(dslFromStacks, {
+      timeoutMs: aiStageTimeoutMs(deadline, 'dsl-parser-validation'),
+    });
+  } catch (parserErr) {
+    return {
+      ok: false,
+      retryable: !parserErr.parserUnavailable,
+      parserUnavailable: Boolean(parserErr.parserUnavailable),
+      diagnostics: (parserErr.diagnostics || []).length
+        ? parserErr.diagnostics
+        : [{ code: parserErr.parserUnavailable ? 'PARSER_UNAVAILABLE' : 'PARSER_REJECTED', message: parserErr.message }],
+      error: parserErr,
+    };
+  }
+
+  assertAiDeadline(deadline, 'runtime-parity-validation');
+  const parity = runAiDslValidationPipeline({
+    rawAiText: dslFromStacks,
+    cwd: process.cwd(),
+    skipSemantic: true,
+    skipProjectGraph: true,
+    syntaxTimeoutMs: aiStageTimeoutMs(deadline, 'runtime-parity-syntax'),
+  });
+  if (!parity.ok) {
+    return {
+      ok: false,
+      retryable: true,
+      diagnostics: parity.diagnostics || [],
+    };
+  }
+
+  return { ok: true, diagnostics: [] };
+}
+
+function runtimeDiagnosticsForPrompt(result) {
+  return (result?.diagnostics || [])
+    .slice(0, 10)
+    .map((d) => `[${d.code || 'RUNTIME_VALIDATION'}] ${d.message || String(d)}`);
+}
 
 
 function findUnsupportedDslBlockComments(dsl) {
@@ -3940,228 +4615,326 @@ function findUnsupportedDslBlockComments(dsl) {
 
 function sendAiGenerateError(res, authUser, status, adminMessage) {
   return res.status(status).json({
+    status: AI_GENERATE_STATUS.FAILED,
+    reason: 'AI_GENERATE_ERROR',
     error: authUser?.role === 'admin' ? adminMessage : AI_GENERATE_PUBLIC_ERROR,
   });
 }
 
 app.post('/api/ai-generate', requireUserAuth, async (req, res) => {
   const authUser = await findById(req.authUserId);
-  if (!authUser) return res.status(401).json({ error: 'Необходима авторизация' });
+  if (!authUser) return res.status(401).json({ status: AI_GENERATE_STATUS.FAILED, reason: 'AUTH_REQUIRED', error: 'Необходима авторизация' });
   if (!isProUser(authUser)) {
     return res.status(403).json({
+      status: AI_GENERATE_STATUS.FAILED,
+      reason: 'PRO_REQUIRED',
       error: 'AI-генерация доступна только с активной подпиской PRO.',
     });
   }
 
   const { prompt } = req.body;
   if (!prompt || typeof prompt !== 'string' || prompt.trim().length < 3) {
-    return res.status(400).json({ error: 'Опиши своего бота подробнее' });
+    return res.status(400).json({ status: AI_GENERATE_STATUS.FAILED, reason: 'PROMPT_TOO_SHORT', error: 'Опиши своего бота подробнее' });
   }
+  const startedAt = Date.now();
+  const deadline = { expiresAt: startedAt + AI_GENERATE_TIMEOUT_MS };
+  let lastIrSnapshot = null;
+  let lastValidIrSnapshot = null;
+  let lastDiagnostics = [];
+  let lastRepairActions = [];
+  let lastAttempt = 0;
   try {
     const astMode = getAiAstMode();
     const allowedMemoryKeys = getAiAllowedMemoryKeys();
-    const repairRounds = getAiAstRepairRounds();
-    const maxAttempts = 1 + repairRounds;
+    const maxAttempts = AI_LLM_MAX_ATTEMPTS;
 
-    const systemContent = AI_SYSTEM_PROMPT + serverAiAstPolicyAppendix(astMode, allowedMemoryKeys);
+    const systemContent =
+      AI_SYSTEM_PROMPT +
+      buildAiCoreContextAppendix() +
+      buildIrSymbolRegistryPromptContext({ allowedMemoryKeys }) +
+      serverAiAstPolicyAppendix(astMode, allowedMemoryKeys);
 
     const initialMessages = [
       { role: 'system', content: systemContent },
-      { role: 'user', content: FEW_SHOT_USER },
-      { role: 'assistant', content: FEW_SHOT_ASSISTANT },
-      { role: 'user', content: FEW_SHOT_USER_2 },
-      { role: 'assistant', content: FEW_SHOT_ASSISTANT_2 },
-      { role: 'user', content: FEW_SHOT_USER_3 },
-      { role: 'assistant', content: FEW_SHOT_ASSISTANT_3 },
-      { role: 'user', content: FEW_SHOT_USER_4 },
-      { role: 'assistant', content: FEW_SHOT_ASSISTANT_4 },
-      { role: 'user', content: FEW_SHOT_USER_5 },
-      { role: 'assistant', content: FEW_SHOT_ASSISTANT_5 },
-      { role: 'user', content: FEW_SHOT_USER_6 },
-      { role: 'assistant', content: FEW_SHOT_ASSISTANT_6 },
+      { role: 'user', content: IR_FEW_SHOT_USER },
+      { role: 'assistant', content: IR_FEW_SHOT_ASSISTANT },
+      { role: 'user', content: IR_FEW_SHOT_USER_2 },
+      { role: 'assistant', content: IR_FEW_SHOT_ASSISTANT_2 },
       { role: 'user', content: prompt.trim() },
     ];
 
     const messages = [...initialMessages];
     let stacks = null;
+    let canonicalIr = null;
     let lastRaw = '';
     let lastAstErrors = [];
 
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      const data = await callGroq(messages, { max_tokens: 4000 });
+      lastAttempt = attempt + 1;
+      assertAiDeadline(deadline, `llm-attempt-${lastAttempt}-start`);
+      const data = await withAiDeadline(
+        callGroq(messages, { max_tokens: 4000 }),
+        deadline,
+        `llm-attempt-${lastAttempt}`,
+      );
       lastRaw = data.choices?.[0]?.message?.content || '';
-      console.log(`[AI] attempt ${attempt + 1}/${maxAttempts}, raw (first 300):`, lastRaw.slice(0, 300));
+      console.log(
+        `[AI] LLM attempt ${lastAttempt}/${maxAttempts}, ` +
+          `remainingMs=${aiTimeRemainingMs(deadline)}, raw (first 300):`,
+        lastRaw.slice(0, 300),
+      );
 
-      const extracted = extractAiGeneratedStacksFromRaw(lastRaw);
+      const extracted = extractAiCanonicalIrFromRaw(lastRaw);
       if (!extracted) {
+        lastDiagnostics = [{ code: 'IR_EXTRACTION_FAILED', message: 'AI response did not contain Canonical IR JSON' }];
         if (attempt < maxAttempts - 1) {
           messages.push({ role: 'assistant', content: lastRaw.slice(0, 12000) });
           messages.push({ role: 'user', content: buildNonJsonRepairPrompt() });
           continue;
         }
         const cleaned = stripThinkingFromAiRaw(lastRaw);
-        console.error('AI вернул не JSON-схему после очистки:', cleaned.slice(0, 400));
-        return sendAiGenerateError(res, authUser, 422, 'AI не смог сгенерировать схему. Попробуй описать подробнее.');
+        console.error('AI вернул не Canonical IR после очистки:', cleaned.slice(0, 400));
+        return res.json(buildAiPartialResponse({
+          errorCode: 'IR_EXTRACTION_FAILED',
+          message: 'AI не смог собрать корректный IR.',
+          canonicalIr: lastIrSnapshot,
+          diagnostics: lastDiagnostics,
+          repairActions: lastRepairActions,
+          meta: { attempts: lastAttempt, elapsedMs: Date.now() - startedAt },
+          prompt: prompt.trim(),
+        }));
       }
 
-      let candidate = extracted.stacks;
-      if (!Array.isArray(candidate) || candidate.length === 0) {
-        lastAstErrors = ['Ожидался непустой JSON-массив стеков'];
+      const candidate = normalizeAiCanonicalIr(extracted.ir);
+      lastIrSnapshot = candidate;
+      if (!candidate || typeof candidate !== 'object') {
+        lastAstErrors = ['Ожидался JSON-объект Canonical AI IR'];
+        lastDiagnostics = lastAstErrors.map((message) => ({ code: 'IR_STRUCTURE_ERROR', message }));
         if (attempt < maxAttempts - 1) {
           messages.push({ role: 'assistant', content: lastRaw.slice(0, 12000) });
-          messages.push({ role: 'user', content: buildAstRepairUserPrompt(lastAstErrors, '[]') });
+          messages.push({ role: 'user', content: buildIrRepairUserPrompt(lastAstErrors, '{}') });
           continue;
         }
-        return sendAiGenerateError(res, authUser, 422, 'AI вернул пустую схему.');
+        return res.json(buildAiPartialResponse({
+          errorCode: 'IR_INVALID',
+          message: 'AI вернул пустой Canonical IR.',
+          canonicalIr: lastIrSnapshot,
+          diagnostics: lastDiagnostics,
+          repairActions: lastRepairActions,
+          meta: { attempts: lastAttempt, elapsedMs: Date.now() - startedAt },
+          prompt: prompt.trim(),
+        }));
       }
 
-      stacks = normalizeAiGeneratedStacks(candidate);
-
-      const badStack = stacks.find((s) => !s || !Array.isArray(s.blocks) || s.blocks.length === 0);
-      if (badStack) {
-        lastAstErrors = ['Есть стек без блоков (blocks пустой или отсутствует)'];
-        if (attempt < maxAttempts - 1) {
-          messages.push({ role: 'assistant', content: lastRaw.slice(0, 12000) });
-          messages.push({
-            role: 'user',
-            content: buildAstRepairUserPrompt(lastAstErrors, JSON.stringify(stacks).slice(0, 14000)),
-          });
-          continue;
-        }
-        return sendAiGenerateError(res, authUser, 422, 'AI вернул неполную схему (есть пустой стек блоков).');
-      }
-
-      lastAstErrors = validateAiStacksForGenerate(stacks, astMode, allowedMemoryKeys);
+      const structuralValidation = validateAiCanonicalIr(candidate, { astMode, allowedMemoryKeys });
+      lastAstErrors = structuralValidation.errors;
+      lastDiagnostics = lastAstErrors.map((message) => ({ code: 'IR_STRUCTURE_ERROR', message }));
       if (lastAstErrors.length > 0) {
-        console.error('[AI] AST validation:', lastAstErrors.join(' | '));
+        console.error('[AI] Canonical IR structure:', lastAstErrors.join(' | '));
         if (attempt < maxAttempts - 1) {
           messages.push({ role: 'assistant', content: lastRaw.slice(0, 12000) });
           messages.push({
             role: 'user',
-            content: buildAstRepairUserPrompt(lastAstErrors, JSON.stringify(stacks).slice(0, 14000)),
+            content: buildIrRepairUserPrompt(lastAstErrors, JSON.stringify(candidate).slice(0, 14000)),
           });
           continue;
         }
-        return sendAiGenerateError(
-          res,
-          authUser,
-          422,
-          `Схема не прошла проверку после ${maxAttempts} попыток (JSON Schema / семантика). ` +
-            lastAstErrors.slice(0, 8).join(' | '),
-        );
+        return res.json(buildAiPartialResponse({
+          errorCode: 'IR_INVALID',
+          message: 'AI не смог собрать корректный Canonical IR после нескольких попыток.',
+          canonicalIr: lastIrSnapshot,
+          diagnostics: lastDiagnostics,
+          repairActions: lastRepairActions,
+          meta: { attempts: lastAttempt, elapsedMs: Date.now() - startedAt },
+          prompt: prompt.trim(),
+        }));
+      }
+
+      lastValidIrSnapshot = candidate;
+      const repaired = runDeterministicIrRepairLoop(candidate, {
+        astMode,
+        allowedMemoryKeys,
+        deadline,
+        maxRepairPasses: AI_IR_REPAIR_MAX_PASSES,
+      });
+      lastIrSnapshot = repaired.ir;
+      lastDiagnostics = repaired.validation?.diagnostics || [];
+      lastRepairActions = [...lastRepairActions, ...repaired.repairNotes];
+      if (!repaired.ok) {
+        const semanticErrors = irDiagnosticMessages(repaired.validation.diagnostics);
+        console.error('[AI] IR semantic gate:', semanticErrors.join(' | '));
+        if (attempt < maxAttempts - 1) {
+          messages.push({ role: 'assistant', content: JSON.stringify(repaired.ir).slice(0, 12000) });
+          messages.push({
+            role: 'user',
+            content: buildIrRepairUserPrompt(
+              semanticErrors.length ? semanticErrors : ['IR semantic repair failed'],
+              JSON.stringify(repaired.ir).slice(0, 14000),
+            ),
+          });
+          continue;
+        }
+        return res.json(buildAiPartialResponse({
+          errorCode: 'IR_REPAIR_FAILED',
+          message: 'AI не смог автоматически исправить структуру сценария.',
+          canonicalIr: repaired.ir,
+          diagnostics: repaired.validation.diagnostics,
+          repairActions: lastRepairActions,
+          meta: {
+            attempts: lastAttempt,
+            repairPasses: AI_IR_REPAIR_MAX_PASSES,
+            elapsedMs: Date.now() - startedAt,
+          },
+          prompt: prompt.trim(),
+        }));
+      }
+
+      if (repaired.repairNotes.length > 0) {
+        console.log('[AI] deterministic IR repair:', repaired.repairNotes.join(' | '));
+      }
+
+      canonicalIr = repaired.ir;
+      lastValidIrSnapshot = canonicalIr;
+      stacks = canonicalIrToEditorStacks(canonicalIr);
+
+      assertAiDeadline(deadline, 'dsl-generation');
+      const dslFromStacks = generateDSL(stacks);
+      const runtimeValidation = validateGeneratedAiDsl(dslFromStacks, { deadline });
+      if (!runtimeValidation.ok) {
+        const runtimeErrors = runtimeDiagnosticsForPrompt(runtimeValidation);
+        lastDiagnostics = runtimeValidation.diagnostics || [];
+        console.error('[AI] Runtime validation rejected generated DSL:', runtimeErrors.join(' | '));
+        if (runtimeValidation.parserUnavailable) {
+          return res.json(buildAiSkeletonFallbackResponse({
+            fallbackFrom: 'PARSER_UNAVAILABLE',
+            prompt: prompt.trim(),
+            diagnostics: runtimeValidation.diagnostics,
+            repairActions: lastRepairActions,
+            meta: { attempts: lastAttempt, elapsedMs: Date.now() - startedAt },
+          }));
+        }
+        if (attempt < maxAttempts - 1 && runtimeValidation.retryable !== false) {
+          messages.push({ role: 'assistant', content: JSON.stringify(canonicalIr).slice(0, 12000) });
+          messages.push({
+            role: 'user',
+            content: buildIrRepairUserPrompt(
+              runtimeErrors.length ? runtimeErrors : ['Runtime validation rejected generated DSL'],
+              JSON.stringify(canonicalIr).slice(0, 14000),
+            ),
+          });
+          stacks = null;
+          canonicalIr = null;
+          continue;
+        }
+        return res.json(buildAiPartialResponse({
+          errorCode: 'RUNTIME_VALIDATION_FAILED',
+          message: 'AI собрал IR, но сценарий не прошёл runtime validation.',
+          canonicalIr,
+          diagnostics: runtimeValidation.diagnostics,
+          repairActions: lastRepairActions,
+          meta: { attempts: lastAttempt, elapsedMs: Date.now() - startedAt },
+          safeToRun: false,
+          prompt: prompt.trim(),
+        }));
       }
 
       break;
     }
 
     if (!stacks) {
-      return sendAiGenerateError(res, authUser, 422, 'AI не вернул валидную схему.');
+      return res.json(buildAiPartialResponse({
+        errorCode: 'IR_INVALID',
+        message: 'AI не вернул валидную схему.',
+        canonicalIr: lastIrSnapshot,
+        diagnostics: lastDiagnostics,
+        repairActions: lastRepairActions,
+        meta: { attempts: lastAttempt, elapsedMs: Date.now() - startedAt },
+        prompt: prompt.trim(),
+      }));
     }
 
-    const dslFromStacks = generateDSL(stacks);
-    const unsupportedDslComments = findUnsupportedDslBlockComments(dslFromStacks);
-    if (unsupportedDslComments.length > 0) {
-      const hint = unsupportedDslComments
-        .slice(0, 5)
-        .map((row) => `стр.${row.line}: ${row.text}`)
-        .join(' | ');
-      console.error('[AI] Unsupported DSL comments after generation:', hint);
-      return sendAiGenerateError(
-        res,
-        authUser,
-        422,
-        `AI вернул блоки, которые генератор не смог превратить в рабочий DSL. ${hint}`,
-      );
-    }
-
-    const schemaDiags = lintDSLSchema(dslFromStacks);
-    const schemaErrs = schemaDiags.filter((d) => d.severity === 'error');
-    if (schemaErrs.length > 0) {
-      const hint = schemaErrs
-        .slice(0, 5)
-        .map((d) => formatDSLDiagnostic(d))
-        .join(' ');
-      console.error('[AI] DSL schema lint failed:', hint);
-      return sendAiGenerateError(
-        res,
-        authUser,
-        422,
-        `Схема от AI не прошла проверку синтаксиса. Попробуй ещё раз или опиши задачу иначе. ${hint}`,
-      );
-    }
-
-    // ── Обязательная проверка через Python-парсер Cicada ─────────────────
-    // requireParsedDSL бросает исключение если парсер недоступен ИЛИ нашёл ошибки.
-    // AI-ответ никогда не уходит клиенту без прохождения через парсер.
-    try {
-      requireParsedDSL(dslFromStacks);
-    } catch (parserErr) {
-      if (parserErr.parserUnavailable) {
-        // Парсер не установлен / Python не найден — сервер настроен неправильно
-        console.error('[AI] Cicada parser unavailable:', parserErr.message);
-        return sendAiGenerateError(
-          res,
-          authUser,
-          503,
-          `Парсер Cicada недоступен на сервере. Проверьте установку Python и vendor/cicada-dsl-parser. ${parserErr.message}`,
-        );
-      }
-      // Парсер отклонил DSL — просим AI попробовать ещё раз
-      console.error('[AI] Cicada parser rejected DSL:', parserErr.message);
-      return sendAiGenerateError(
-        res,
-        authUser,
-        422,
-        `Схема от AI не прошла парсер Cicada. Попробуй ещё раз. ${parserErr.message}`.trim(),
-      );
-    }
-
-    // ── UI-валидатор конструктора ────────────────────────────────────────
-    // Python-парсер отвечает только за грамматику. Перед отправкой схемы в
-    // редактор прогоняем те же правила, что вкладка «Проверка ошибок» в UI.
-    const uiValidation = validateUiDsl(dslFromStacks, stacks);
-    const uiDiagnostics = [...uiValidation.errors, ...uiValidation.warnings];
-    if (uiDiagnostics.length > 0) {
-      const hint = uiDiagnostics.slice(0, 5).join(' ');
-      console.error('[AI] UI validator rejected schema:', hint);
-      return sendAiGenerateError(
-        res,
-        authUser,
-        422,
-        `Схема от AI не прошла UI-валидатор конструктора. Попробуй ещё раз. ${hint}`.trim(),
-      );
-    }
-
-    res.json({ stacks });
+    res.json({
+      ...buildAiGenerationResult({
+        status: AI_GENERATE_STATUS.SUCCESS,
+        reason: null,
+        canonicalIr,
+        diagnostics: [],
+        repairActions: lastRepairActions,
+        meta: { attempts: lastAttempt, elapsedMs: Date.now() - startedAt },
+        final: true,
+        stacks,
+      }),
+    });
 
   } catch (e) {
+    if (e?.code === 'IR_REPAIR_TIMEOUT') {
+      const elapsedMs = Date.now() - startedAt;
+      console.error(
+        `[AI] generation timeout stage=${e.stage || 'unknown'} ` +
+          `attempts=${lastAttempt} elapsedMs=${elapsedMs} diagnostics=${lastDiagnostics.length}`,
+      );
+      return res.json(buildAiPartialResponse({
+        errorCode: 'IR_REPAIR_TIMEOUT',
+        message: 'AI generation timed out.',
+        canonicalIr: lastValidIrSnapshot || lastIrSnapshot,
+        diagnostics: lastDiagnostics.length
+          ? lastDiagnostics
+          : [{ code: 'IR_REPAIR_TIMEOUT', message: 'AI generation exceeded time budget.' }],
+        repairActions: lastRepairActions,
+        meta: {
+          attempts: lastAttempt,
+          elapsedMs,
+          timeoutMs: AI_GENERATE_TIMEOUT_MS,
+          stage: e.stage,
+        },
+        prompt: prompt.trim(),
+      }));
+    }
     const kind = e?.llmKind;
     if (kind === 'NETWORK') {
       console.error('POST /api/ai-generate', e.message);
-      return sendAiGenerateError(res, authUser, 503, e.message);
+      return res.json(buildAiSkeletonFallbackResponse({
+        fallbackFrom: 'AI_NETWORK_ERROR',
+        prompt: prompt.trim(),
+        diagnostics: [{ code: 'AI_NETWORK_ERROR', message: e.message }],
+        repairActions: lastRepairActions,
+        meta: { attempts: lastAttempt, elapsedMs: Date.now() - startedAt },
+      }));
     }
     if (kind === 'RATE_LIMIT') {
       console.error('POST /api/ai-generate', e.message);
-      return sendAiGenerateError(res, authUser, 429, e.message);
+      return res.json(buildAiSkeletonFallbackResponse({
+        fallbackFrom: 'AI_RATE_LIMIT',
+        prompt: prompt.trim(),
+        diagnostics: [{ code: 'AI_RATE_LIMIT', message: e.message }],
+        repairActions: lastRepairActions,
+        meta: { attempts: lastAttempt, elapsedMs: Date.now() - startedAt },
+      }));
     }
     if (kind === 'API' || kind === 'BAD_RESPONSE') {
       console.error('POST /api/ai-generate', e.message);
-      return sendAiGenerateError(
-        res,
-        authUser,
-        502,
-        `Провайдер ИИ вернул ошибку. Проверьте ${llmConfigHint()} и лимиты. ` +
-          (e.message?.length < 400 ? e.message : ''),
-      );
+      return res.json(buildAiSkeletonFallbackResponse({
+        fallbackFrom: `AI_${kind}`,
+        prompt: prompt.trim(),
+        diagnostics: [{
+          code: `AI_${kind}`,
+          message:
+            `Провайдер ИИ вернул ошибку. Проверьте ${llmConfigHint()} и лимиты. ` +
+            (e.message?.length < 400 ? e.message : ''),
+        }],
+        repairActions: lastRepairActions,
+        meta: { attempts: lastAttempt, elapsedMs: Date.now() - startedAt },
+      }));
     }
     console.error('POST /api/ai-generate', e);
     pushSystemError('POST /api/ai-generate', e instanceof Error ? e : new Error(String(e)));
-    return sendAiGenerateError(
-      res,
-      authUser,
-      500,
-      'Внутренняя ошибка сервера. Попробуйте позже.',
-    );
+    return res.json(buildAiSkeletonFallbackResponse({
+      fallbackFrom: 'AI_INTERNAL_ERROR',
+      prompt: prompt.trim(),
+      diagnostics: [{ code: 'AI_INTERNAL_ERROR', message: e?.message || 'Внутренняя ошибка сервера.' }],
+      repairActions: lastRepairActions,
+      meta: { attempts: lastAttempt, elapsedMs: Date.now() - startedAt },
+    }));
   }
 });
 

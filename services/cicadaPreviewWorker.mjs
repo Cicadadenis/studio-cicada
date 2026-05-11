@@ -25,11 +25,13 @@ function spawnWorker(pkgRoot) {
     PYTHONUTF8: '1',
     PYTHONIOENCODING: 'utf-8',
     PYTHONUNBUFFERED: '1',
-    PYTHONPATH: pkgRoot + (process.env.PYTHONPATH ? `${sep}${process.env.PYTHONPATH}` : ''),
+    ...(pkgRoot
+      ? { PYTHONPATH: pkgRoot + (process.env.PYTHONPATH ? `${sep}${process.env.PYTHONPATH}` : '') }
+      : {}),
   };
 
   const proc = spawn(py, ['-u', '-m', 'cicada.preview_worker'], {
-    cwd: pkgRoot,
+    cwd: pkgRoot || process.cwd(),
     env,
     windowsHide: true,
   });
@@ -91,14 +93,6 @@ function spawnWorker(pkgRoot) {
  */
 export function sendPreviewRequest(body) {
   const pkgRoot = cicadaPkgRoot();
-  if (!pkgRoot) {
-    return Promise.resolve({
-      ok: false,
-      error:
-        'Превью недоступно: задайте CICADA_TG_ROOT в .env (абсолютный путь к репозиторию cicada-tg, где лежит папка cicada/).',
-    });
-  }
-
   spawnWorker(pkgRoot);
 
   if (!child?.stdin) {
@@ -133,6 +127,6 @@ export function sendPreviewRequest(body) {
 export function previewWorkerStatus() {
   return {
     running: Boolean(child && !child.killed),
-    cicadaRoot: cicadaPkgRoot() || null,
+    cicadaRoot: cicadaPkgRoot() || 'installed-package',
   };
 }

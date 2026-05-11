@@ -95,8 +95,7 @@ const BUILTIN_DSL_CASES = [
 `,
   },
   {
-    name: 'намеренная ошибка: ) вместо } в ключе',
-    expectParserFail: true,
+    name: 'legacy: ядро 0.3.3 допускает ) внутри строкового ключа',
     dsl: `бот "TEST"
 сценарий s:
     шаг a:
@@ -190,8 +189,7 @@ const BUILTIN_DSL_CASES = [
 `),
   },
   {
-    name: 'намеренная ошибка: неподдерживаемый формат фото с подписью не игнорируется',
-    expectParserFail: true,
+    name: 'legacy: ядро 0.3.3 допускает фото с подписью',
     dsl: `бот "TEST"
 при старте:
     фото "https://example.com/a.jpg" "подпись"

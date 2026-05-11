@@ -75,6 +75,41 @@ class UserContext:
     def render(self, parts: list) -> str:
         return "".join(self.resolve(p) for p in parts)
 
+    def to_dict(self) -> dict:
+        """Сериализует FSM-состояние пользователя для внешнего storage."""
+        return {
+            "chat_id": self.chat_id,
+            "user_id": self.user_id,
+            "vars": dict(self.vars),
+            "user_obj": dict(self.user_obj),
+            "chat_obj": dict(self.chat_obj),
+            "scenario": self.scenario,
+            "step": self.step,
+            "step_names": dict(self.step_names),
+            "waiting_for": self.waiting_for,
+            "pending_stmts": getattr(self, "_pending_stmts", []),
+            "current_step_name": getattr(self, "current_step_name", None),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict, globals_dict: dict = None) -> "UserContext":
+        """Восстанавливает UserContext из to_dict()."""
+        ctx = cls(
+            int(data.get("chat_id", 0)),
+            globals_dict=globals_dict,
+            user_id=data.get("user_id"),
+        )
+        ctx.vars.update(data.get("vars") or {})
+        ctx.user_obj.update(data.get("user_obj") or {})
+        ctx.chat_obj.update(data.get("chat_obj") or {})
+        ctx.scenario = data.get("scenario")
+        ctx.step = int(data.get("step") or 0)
+        ctx.step_names = dict(data.get("step_names") or {})
+        ctx.waiting_for = data.get("waiting_for")
+        ctx._pending_stmts = list(data.get("pending_stmts") or [])
+        ctx.current_step_name = data.get("current_step_name")
+        return ctx
+
 
 class Runtime:
     def __init__(self, globals_dict: dict = None):
@@ -102,3 +137,18 @@ class Runtime:
         """Обновляет аватар пользователя в контексте."""
         if chat_id in self._users:
             self._users[chat_id].user_obj["фото"] = photo_url
+
+    def to_dict(self) -> dict:
+        """Сериализует весь runtime для сохранения между процессами."""
+        return {
+            "globals": dict(self._globals),
+            "users": {str(chat_id): ctx.to_dict() for chat_id, ctx in self._users.items()},
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Runtime":
+        """Восстанавливает runtime из to_dict()."""
+        rt = cls(data.get("globals") or {})
+        for chat_id, ctx_data in (data.get("users") or {}).items():
+            rt._users[int(chat_id)] = UserContext.from_dict(ctx_data, rt._globals)
+        return rt

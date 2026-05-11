@@ -8,6 +8,7 @@ import sys
 import traceback
 
 from cicada.adapters.mock_telegram import MockTelegramAdapter
+from cicada.core import effects_to_dicts
 from cicada.executor import CicadaRuntimeError, Executor
 from cicada.parser import Parser
 
@@ -36,9 +37,9 @@ def run_preview_turn(
     try:
         exe = Executor(program, tg)
         if callback_data is not None and callback_data != "":
-            exe.handle(callback_update(str(callback_data), int(chat_id)))
+            effects = exe.handle(callback_update(str(callback_data), int(chat_id)))
         else:
-            exe.handle(message_update(str(text), int(chat_id)))
+            effects = exe.handle(message_update(str(text), int(chat_id)))
     except CicadaRuntimeError as e:
         return {"ok": False, "error": str(e), "outbound": list(tg.outbound)}
     except Exception as e:
@@ -48,7 +49,7 @@ def run_preview_turn(
             "trace": traceback.format_exc()[-4000:],
             "outbound": list(tg.outbound),
         }
-    return {"ok": True, "outbound": list(tg.outbound)}
+    return {"ok": True, "outbound": list(tg.outbound), "effects": effects_to_dicts(effects)}
 
 
 def main():

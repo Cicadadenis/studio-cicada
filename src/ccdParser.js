@@ -275,19 +275,20 @@ function parseNode(line) {
   }
 
   // ── Telegram расширения ─────────────────────────────────────────────────
-  // inline-кнопки из бд "key" текст "name" callback "prefix:" назад "Назад" -> "back"
+  // inline из бд "key" текст "name" id "id" callback "prefix:" назад "Назад" -> "back"
   {
-    const dbInlineMatch = t.match(/^inline-кнопки из бд\s+"([^"]+)"(?:\s+текст\s+"([^"]*)")?(?:\s+callback\s+"([^"]*)")?(?:\s+назад\s+"([^"]*)"\s*(?:→|->)\s*"([^"]*)")?(?:\s+колонки\s+(\d+))?/);
+    const dbInlineMatch = t.match(/^inline(?:-кнопки)?\s+из\s+бд\s+"([^"]+)"(?:\s+текст\s+"([^"]*)")?(?:\s+id\s+"([^"]*)")?(?:\s+callback\s+"([^"]*)")?(?:\s+назад\s+"([^"]*)"\s*(?:→|->)\s*"([^"]*)")?(?:(?:\s+колонки\s+|\s+columns=)(\d+))?/);
     if (dbInlineMatch) {
       return {
         type: 'inline_db',
         props: {
           key: dbInlineMatch[1],
-          labelField: dbInlineMatch[2] || 'name',
-          callbackPrefix: dbInlineMatch[3] || 'item:',
-          backText: dbInlineMatch[4] || '⬅️ Назад',
-          backCallback: dbInlineMatch[5] || 'назад',
-          columns: dbInlineMatch[6] || '1',
+          labelField: dbInlineMatch[2] || '',
+          idField: dbInlineMatch[3] || '',
+          callbackPrefix: dbInlineMatch[4] || 'item:',
+          backText: dbInlineMatch[5] || '⬅️ Назад',
+          backCallback: dbInlineMatch[6] || 'назад',
+          columns: dbInlineMatch[7] || '1',
         },
         root: false,
       };

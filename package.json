@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "npm run core:guard && vite build",
     "preview": "vite preview",
     "server": "node server.mjs",
     "check:server": "node --check server.mjs",
@@ -13,6 +13,9 @@
     "parser-smoke": "node scripts/parser-batch-check.mjs",
     "parser-smoke:regression": "node scripts/parser-batch-check.mjs --regression",
     "ci:parser": "CI=true node scripts/parser-batch-check.mjs && CI=true node scripts/parser-batch-check.mjs --regression && python3 scripts/callback-parser-check.py && node scripts/core-blocks-check.mjs",
+    "core:guard": "node scripts/core-guard.mjs",
+    "ci:compat": "node scripts/compatibility-ci.mjs",
+    "validator-flow-check": "node scripts/ui-flow-analysis-check.mjs",
     "parser-callback-check": "python3 scripts/callback-parser-check.py",
     "parser-core-blocks": "node scripts/core-blocks-check.mjs"
   },

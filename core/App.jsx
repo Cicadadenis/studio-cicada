@@ -798,6 +798,7 @@ const FIELDS = {
   inline:    [{ key:'buttons',   label:'кнопки: Текст|callback, ...\n(запятая = в ряд, Enter = новый ряд)', tag:'textarea', rows:4 }],
   inline_db: [{ key:'key',       label:'ключ БД со списком', tag:'input' },
               { key:'labelField', label:'поле текста кнопки', tag:'input' },
+              { key:'idField', label:'поле id для callback', tag:'input' },
               { key:'callbackPrefix', label:'callback prefix', tag:'input' },
               { key:'backText',  label:'текст кнопки назад', tag:'input' },
               { key:'backCallback', label:'callback назад', tag:'input' },
@@ -2902,6 +2903,7 @@ export default function App() {
       if (t.startsWith('блок '))        return { type: 'block',    props: { name: t.replace(/^блок\s+/, '').replace(/:$/, '').trim() } };
       if (t.startsWith('при команде ')) return { type: 'command',  props: { cmd: (extractString(t) || '').replace(/^\//, '') } };
       if (t.startsWith('команда '))     return { type: 'command',  props: { cmd: (extractString(t) || '').replace(/^\//, '') } };
+      if (t === 'при нажатии:' || t === 'при нажатии') return { type: 'callback', props: { label: '' } };
       if (t.startsWith('при нажатии ')) return { type: 'callback', props: { label: extractString(t) || '' } };
       // Медиа-триггеры — корневые обработчики, правильные типы (не callback)
       if (t === 'при тексте:' || t === 'при тексте')           return { type: 'on_text',     props: {} };
@@ -2944,14 +2946,15 @@ export default function App() {
       if (t.startsWith('кнопка '))      { const label = extractString(t); const cb = t.match(/->\s*"([^"]+)"/)?.[1] || ''; return { type: 'buttons', props: { rows: label, target: cb } }; }
       if (t.startsWith('пауза ') || t.startsWith('подождать ')) { const s = t.match(/\d+/)?.[0] || '1'; return { type: 'delay', props: { seconds: s } }; }
       if (t.startsWith('печатает '))    { const s = t.match(/\d+/)?.[0] || '1'; return { type: 'typing', props: { seconds: s } }; }
-      if (t.startsWith('inline-кнопки из бд ')) {
+      if (/^inline(?:-кнопки)?\s+из\s+бд\s+/i.test(t)) {
         const key = extractString(t);
-        const labelField = t.match(/\sтекст\s+"([^"]*)"/)?.[1] || 'name';
+        const labelField = t.match(/\sтекст\s+"([^"]*)"/)?.[1] || '';
+        const idField = t.match(/\sid\s+"([^"]*)"/)?.[1] || '';
         const callbackPrefix = t.match(/\scallback\s+"([^"]*)"/)?.[1] || 'item:';
         const backText = t.match(/\sназад\s+"([^"]*)"/)?.[1] || '⬅️ Назад';
         const backCallback = t.match(/\sназад\s+"[^"]*"\s*(?:→|->)\s*"([^"]*)"/)?.[1] || 'назад';
-        const columns = t.match(/\sколонки\s+(\d+)/)?.[1] || '1';
-        return { type: 'inline_db', props: { key, labelField, callbackPrefix, backText, backCallback, columns } };
+        const columns = t.match(/(?:\sколонки\s+|\scolumns=)(\d+)/)?.[1] || '1';
+        return { type: 'inline_db', props: { key, labelField, idField, callbackPrefix, backText, backCallback, columns } };
       }
       // HTTP: "запрос GET "url" → var" (формат DSL-генератора)
       if (t.startsWith('http_заголовки ')) { const v = t.replace(/^http_заголовки\s+/, '').trim(); return { type: 'http', props: { method: 'HEADERS', varname: v } }; }
@@ -6022,8 +6025,8 @@ const EXAMPLE_FULL = `версия "1.0"
             </div>
           </div>
           <div style={{ fontSize: 10, color: 'rgba(148,163,184,0.9)', padding: '6px 12px', lineHeight: 1.45 }}>
-            Сервер выполняет сценарий через mock Telegram (без вашего Bot API). На сервере нужен{' '}
-            <span style={{ color: '#7dd3fc' }}>CICADA_TG_ROOT</span> в .env.
+            Сервер выполняет сценарий через mock Telegram (без вашего Bot API) на установленном ядре{' '}
+            <span style={{ color: '#7dd3fc' }}>cicada-tg</span>.
           </div>
           <div
             ref={previewScrollRef}

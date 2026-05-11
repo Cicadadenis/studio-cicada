@@ -1,5 +1,4 @@
 import sys
-import os
 
 from cicada.runner import run_file, load_program
 
@@ -9,7 +8,6 @@ def _print_help():
     CYAN = "\033[36m"
     GREEN = "\033[32m"
     YELLOW = "\033[33m"
-    MAGENTA = "\033[35m"
     BOLD = "\033[1m"
     RESET = "\033[0m"
     DIM = "\033[2m"
@@ -61,7 +59,7 @@ def main():
 
     # Обработка глобальных флагов
     if "--version" in args or "-v" in args:
-        print("cicada-tg 0.1.9")
+        print("cicada-tg 0.3.3")
         return
 
     if "--help" in args or "-h" in args:
@@ -91,8 +89,8 @@ def main():
     path = files[0]
     try:
         if subcommand == "check":
-            # Проверяем парсинг/загрузку DSL (без запуска polling).
-            load_program(path)
+            # Проверяем парсинг/загрузку DSL (без запуска polling и без требования токена).
+            load_program(path, require_token=False)
             print(f"[OK] Синтаксис и загрузка DSL успешны: {path}")
             return
 
@@ -109,3 +107,6 @@ def main():
         print(f"[ERR] Ошибка: {e}")
         sys.exit(1)
 
+
+if __name__ == "__main__":
+    main()

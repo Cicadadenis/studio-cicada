@@ -257,12 +257,12 @@ chmod +x bootstrap.sh
 sudo bash bootstrap.sh           # VPS: от root
 
 # При необходимости зафиксировать версию рантайма DSL:
-sudo CICADA_TG_PIN=0.1.8 bash bootstrap.sh
+sudo CICADA_TG_PIN=0.3.3 bash bootstrap.sh
 ```
 
 Скрипт:
 
-- ставит системные зависимости (**Node.js 20**, **PM2**, **PostgreSQL**, **Nginx** — кроме Termux), ставит **`cicada-tg`** с PyPI (по умолчанию **0.1.8**); при наличии `cicada` в `PATH` пропишет актуальный **`CICADA_BIN`** в `.env`;
+- ставит системные зависимости (**Node.js 20**, **PM2**, **PostgreSQL**, **Nginx** — кроме Termux), ставит **`cicada-tg`** с PyPI (по умолчанию **0.3.3**); при наличии `cicada` в `PATH` пропишет актуальный **`CICADA_BIN`** в `.env`;
 - создаёт пользователя и БД PostgreSQL (на **Termux** используется `psql` от текущего пользователя, на Linux — `sudo -u postgres`);
 - генерирует **`ADMIN_KEY`**, **`JWT_SECRET`** (≥32 символов для production) и при необходимости сам `.env`;
 - в режиме **PROD** помогает с **Let's Encrypt**; в **LOCAL** — self-signed и прокси на Node.

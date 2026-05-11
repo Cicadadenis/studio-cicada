@@ -24,6 +24,7 @@ import sys
 import traceback
 
 from cicada.adapters.mock_telegram import MockTelegramAdapter
+from cicada.core import effects_to_dicts
 from cicada.executor import CicadaRuntimeError, Executor
 from cicada.parser import Parser
 
@@ -92,7 +93,7 @@ def _handle(req: dict) -> dict:
         if "message" in up and up["message"]:
             up["message"]["message_id"] = msg_id
         slot["msg_seq"] = msg_id + 1
-        exe.handle(up)
+        effects = exe.handle(up)
     except CicadaRuntimeError as e:
         return {"ok": False, "error": str(e), "outbound": list(tg.outbound)}
     except Exception as e:
@@ -103,7 +104,7 @@ def _handle(req: dict) -> dict:
             "outbound": list(tg.outbound),
         }
 
-    return {"ok": True, "outbound": list(tg.outbound)}
+    return {"ok": True, "outbound": list(tg.outbound), "effects": effects_to_dicts(effects)}
 
 
 def main():

@@ -1,6 +1,6 @@
-# Migration Architecture: `studio-cicada` → `cicada-tg==0.2.7`
+# Migration Architecture: `studio-cicada` → `cicada-tg==0.3.3`
 
-> Scope note: direct package introspection of `cicada-tg==0.2.7` from PyPI was not possible in this environment (package index/network restriction), so this mapping is produced from the runtime code present in this repository (`cicada/*`, `core/*`) and should be validated against the exact exported symbols of `cicada-tg==0.2.7` before implementation.
+> Scope note: current alignment target is the installed `cicada-tg==0.3.3` package from `/usr/local/lib/python3.12/dist-packages`.
 
 ## 1) Architecture comparison
 
@@ -12,7 +12,7 @@
   - local adapters for Telegram/mock (`core/adapters/*`, `cicada/adapters/*`)
 - This means current system is **hybrid** (builder + runtime), not thin-client.
 
-### B. Target model (`cicada-tg==0.2.7` as source of truth)
+### B. Target model (`cicada-tg==0.3.3` as source of truth)
 - Runtime ownership must move 100% to package/runtime service:
   - AST schema validation
   - DSL→AST compile
@@ -41,7 +41,7 @@
 
 ## 3) API mapping table (`studio-cicada` → runtime)
 
-> Function names below are integration targets; confirm exact names/signatures in `cicada-tg==0.2.7` docs.
+> Function names below are integration targets; confirm exact names/signatures in `cicada-tg==0.3.3` docs.
 
 | Studio action | Current local mechanism | Target `cicada-tg` API call | Request payload | Response |
 |---|---|---|---|---|
@@ -92,7 +92,7 @@
                 | 3) POST /memory/*
                 | 4) POST /media/*
                 v
-      [cicada-tg Runtime Service 0.2.7]
+      [cicada-tg Runtime Service 0.3.3]
       ├─ AST validator + compiler
       ├─ Execution engine
       ├─ Runtime state + memory

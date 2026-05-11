@@ -1,4 +1,4 @@
-import { collectDSLFixes } from './fixes.js';
+import { analyzeDslControlFlow } from './uiFlowAnalysis.js';
 import { lintDSLSchema, formatDSLDiagnostic } from './schema.js';
 import { INLINE_BLOCK_HEADERS, isRuntimeVar } from '../runtime/rules.js';
 
@@ -11,6 +11,7 @@ export function validateDSL(code, stacks, blockTypes = []) {
   const warnings = [];
   const lines = code.split('\n');
   const schemaDiagnostics = lintDSLSchema(code);
+  const controlFlow = analyzeDslControlFlow(code);
 
   schemaDiagnostics.forEach((diag) => {
     const formatted = formatDSLDiagnostic(diag);
@@ -161,10 +162,11 @@ export function validateDSL(code, stacks, blockTypes = []) {
         : (b.props?.name || b.props?.scenario || b.props?.target);
       if ((isGoto || isRun) && target) {
         const targetNorm = target.replace(/^\//, '');
-        // Валидна цель если: это объявленный сценарий, объявленная команда, шаг внутри сценария, или специальное значение
+        // Валидна цель если: это объявленный сценарий/блок, объявленная команда, шаг внутри сценария, или специальное значение
         // Шаги сценария: проверяем по собранным именам шагов, потом по имени сценария, потом по команде
         const isValid =
           declaredScenarios.has(target) ||
+          (isGoto && declaredBlocks.has(target)) ||
           declaredCommands.has(target) ||
           declaredCommands.has(targetNorm) ||
           declaredSteps.has(target) ||   // имя шага внутри сценария
@@ -365,16 +367,12 @@ export function validateDSL(code, stacks, blockTypes = []) {
   // ✅ 4. Автоисправления (стрелки -> → →, и т.д.)
   // Собираем их для кнопки «Исправить», но не показываем как warning.
   // ═══════════════════════════════════════════════════════════════════════
-  const lint = collectDSLFixes(code);
-
   return {
     errors,
     warnings,
     hasStart,
     hasBot,
     schemaDiagnostics,
-    fixes: lint.fixes,
-    correctedCode: lint.correctedCode,
-    changedLineIndexes: lint.changedLines,
+    controlFlow,
   };
 }

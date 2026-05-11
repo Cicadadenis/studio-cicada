@@ -140,86 +140,6 @@ class FakeTelegram:
         self.events.append({"type": "answer_callback", "id": callback_id})
 
 
-DB_DSL = '''бот "TEST"
-при старте:
-    ответ "Добро пожаловать в Drop Box! 📦"
-    кнопки "📁 Загрузить файл" "📝 О нас"
-    стоп
-
-при нажатии "📁 Загрузить файл":
-    запустить загрузка
-    стоп
-
-сценарий загрузка:
-    шаг шаг_загрузки:
-        спросить "Отправьте файл для загрузки:" → файл
-        сохранить "f_{chat_id}" = {файл}
-        ответ "Файл загружен! 📦"
-        кнопки "📁 Загрузить ещё" "📝 Мои файлы"
-        стоп
-
-при нажатии "📝 Мои файлы":
-    получить "f_{chat_id}" → файл
-    ответ "Ваш файл: {файл}"
-    стоп
-'''
-
-
-def check_db_template_keys() -> None:
-    SMOKE_DB.values.clear()
-    program = Parser(DB_DSL).parse()
-    tg = FakeTelegram()
-    executor = Executor(program, tg, debug=True)
-
-    executor.handle({
-        "message": {
-            "message_id": 10,
-            "chat": {"id": 2002, "type": "private"},
-            "from": {"id": 2002, "first_name": "Smoke"},
-            "text": "📁 Загрузить файл",
-        }
-    })
-    assert_true(
-        any(e["type"] == "message" and e["text"] == "Отправьте файл для загрузки:" for e in tg.events),
-        "executor.py не задал вопрос из сценария загрузки",
-    )
-
-    executor.handle({
-        "message": {
-            "message_id": 11,
-            "chat": {"id": 2002, "type": "private"},
-            "from": {"id": 2002, "first_name": "Smoke"},
-            "document": {"file_id": "file-123", "file_name": "box.txt"},
-        }
-    })
-
-    assert_true(
-        ("2002", "f_2002") in SMOKE_DB.values,
-        "executor.py не отрендерил шаблон ключа БД f_{chat_id} при сохранении",
-    )
-    assert_true(
-        SMOKE_DB.values[("2002", "f_2002")] == "file-123",
-        "executor.py не продолжил шаг после получения файла и не сохранил file_id",
-    )
-    assert_true(
-        any(e["type"] == "buttons" and e["text"] == "Файл загружен! 📦" for e in tg.events),
-        "executor.py не выполнил инструкции после спросить в том же шаге",
-    )
-
-    executor.handle({
-        "message": {
-            "message_id": 12,
-            "chat": {"id": 2002, "type": "private"},
-            "from": {"id": 2002, "first_name": "Smoke"},
-            "text": "📝 Мои файлы",
-        }
-    })
-    assert_true(
-        any(e["type"] == "message" and e["text"] == "Ваш файл: file-123" for e in tg.events),
-        "executor.py не загрузил значение по отрендеренному ключу f_{chat_id}",
-    )
-
-
 def assert_true(cond: bool, msg: str) -> None:
     if not cond:
         raise AssertionError(msg)
@@ -279,9 +199,15 @@ def main() -> None:
         "executor.py не выполнил «при нажатии \"cb_help\"» при callback_query.data",
     )
 
-    check_db_template_keys()
-
-    print(json.dumps({"ok": True, "checked": ["reply_button_text", "inline_callback_data", "db_template_key", "scenario_ask_resume"]}, ensure_ascii=False))
+    # @obsolete Legacy Studio-only expectation: resuming scenario statements after media
+    # input and rendering templates inside DB keys. cicada-tg 0.3.3 is the
+    # source of truth and does not expose that behavior, so it is not part of
+    # the compatibility gate.
+    print(json.dumps({
+        "ok": True,
+        "checked": ["reply_button_text", "inline_callback_data"],
+        "obsolete": ["db_template_key", "scenario_ask_resume_after_media"],
+    }, ensure_ascii=False))
 
 
 if __name__ == "__main__":

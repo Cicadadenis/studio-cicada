@@ -1,0 +1,14 @@
+---
+description: Enforce cicada-tg canonical core boundaries
+alwaysApply: true
+---
+
+# Core Compatibility Policy
+
+- `cicada-tg==0.3.3` is the canonical core and source of truth.
+- Do not modify runtime behavior in `cicada/`, `core/*.py`, or `vendor/cicada-dsl-parser/cicada/` by hand.
+- Runtime changes must happen upstream in `cicada-tg`, then be synced into this repo and verified with `npm run core:guard`.
+- Studio is a thin UI/editor layer. It may generate DSL, show hints, and call adapters, but it must not override parser, executor, runtime, event, adapter, or DB semantics.
+- Put integration glue in `services/`, `src/`, or explicit adapter/extension files. Never import `legacy/` from core runtime paths.
+- Mark obsolete compatibility behavior with `@obsolete` and isolate it under `legacy/`.
+- Before finishing core-adjacent work, run `npm run ci:compat` and `npm run build`.

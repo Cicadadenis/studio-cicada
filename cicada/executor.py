@@ -5,30 +5,31 @@ Cicada Executor — обходит AST и вызывает Telegram API.
 Каждая инструкция — отдельный метод _exec_<тип>.
 """
 
+import re
 import time
 import json as _json
 import datetime as _dt
 import os as _os
-import re
 from urllib.parse import quote as _url_quote
-import requests
+from cicada.core import (
+    ButtonsEffect, CallbackEvent, CoreEffect, CoreEvent, InlineKeyboardEffect,
+    MediaEffect, MediaEvent, MessageEffect, MessageEvent, PlatformEffect,
+    RequestsHttpClient, TelegramUpdateNormalizer,
+)
 
 from cicada.parser import (
-    Program, Handler, Reply, RandomReply, SwitchStmt, Ask, Remember, If,
-    parse_condition,
-    parse_expr,
-    parse_string_expr,
-    Buttons, InlineButton, InlineKeyboard, InlineKeyboardFromDB, Photo, PhotoVar, Sticker,
+    Program, Handler, Reply, RandomReply, Ask, Remember, If,
+    Buttons, InlineButton, InlineKeyboard, InlineKeyboardFromList, InlineKeyboardFromDB, Photo, PhotoVar, Sticker,
     GlobalVar,
     StartScenario, Step,
     Condition, VarRef, FunctionCall, ComplexCondition,
-    ForwardPhoto, ForwardInput, SaveFile,
+    ForwardPhoto, SaveFile,
     SendDocument, SendAudio, SendVideo, SendVoice,
     SendLocation, SendContact, SendPoll, SendInvoice,
     SendGame, SendMarkdown, DownloadFile,
     EndScenario, ReturnFromScenario, RepeatStep, GotoStep,
     SaveToDB, LoadFromDB,
-    HttpGet, FetchJson, ParseJson, HttpPost,
+    HttpGet, HttpPost,
     Log, Sleep,
     TelegramAPI,
     UseBlock,
@@ -40,30 +41,13 @@ from cicada.parser import (
     WhileLoop, BreakLoop, ContinueLoop, Timeout,
     Notify, Broadcast,
     CheckSubscription, GetChatMemberRole, ForwardMsg,
-    LoadJson, SaveJson, DeleteFile, DeleteDictKey, SetDictKey,
-    HttpPatch, HttpPut, HttpDelete, SetHttpHeaders,
+    LoadJson, ParseJson, SaveJson, DeleteFile, DeleteDictKey, SetDictKey,
+    HttpPatch, HttpPut, HttpDelete, SetHttpHeaders, FetchJson,
     DeleteFromDB, GetAllDBKeys, SaveGlobalDB, LoadFromUserDB,
     ReturnValue, CallBlock,
 )
 from cicada.database import get_db
 from cicada.runtime import Runtime
-
-
-def auto_cast(value):
-    """
-    Значения из «спросить» приходят строками; приводим чистые int/float к числам,
-    чтобы {a + b}, сравнения с 0 и деление работали ожидаемо.
-    """
-    if value is None:
-        return value
-    if not isinstance(value, str):
-        return value
-    value = value.strip()
-    if re.fullmatch(r"-?\d+", value):
-        return int(value)
-    if re.fullmatch(r"-?\d+\.\d+", value):
-        return float(value)
-    return value
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -162,10 +146,15 @@ def _to_number(val, op: str, side: str):
             f"Используйте в_число(переменная) для явного преобразования."
         )
     if isinstance(val, _NUMERIC):
-        return float(val)
+        return val
     if isinstance(val, str):
+        s = val.strip()
         try:
-            return float(val)
+            if re.fullmatch(r"-?\d+", s):
+                return int(s)
+            if re.fullmatch(r"-?\d+\.\d+", s):
+                return float(s)
+            return float(s)
         except ValueError:
             raise CicadaTypeError(
                 f"Операция '{op}': {side} — строка {val!r}, не является числом.\n"
@@ -180,6 +169,19 @@ def _coerce_numeric(left, right, op: str):
     l = _to_number(left,  op, "левый операнд")
     r = _to_number(right, op, "правый операнд")
     return l, r
+
+
+def _auto_cast(value):
+    if isinstance(value, str):
+        value = value.strip()
+
+        if re.fullmatch(r"-?\d+", value):
+            return int(value)
+
+        if re.fullmatch(r"-?\d+\.\d+", value):
+            return float(value)
+
+    return value
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -215,7 +217,7 @@ def register_func(name: str, fn) -> None:
 _BUILTIN_FUNCS = {
     # строковые
     "содержит", "длина", "начинается_с", "верхний", "нижний",
-    "обрезать", "разделить", "соединить", "urlencode", "url_encode", "кодировать_url",
+    "обрезать", "разделить", "соединить",
     # новые строковые
     "заменить", "найти", "срез",
     # типизация
@@ -232,6 +234,8 @@ _BUILTIN_FUNCS = {
     "формат_даты",
     # JSON
     "разобрать_json", "в_json",
+    # URL (значения в query string)
+    "кодировать_url",
 }
 
 _FORBIDDEN_FUNCS = {
@@ -353,42 +357,18 @@ def _eval_attr(target, name: str):
     )
 
 
-def _normalize_var_name(name: str) -> str:
-    """Возвращает имя переменной без шаблонных обёрток.
-
-    Старый парсер условий иногда отдаёт VarRef с исходным фрагментом
-    вроде ``{логин}`` (или с пробелами/кавычками вокруг него). В строгом
-    режиме это приводило к ошибке "Переменная '{логин}' не определена",
-    хотя в контексте уже была переменная ``логин``. Нормализуем имя перед
-    поиском, чтобы шаблонный синтаксис работал одинаково в условиях,
-    ответах и выражениях.
-    """
-    if not isinstance(name, str):
-        return name
-
-    normalized = name.strip()
-
-    # Допускаем одинарные/двойные кавычки вокруг шаблонного имени, которые
-    # могут остаться после legacy fallback: "{логин}" -> логин.
-    if len(normalized) >= 2 and normalized[0] == normalized[-1] and normalized[0] in ("'", '"'):
-        inner = normalized[1:-1].strip()
-        if inner.startswith("{") and inner.endswith("}"):
-            normalized = inner
-
-    # Поддерживаем шаблонный синтаксис {переменная} в выражениях
-    # (например, если {логин} == "admin":). Делаем это в цикле, чтобы
-    # безопасно обработать двойную обёртку вида {{логин}}.
-    while len(normalized) >= 3 and normalized.startswith("{") and normalized.endswith("}"):
-        inner = normalized[1:-1].strip()
-        if inner == normalized:
-            break
-        normalized = inner
-
-    return normalized
-
-
 def _get_var(name: str, ctx, strict: bool):
-    name = _normalize_var_name(name)
+    # В шаблонах пользователи часто пишут переменные как {логин}.
+    # Обычно парсер раскрывает такие шаблоны заранее, но старые AST-узлы
+    # (например, VarRef из fallback-парсера условий) могут донести имя вместе
+    # с фигурными скобками до runtime. Нормализуем его здесь, чтобы {логин}
+    # ссылался на уже сохранённую переменную логин, а не считался отдельным именем.
+    if isinstance(name, str):
+        raw_name = name.strip()
+        if raw_name.startswith("{") and raw_name.endswith("}"):
+            inner_name = raw_name[1:-1].strip()
+            if inner_name:
+                name = inner_name
 
     # Встроенные динамические переменные
     if name == "текущая_дата":
@@ -455,27 +435,16 @@ def _eval_binop(node: BinaryOp, ctx, strict: bool):
             )
         if isinstance(left, _NUMERIC) and isinstance(right, _NUMERIC):
             return left + right
-        # Два операнда-строки: если оба похожи на числа (ввод пользователя) —
-        # складываем арифметически, иначе конкатенация текстов.
-        if isinstance(left, str) and isinstance(right, str):
-            try:
-                lf = float(left)
-                rf = float(right)
-                if lf == int(lf) and rf == int(rf):
-                    return int(lf) + int(rf)
-                return lf + rf
-            except (ValueError, OverflowError):
-                return left + right
+        if isinstance(left, str) or isinstance(right, str):
+            l_str = "" if left  is None else str(left)
+            r_str = "" if right is None else str(right)
+            return l_str + r_str
         if isinstance(left, _NUMERIC) and isinstance(right, str):
-            try:
-                return left + float(right)
-            except ValueError:
-                return str(left) + right
+            try:    return left + float(right)
+            except ValueError: return str(left) + right
         if isinstance(left, str) and isinstance(right, _NUMERIC):
-            try:
-                return float(left) + right
-            except ValueError:
-                return left + str(right)
+            try:    return float(left) + right
+            except ValueError: return left + str(right)
         return str(left) + str(right)
 
     if op == "содержит":
@@ -503,7 +472,10 @@ def _eval_binop(node: BinaryOp, ctx, strict: bool):
         if op == "*":  return l * r
         if op == "/":
             if r == 0: raise CicadaRuntimeError("Деление на ноль")
-            return l / r
+            q = l / r
+            if isinstance(q, float) and q.is_integer():
+                return int(q)
+            return q
         if op == "//":
             if r == 0: raise CicadaRuntimeError("Целочисленное деление на ноль")
             return int(l // r)
@@ -597,8 +569,6 @@ def _call_builtin(name: str, args: list):
         sep   = str(args[0]) if args else ""
         items = args[1] if len(args) > 1 else []
         return sep.join(str(i) for i in (items if isinstance(items, list) else [items]))
-    if name in ("urlencode", "url_encode", "кодировать_url"):
-        return _url_quote(str(args[0]) if args else "", safe="")
 
     # типизация — старые
     if name == "число":
@@ -613,9 +583,15 @@ def _call_builtin(name: str, args: list):
             raise CicadaTypeError("в_число(): нужен хотя бы один аргумент.")
         v = args[0]
         if isinstance(v, bool):     return 1 if v else 0
-        if isinstance(v, _NUMERIC): return float(v)
+        if isinstance(v, _NUMERIC): return v
         if isinstance(v, str):
-            try:    return float(v)
+            s = v.strip()
+            try:
+                if re.fullmatch(r"-?\d+", s):
+                    return int(s)
+                if re.fullmatch(r"-?\d+\.\d+", s):
+                    return float(s)
+                return float(s)
             except ValueError:
                 raise CicadaTypeError(
                     f"в_число(): не удаётся преобразовать {v!r} в число."
@@ -746,29 +722,18 @@ def _call_builtin(name: str, args: list):
         except TypeError as e:
             raise CicadaRuntimeError(f"в_json(): не удаётся сериализовать: {e}")
 
+    # ── URL ────────────────────────────────────────────────────────────
+
+    if name == "кодировать_url":
+        if not args:
+            return ""
+        # Полное кодирование для подстановки в ?data=… (пробелы, &, кириллица)
+        return _url_quote(str(args[0]), safe="")
+
     raise CicadaRuntimeError(f"Неизвестная функция: '{name}'")
 
 
-def _looks_like_compound_legacy_rhs(value) -> bool:
-    """Проверяет legacy RHS, который на самом деле содержит хвост условия."""
-    if not isinstance(value, VarRef) or not isinstance(value.name, str):
-        return False
-    raw = value.name
-    return "&&" in raw or "||" in raw or " и " in raw or " или " in raw
-
-
 def _eval_legacy_condition(cond: Condition, ctx, strict: bool) -> bool:
-    if _looks_like_compound_legacy_rhs(cond.right):
-        # Старый fallback мог разобрать выражение вида
-        # {логин} == "admin" && пароль == "123" как одно сравнение,
-        # где RHS = '"admin" && пароль == "123"'. Перед вычислением
-        # собираем исходную строку обратно и отдаём современному parser/evaluator.
-        left_raw = cond.left.name if isinstance(cond.left, VarRef) else str(eval_expr(cond.left, ctx, strict))
-        repaired = parse_condition(f"{left_raw} {cond.op} {cond.right.name}")
-        result = eval_expr(repaired, ctx, strict)
-        result = result if isinstance(result, bool) else _truthy(result)
-        return not result if cond.negate else result
-
     left  = eval_expr(cond.left, ctx, strict)
     right = eval_expr(cond.right, ctx, strict)
     op    = cond.op
@@ -788,26 +753,28 @@ def _eval_legacy_complex(cond: ComplexCondition, ctx, strict: bool) -> bool:
 
 
 class Executor:
-    def __init__(self, program: Program, tg, debug: bool = False):
+    def __init__(self, program: Program, tg, debug: bool = False, http=None, store=None):
         self.program = program
         self.tg      = tg
         self.debug   = debug
+        self.http    = http or RequestsHttpClient()
+        self.store   = store or get_db()
         self.runtime = Runtime(program.globals)
+        self.effects: list[CoreEffect] = []
 
         self._dispatch: dict = {
             Reply:              self._exec_reply,
             Ask:                self._exec_ask,
             Remember:           self._exec_remember,
             If:                 self._exec_if,
-            SwitchStmt:         self._exec_switch,
             Buttons:            self._exec_buttons,
             InlineButton:       self._exec_inline_button,
             InlineKeyboard:     self._exec_inline_keyboard,
+            InlineKeyboardFromList: self._exec_inline_keyboard_from_list,
             InlineKeyboardFromDB: self._exec_inline_keyboard_from_db,
             Photo:              self._exec_photo,
             Sticker:            self._exec_sticker,
             ForwardPhoto:       self._exec_forward_photo,
-            ForwardInput:       self._exec_forward_input,
             SaveFile:           self._exec_save_file,
             StartScenario:      self._exec_start_scenario_stmt,
             SendMarkdown:       self._exec_send_markdown,
@@ -829,8 +796,6 @@ class Executor:
             SaveToDB:           self._exec_save_to_db,
             LoadFromDB:         self._exec_load_from_db,
             HttpGet:            self._exec_http_get,
-            FetchJson:          self._exec_fetch_json,
-            ParseJson:          self._exec_parse_json,
             HttpPost:           self._exec_http_post,
             Log:                self._exec_log,
             Sleep:              self._exec_sleep,
@@ -854,6 +819,7 @@ class Executor:
             ForwardMsg:         self._exec_forward_msg,
             # Файлы и JSON
             LoadJson:           self._exec_load_json,
+            ParseJson:          self._exec_parse_json,
             SaveJson:           self._exec_save_json,
             DeleteFile:         self._exec_delete_file,
             DeleteDictKey:      self._exec_delete_dict_key,
@@ -863,6 +829,7 @@ class Executor:
             HttpPut:            self._exec_http_put,
             HttpDelete:         self._exec_http_delete,
             SetHttpHeaders:     self._exec_set_http_headers,
+            FetchJson:          self._exec_fetch_json,
             # БД расширения
             DeleteFromDB:       self._exec_delete_from_db,
             GetAllDBKeys:       self._exec_get_all_db_keys,
@@ -912,16 +879,27 @@ class Executor:
                 return val.value
             return val
 
+        def _fmt_scalar(val):
+            if val is None:
+                return ""
+            val = _unwrap(val)
+            if isinstance(val, bool):
+                return str(val)
+            if isinstance(val, int):
+                return str(val)
+            if isinstance(val, float):
+                return str(int(val)) if val.is_integer() else str(val)
+            return str(val)
+
         def _fmt(val):
             if val is None:
                 return ""
-            # Разворачиваем Literal
             val = _unwrap(val)
             if isinstance(val, list):
-                return ", ".join(str(_unwrap(x)) for x in val)
+                return ", ".join(_fmt_scalar(x) for x in val)
             if isinstance(val, dict):
-                return ", ".join(f"{_unwrap(k)}={_unwrap(v)}" for k, v in val.items())
-            return str(val)
+                return ", ".join(f"{_fmt_scalar(k)}={_fmt_scalar(v)}" for k, v in val.items())
+            return _fmt_scalar(val)
 
         result = []
         for part in parts:
@@ -935,18 +913,104 @@ class Executor:
     def _resolve_val(self, val, ctx):
         return self._eval(val, ctx)
 
+    def _regex_fallback_db_template(self, template: str, ctx) -> str:
+        """Подстановка {chat_id} / {user_id} без парсера, если основной путь шаблона не сработал."""
+
+        def repl(m: re.Match) -> str:
+            name = m.group(1).strip()
+            if name == "chat_id":
+                return str(ctx.chat_id)
+            if name == "user_id":
+                return str(ctx.user_id)
+            return m.group(0)
+
+        return re.sub(r"\{([^}]+)\}", repl, template)
+
+    def _render_template_string(self, template: str, ctx) -> str:
+        """Разбор шаблона ключа БД: parse_string_expr + _render_parts; иначе regex-fallback на chat_id/user_id."""
+        if not template or "{" not in template:
+            return str(template)
+        from cicada.parser import parse_string_expr
+
+        try:
+            parts = parse_string_expr(f'"{template}"')
+            return self._render_parts(parts, ctx)
+        except Exception:
+            return self._regex_fallback_db_template(template, ctx)
+
+    def _resolve_db_key(self, key, ctx) -> str:
+        """Ключ БД: строковый шаблон через _render_template_string, иначе выражение через _resolve_val."""
+        if isinstance(key, str):
+            return self._render_template_string(key, ctx)
+        return str(self._resolve_val(key, ctx))
+
     # ═══════════════════════════════════════════════════════════════
     #  Entry point
     # ═══════════════════════════════════════════════════════════════
 
-    def handle(self, update: dict):
-        callback_query = update.get("callback_query")
-        if callback_query:
-            self._handle_callback(callback_query)
+    def handle(self, update: dict | CoreEvent):
+        """Выполняет один входящий update/event и возвращает список core effects."""
+        self.effects = []
+        if isinstance(update, CoreEvent):
+            self._handle_core_event(update)
+            return list(self.effects)
+
+        event = TelegramUpdateNormalizer.from_update(update)
+        if event is not None:
+            self._handle_core_event(event)
+        return list(self.effects)
+
+    def _handle_core_event(self, event: CoreEvent):
+        if isinstance(event, CallbackEvent):
+            self._handle_callback({
+                "id": event.callback_id or "core_callback",
+                "from": self._event_user(event),
+                "message": self._event_message_base(event),
+                "data": event.data,
+            })
             return
-        msg = update.get("message")
-        if msg:
-            self._handle_message(msg)
+        msg = self._event_message_base(event)
+        if isinstance(event, MediaEvent):
+            msg.update(self._media_event_payload(event))
+        elif isinstance(event, MessageEvent):
+            msg["text"] = event.text
+        self._handle_message(msg)
+
+    def _event_user(self, event: CoreEvent) -> dict:
+        return {
+            "id": event.user_id or event.chat_id,
+            "is_bot": False,
+            "first_name": event.first_name or event.username,
+            "username": event.username,
+            "last_name": event.last_name,
+            "language_code": event.language_code,
+        }
+
+    def _event_message_base(self, event: CoreEvent) -> dict:
+        return {
+            "message_id": event.message_id,
+            "from": self._event_user(event),
+            "chat": {"id": event.chat_id, "type": event.chat_type},
+            "date": 0,
+        }
+
+    def _media_event_payload(self, event: MediaEvent) -> dict:
+        media_type = event.media_type
+        if media_type in ("фото", "photo"):
+            return {"photo": [{"file_id": event.file_id}]}
+        if media_type in ("документ", "document"):
+            return {"document": {"file_id": event.file_id, "file_name": event.file_name}}
+        if media_type in ("голосовое", "voice"):
+            return {"voice": {"file_id": event.file_id}}
+        if media_type in ("аудио", "audio"):
+            return {"audio": {"file_id": event.file_id}}
+        if media_type in ("стикер", "sticker"):
+            return {"sticker": {"file_id": event.file_id, "emoji": event.sticker_emoji}}
+        if media_type in ("геолокация", "location"):
+            return {"location": {"latitude": event.latitude, "longitude": event.longitude}}
+        if media_type in ("контакт", "contact"):
+            return {"contact": {"first_name": event.contact_name, "phone_number": event.contact_phone}}
+        return {}
 
     def _handle_callback(self, callback_query: dict):
         msg     = callback_query.get("message", {})
@@ -972,6 +1036,7 @@ class Executor:
         ctx.set("текст", data)
 
         try:
+            self._send_platform("answer_callback", ctx.chat_id, callback_query_id=callback_query["id"])
             self.tg.answer_callback(callback_query["id"])
         except Exception:
             pass
@@ -986,9 +1051,7 @@ class Executor:
             return
 
         if ctx.waiting_for:
-            ctx.set(ctx.waiting_for, auto_cast(data))
-            ctx.waiting_for = None
-            self._resume_after_wait(ctx)
+            self._resume_waiting_input(ctx, data)
             # `вернуть` должен влиять только на текущую обработку тела,
             # но не на after_each middleware.
             ctx._return_requested = False
@@ -996,11 +1059,20 @@ class Executor:
             return
 
         matched = False
+        # Точные callback-обработчики важнее общего `при нажатии:`.
+        # Иначе роутер без trigger перехватывает кнопку вроде "назад" раньше
+        # специализированного `при нажатии "назад":`.
         for h in self.program.handlers:
-            if h.kind == "callback" and (h.trigger is None or h.trigger == data):
+            if h.kind == "callback" and h.trigger == data:
                 self._exec_body(h.body, ctx)
                 matched = True
                 break
+        if not matched:
+            for h in self.program.handlers:
+                if h.kind == "callback" and h.trigger is None:
+                    self._exec_body(h.body, ctx)
+                    matched = True
+                    break
 
         if not matched:
             matched = self._run_text_handlers(ctx)
@@ -1016,6 +1088,67 @@ class Executor:
         ctx._return_requested = False
         self._run_after_each(ctx)
 
+    def _resume_waiting_input(self, ctx, value):
+        """Сохраняет ответ пользователя и продолжает отложенное выполнение."""
+        ctx.set(ctx.waiting_for, _auto_cast(value))
+        ctx.waiting_for = None
+
+        if ctx.scenario:
+            self._recover_pending_tail_if_lost(ctx)
+            self._continue_scenario(ctx)
+            return
+
+        pending = getattr(ctx, "_pending_stmts", None)
+        if pending:
+            ctx._pending_stmts = []
+            self._exec_body(pending, ctx)
+
+    def _answer_value_for_media_kind(self, media_kind: str, ctx) -> str | None:
+        """Значение, которое кладём в переменную спросить при приходе медиа."""
+        if media_kind in ("document_received", "photo_received", "voice_received",
+                          "sticker_received"):
+            fid = ctx.get("файл_id")
+            return str(fid) if fid not in (None, "") else None
+        if media_kind == "location_received":
+            lat, lon = ctx.get("широта"), ctx.get("долгота")
+            if lat is None or lon is None or lat == "" or lon == "":
+                return None
+            return f"{lat},{lon}"
+        if media_kind == "contact_received":
+            phone = ctx.get("контакт_телефон")
+            if phone not in (None, ""):
+                return str(phone)
+            name = ctx.get("контакт_имя")
+            return str(name) if name not in (None, "") else None
+        return None
+
+    def _recover_pending_tail_if_lost(self, ctx):
+        """Если _pending_stmts потерялся (рестарт, сериализация), восстанавливаем хвост после спросить."""
+        if getattr(ctx, "_pending_stmts", None):
+            return
+        if not ctx.scenario:
+            return
+        steps = self.program.scenarios.get(ctx.scenario, [])
+        if ctx.step < 1:
+            return
+        prev_idx = ctx.step - 1
+        if prev_idx < 0 or prev_idx >= len(steps):
+            return
+        prev = steps[prev_idx]
+        if isinstance(prev, Step):
+            body = prev.body
+            for i, stmt in enumerate(body):
+                if isinstance(stmt, Ask):
+                    tail = body[i + 1 :]
+                    if tail:
+                        ctx._pending_stmts = tail
+                    break
+            return
+        if isinstance(prev, Ask):
+            tail = steps[prev_idx + 1 :]
+            if tail:
+                ctx._pending_stmts = tail
+
     def _handle_message(self, msg: dict):
         chat_id   = msg["chat"]["id"]
         user_info = msg.get("from", {})
@@ -1030,8 +1163,8 @@ class Executor:
         # Сбрасываем флаг "вернуть" для каждого входящего update.
         ctx._return_requested = False
         ctx.set("сообщение_id", msg.get("message_id", 0))
-        text = msg.get("text") or msg.get("caption") or ""
-        ctx.set("текст", text)  # Устанавливаем текст ДО middleware (caption — для фото/документов)
+        text = msg.get("text", "")
+        ctx.set("текст", text)  # Устанавливаем текст ДО middleware
 
         for h in self.program.handlers:
             if h.kind == "before_each":
@@ -1044,10 +1177,13 @@ class Executor:
         media_kind = self._detect_media(msg, ctx)
 
         if media_kind:
-            if ctx.waiting_for and ctx.get("файл_id"):
-                ctx.set(ctx.waiting_for, ctx.get("файл_id"))
-                ctx.waiting_for = None
-                self._resume_after_wait(ctx)
+            if not hasattr(ctx, "_pending_stmts"):
+                ctx._pending_stmts = []
+            answer = self._answer_value_for_media_kind(media_kind, ctx)
+            self._log("DEBUG", f"[media] kind={media_kind} waiting_for={ctx.waiting_for!r} answer={answer!r} файл_id={ctx.get('файл_id')!r} scenario={ctx.scenario!r} pending={len(getattr(ctx,'_pending_stmts',[]))}", ctx)
+            if ctx.waiting_for and answer is not None:
+                self._log("DEBUG", f"[media] → ответ в {ctx.waiting_for!r}, pending_stmts={len(ctx._pending_stmts)}", ctx)
+                self._resume_waiting_input(ctx, answer)
                 ctx._return_requested = False
                 self._run_after_each(ctx)
                 return
@@ -1057,9 +1193,7 @@ class Executor:
             return
 
         if ctx.waiting_for and text and not text.startswith("/"):
-            ctx.set(ctx.waiting_for, auto_cast(text))
-            ctx.waiting_for = None
-            self._resume_after_wait(ctx)
+            self._resume_waiting_input(ctx, text)
             ctx._return_requested = False
             self._run_after_each(ctx)
             return
@@ -1132,11 +1266,15 @@ class Executor:
         text = ctx.get("текст") or ""
         for h in self.program.handlers:
             if h.kind == "text":
+                # Если задан триггер — матчим только по нему (точное совпадение или без учёта регистра)
+                if h.trigger is not None:
+                    if h.trigger.strip().lower() != text.strip().lower():
+                        continue
                 if self._exec_body(h.body, ctx):
                     matched = True
             # Reply-keyboard кнопки приходят как текст, но объявлены через
             # «при нажатии "..."» (callback). Если текст совпадает — выполняем.
-            elif h.kind == "callback" and h.trigger and h.trigger == text:
+            elif h.kind == "callback" and h.trigger and h.trigger.strip() == text.strip():
                 self._exec_body(h.body, ctx)
                 matched = True
                 break
@@ -1157,7 +1295,7 @@ class Executor:
     #  Body execution
     # ═══════════════════════════════════════════════════════════════
 
-    def _exec_body(self, stmts: list, ctx, start_index: int = 0) -> bool:
+    def _exec_body(self, stmts: list, ctx) -> bool:
         executed = False
 
         self._reset_pending(ctx)
@@ -1165,8 +1303,7 @@ class Executor:
 
         signal = None
         try:
-            for i in range(start_index, len(stmts)):
-                stmt = stmts[i]
+            for idx, stmt in enumerate(stmts):
                 result = self._exec(stmt, ctx)
 
                 if isinstance(stmt, If):
@@ -1184,17 +1321,11 @@ class Executor:
                 # FSM semantics: `спросить ... → var` должен поставить ожидание и
                 # остановить выполнение текущего шага до ввода пользователя.
                 if getattr(ctx, "waiting_for", None):
-                    # Сохраняем хвост текущего тела, чтобы цепочки
-                    # `спросить → спросить → если ...` продолжались после ответа.
-                    tail = stmts[i + 1 :]
-                    prev = getattr(ctx, "_pending_stmts", None)
-                    if prev is not None:
-                        ctx._pending_stmts = list(prev) + list(tail)
-                    else:
-                        ctx._pending_stmts = list(tail)
-                    if getattr(ctx, "scenario", None) and getattr(ctx, "current_step_name", None):
-                        ctx._resume_step_name = ctx.current_step_name
-                        ctx._resume_stmt_index = i + 1
+                    # Сохраняем оставшиеся инструкции шага для продолжения после ввода.
+                    # Используем текущий индекс, а не list.index(stmt): dataclass-узлы
+                    # сравниваются по значению, поэтому одинаковые инструкции могли
+                    # вернуть позицию первого дубля и зациклить продолжение.
+                    ctx._pending_stmts = stmts[idx + 1:]
                     break
         except (_BreakSignal, _ContinueSignal) as e:
             signal = e
@@ -1217,6 +1348,31 @@ class Executor:
     #  Инструкции
     # ═══════════════════════════════════════════════════════════════
 
+    def _emit_effect(self, effect: CoreEffect):
+        self.effects.append(effect)
+
+    def _send_message(self, chat_id: int, text: str, **kwargs):
+        self._emit_effect(MessageEffect(chat_id, text))
+        return self.tg.send_message(chat_id, text, **kwargs)
+
+    def _send_buttons_matrix(self, chat_id: int, matrix: list, text: str = None):
+        self._emit_effect(ButtonsEffect(chat_id, text if text is not None else " ", matrix))
+        return self.tg.send_buttons_matrix(chat_id, matrix, text=text)
+
+    def _send_inline_keyboard(self, chat_id: int, keyboard: list, text: str = "\u200b"):
+        self._emit_effect(InlineKeyboardEffect(chat_id, text, keyboard))
+        return self.tg.send_inline_keyboard(chat_id, keyboard, text=text)
+
+    def _send_media(self, chat_id: int, media_type: str, file: str, caption: str = ""):
+        self._emit_effect(MediaEffect(chat_id, media_type, file, caption))
+        method = getattr(self.tg, f"send_{media_type}")
+        if media_type == "sticker":
+            return method(chat_id, file)
+        return method(chat_id, file, caption)
+
+    def _send_platform(self, kind: str, chat_id: int | None = None, **payload):
+        self._emit_effect(PlatformEffect(kind, chat_id, **payload))
+
     def _reset_pending(self, ctx):
         """Гарантирует структуру _pending_message ВСЕГДА"""
         if getattr(ctx, "_pending_message", None) is None:
@@ -1237,9 +1393,9 @@ class Executor:
         if buttons:
             if not text.strip():
                 text = "\u200b"
-            self.tg.send_buttons_matrix(ctx.chat_id, buttons, text=text)
+            self._send_buttons_matrix(ctx.chat_id, buttons, text=text)
         elif text.strip():
-            self.tg.send_message(ctx.chat_id, text)
+            self._send_message(ctx.chat_id, text)
 
         ctx._pending_message = None
 
@@ -1288,14 +1444,6 @@ class Executor:
             return True
         return False
 
-    def _exec_switch(self, stmt: SwitchStmt, ctx):
-        raw = ctx.get(stmt.variable)
-        val = "" if raw is None else str(raw)
-        for lit, body in stmt.cases:
-            if val == lit:
-                self._exec_body(body, ctx)
-                break
-
     def _exec_global_var(self, stmt: GlobalVar, ctx):
         """Установить глобальную переменную (доступна всем пользователям)"""
         value = self._resolve_val(stmt.value, ctx)
@@ -1306,9 +1454,9 @@ class Executor:
         url = self._eval(stmt, ctx) if hasattr(stmt, 'value') else ctx.get(stmt.var_name, "")
         url = ctx.get(stmt.var_name, "")
         if url:
-            self.tg.send_photo(ctx.chat_id, url)
+            self._send_media(ctx.chat_id, "photo", url)
         else:
-            self.tg.send_message(ctx.chat_id, "⚠️ URL картинки не задан")
+            self._send_message(ctx.chat_id, "⚠️ URL картинки не задан")
 
     # ── Циклы ─────────────────────────────────────────────────────────
 
@@ -1380,10 +1528,6 @@ class Executor:
             if stmt.labels and isinstance(stmt.labels[0], list)
             else [[_unwrap(lbl) for lbl in stmt.labels]]
         )
-        # Кнопки могут оказаться первыми после вложенного блока/шага, который уже
-        # сделал flush и очистил _pending_message. Не падаем: создаём пустой
-        # pending-message, а _flush отправит клавиатуру с zero-width текстом.
-        self._reset_pending(ctx)
         existing = ctx._pending_message.get("buttons") or []
         ctx._pending_message["buttons"] = existing + new_rows
 
@@ -1394,6 +1538,78 @@ class Executor:
         и делегируем в _exec_inline_keyboard.
         """
         self._exec_inline_keyboard(InlineKeyboard(rows=[[stmt]]), ctx)
+
+
+    def _exec_inline_keyboard_from_list(self, stmt: InlineKeyboardFromList, ctx):
+        items = self._eval(stmt.items_expr, ctx)
+        if not isinstance(items, list):
+            raise CicadaTypeError("inline-кнопки из списка: ожидается список items.")
+
+        self._send_inline_items(
+            items,
+            ctx,
+            text_field=stmt.text_field,
+            id_field=stmt.id_field,
+            callback_prefix=stmt.callback_prefix,
+            columns=stmt.columns,
+            back_text="🔙 Назад" if stmt.append_back else "",
+            back_callback="back" if stmt.append_back else "",
+        )
+
+    def _exec_inline_keyboard_from_db(self, stmt: InlineKeyboardFromDB, ctx):
+        key = self._resolve_db_key(stmt.key, ctx)
+        if self.debug:
+            print(f"[STATE] loading key={key!r} user_id={ctx.user_id}")
+        items = self.store.get(str(ctx.user_id), key)
+        if items is None:
+            items = self.store.get_global(key)
+        if items in (None, ""):
+            items = []
+        if not isinstance(items, list):
+            raise CicadaTypeError(f"inline из бд: ключ '{key}' должен содержать список.")
+
+        self._send_inline_items(
+            items,
+            ctx,
+            text_field=stmt.text_field,
+            id_field=stmt.id_field,
+            callback_prefix=stmt.callback_prefix,
+            columns=stmt.columns,
+            back_text=stmt.back_text,
+            back_callback=stmt.back_callback,
+        )
+
+    def _send_inline_items(
+        self,
+        items: list,
+        ctx,
+        *,
+        text_field: str,
+        id_field: str,
+        callback_prefix: str,
+        columns: int,
+        back_text: str = "",
+        back_callback: str = "",
+    ):
+        flat_buttons = []
+        for item in items:
+            if isinstance(item, dict):
+                text = str(item.get(text_field, ""))
+                item_id = item.get(id_field, text)
+            else:
+                text = str(item)
+                item_id = item
+            if not text:
+                continue
+            flat_buttons.append(InlineButton(text=text, callback=f"{callback_prefix}{item_id}"))
+
+        if back_text and back_callback:
+            flat_buttons.append(InlineButton(text=back_text, callback=back_callback))
+
+        cols = max(1, int(columns or 1))
+        rows = [flat_buttons[i:i + cols] for i in range(0, len(flat_buttons), cols)]
+        if rows:
+            self._exec_inline_keyboard(InlineKeyboard(rows=rows), ctx)
 
     def _exec_inline_keyboard(self, stmt: InlineKeyboard, ctx):
         """
@@ -1429,93 +1645,20 @@ class Executor:
             # Потребляем накопленный текст, чтобы финальный _flush не дублировал его
             ctx._pending_message = None
 
-        self.tg.send_inline_keyboard(ctx.chat_id, keyboard, text=pending_text or "\u200b")
-
-    def _exec_inline_keyboard_from_db(self, stmt: InlineKeyboardFromDB, ctx):
-        key = self._resolve_db_key(stmt.key, ctx)
-        db = get_db()
-        items = db.get(str(ctx.user_id), key)
-        if items is None:
-            items = db.get_global(key, [])
-        if isinstance(items, str):
-            try:
-                items = _json.loads(items)
-            except Exception:
-                items = [x.strip() for x in items.splitlines() if x.strip()]
-        if isinstance(items, dict):
-            items = [
-                {"id": item_key, **item} if isinstance(item, dict) else {"id": item_key, "name": item}
-                for item_key, item in items.items()
-            ]
-        if not isinstance(items, list):
-            items = []
-
-        def item_text(item):
-            if isinstance(item, dict):
-                for field in (stmt.label_field, "name", "title", "название", "label", "text"):
-                    if field and item.get(field) not in (None, ""):
-                        return str(item.get(field))
-            return str(item)
-
-        def item_id(item, fallback):
-            if isinstance(item, dict):
-                for field in ("id", "key", "slug", "code", "value"):
-                    if item.get(field) not in (None, ""):
-                        return str(item.get(field))
-            return fallback
-
-        columns = max(1, int(stmt.columns or 1))
-        rows = []
-        row = []
-        for idx, item in enumerate(items):
-            text = item_text(item).strip()
-            if not text:
-                continue
-            callback = f"{stmt.callback_prefix}{item_id(item, text)}"
-            row.append(InlineButton(text=text, callback=callback))
-            if len(row) >= columns:
-                rows.append(row)
-                row = []
-        if row:
-            rows.append(row)
-        if stmt.back_text:
-            rows.append([InlineButton(text=stmt.back_text, callback=stmt.back_callback or stmt.back_text)])
-        if rows:
-            self._exec_inline_keyboard(InlineKeyboard(rows=rows), ctx)
+        self._send_inline_keyboard(ctx.chat_id, keyboard, text=pending_text or "\u200b")
 
     def _exec_photo(self, stmt: Photo, ctx):
-        self.tg.send_photo(ctx.chat_id, stmt.url)
+        self._send_media(ctx.chat_id, "photo", stmt.url)
 
     def _exec_sticker(self, stmt: Sticker, ctx):
-        self.tg.send_sticker(ctx.chat_id, stmt.file_id)
+        self._send_media(ctx.chat_id, "sticker", stmt.file_id)
 
     def _exec_forward_photo(self, stmt: ForwardPhoto, ctx):
         file_id = ctx.get("файл_id", "")
         if file_id:
-            self.tg.send_photo(ctx.chat_id, file_id, caption=stmt.caption)
+            self._send_media(ctx.chat_id, "photo", file_id, caption=stmt.caption)
         else:
-            self.tg.send_message(ctx.chat_id, "⚠️ Нет фото для пересылки")
-
-    def _exec_forward_input(self, stmt: ForwardInput, ctx):
-        kind = stmt.kind
-        file_id = ctx.get("файл_id", "")
-        if kind == "text":
-            text = ctx.get("текст", "")
-            self.tg.send_message(ctx.chat_id, text or "⚠️ Нет текста для пересылки")
-            return
-        if not file_id and kind in ("document", "voice", "audio", "sticker"):
-            self.tg.send_message(ctx.chat_id, "⚠️ Нет файла для пересылки")
-            return
-        if kind == "document":
-            self.tg.send_document(ctx.chat_id, file_id, stmt.caption)
-        elif kind == "voice":
-            self.tg.send_voice(ctx.chat_id, file_id, stmt.caption)
-        elif kind == "audio":
-            self.tg.send_audio(ctx.chat_id, file_id, stmt.caption)
-        elif kind == "sticker":
-            self.tg.send_sticker(ctx.chat_id, file_id)
-        else:
-            self.tg.send_message(ctx.chat_id, f"⚠️ Нельзя переслать тип: {kind}")
+            self._send_message(ctx.chat_id, "⚠️ Нет фото для пересылки")
 
     def _exec_save_file(self, stmt: SaveFile, ctx):
         ctx.set(stmt.variable, ctx.get("файл_id", ""))
@@ -1524,57 +1667,44 @@ class Executor:
         self._start_scenario(ctx, stmt.name)
 
     def _exec_send_markdown(self, stmt: SendMarkdown, ctx):
-        self.tg.send_markdown(ctx.chat_id, self._render_parts(stmt.parts, ctx))
+        text = self._render_parts(stmt.parts, ctx)
+        self._send_platform("markdown", ctx.chat_id, text=text)
+        self.tg.send_markdown(ctx.chat_id, text)
 
     def _exec_send_document(self, stmt: SendDocument, ctx):
         file = eval_expr(stmt.file, ctx) if not isinstance(stmt.file, str) else stmt.file
-        self.tg.send_document(ctx.chat_id, str(file), stmt.caption)
+        self._send_media(ctx.chat_id, "document", str(file), stmt.caption)
 
     def _exec_send_audio(self, stmt: SendAudio, ctx):
         file = eval_expr(stmt.file, ctx) if not isinstance(stmt.file, str) else stmt.file
-        self.tg.send_audio(ctx.chat_id, str(file), stmt.caption)
+        self._send_media(ctx.chat_id, "audio", str(file), stmt.caption)
 
     def _exec_send_video(self, stmt: SendVideo, ctx):
         file = eval_expr(stmt.file, ctx) if not isinstance(stmt.file, str) else stmt.file
-        self.tg.send_video(ctx.chat_id, str(file), stmt.caption)
+        self._send_media(ctx.chat_id, "video", str(file), stmt.caption)
 
     def _exec_send_voice(self, stmt: SendVoice, ctx):
         file = eval_expr(stmt.file, ctx) if not isinstance(stmt.file, str) else stmt.file
-        self.tg.send_voice(ctx.chat_id, str(file), stmt.caption)
+        self._send_media(ctx.chat_id, "voice", str(file), stmt.caption)
 
     def _exec_send_location(self, stmt: SendLocation, ctx):
+        self._send_platform("location", ctx.chat_id, latitude=stmt.latitude, longitude=stmt.longitude)
         self.tg.send_location(ctx.chat_id, stmt.latitude, stmt.longitude)
 
     def _exec_send_contact(self, stmt: SendContact, ctx):
+        self._send_platform("contact", ctx.chat_id, phone=stmt.phone, name=stmt.name)
         self.tg.send_contact(ctx.chat_id, stmt.phone, stmt.name)
 
     def _exec_send_poll(self, stmt: SendPoll, ctx):
+        self._send_platform("poll", ctx.chat_id, question=stmt.question, options=stmt.options)
         self.tg.send_poll(ctx.chat_id, stmt.question, stmt.options)
 
     def _exec_send_invoice(self, stmt: SendInvoice, ctx):
-        try:
-            self.tg.send_invoice(
-                ctx.chat_id,
-                stmt.title,
-                stmt.description,
-                stmt.amount,
-                getattr(stmt, "currency", "RUB"),
-                getattr(stmt, "provider_token", ""),
-            )
-        except requests.exceptions.HTTPError as e:
-            details = ""
-            try:
-                payload = e.response.json()
-                details = payload.get("description", "")
-            except Exception:
-                details = str(e)
-            raise CicadaRuntimeError(
-                "Ошибка оплаты Telegram: не настроен provider token или подключён неверный платёжный провайдер. "
-                f"Telegram ответил: {details}",
-                stmt,
-            )
+        self._send_platform("invoice", ctx.chat_id, title=stmt.title, description=stmt.description, amount=stmt.amount)
+        self.tg.send_invoice(ctx.chat_id, stmt.title, stmt.description, stmt.amount)
 
     def _exec_send_game(self, stmt: SendGame, ctx):
+        self._send_platform("game", ctx.chat_id, short_name=stmt.short_name)
         self.tg.send_game(ctx.chat_id, stmt.short_name)
 
     def _exec_download_file(self, stmt: DownloadFile, ctx):
@@ -1589,20 +1719,15 @@ class Executor:
 
     def _exec_step(self, stmt: Step, ctx):
         ctx.current_step_name = getattr(stmt, "name", None)  # для п. 4
-        resume_name = getattr(ctx, "_resume_step_name", None)
-        start_index = getattr(ctx, "_resume_stmt_index", 0) if resume_name == stmt.name else 0
-        if resume_name == stmt.name:
-            ctx._resume_step_name = None
-            ctx._resume_stmt_index = 0
-        self._exec_body(stmt.body, ctx, start_index=start_index)
+        if not hasattr(ctx, "_pending_stmts"):
+            ctx._pending_stmts = []
+        self._exec_body(stmt.body, ctx)
 
     def _exec_end_scenario(self, stmt: EndScenario, ctx):
         ctx.scenario          = None
         ctx.step              = 0
         ctx.waiting_for       = None
         ctx.current_step_name = None
-        ctx._resume_step_name = None
-        ctx._resume_stmt_index = 0
 
     def _exec_return(self, stmt: ReturnFromScenario, ctx):
         ctx._return_requested = True
@@ -1648,89 +1773,18 @@ class Executor:
                 f"Шаг или сценарий '{target}' не найден", stmt
             )
 
-    def _render_template_string(self, template: str, ctx) -> str:
-        """Подставляет {переменные} в строковых ключах БД (например file_{chat_id})."""
-        if not isinstance(template, str) or ("{" not in template and "}" not in template):
-            return template
-        token_re = re.compile(r"\{([^{}]+)\}")
-        unresolved = []
-
-        def repl(match):
-            name = match.group(1).strip()
-            try:
-                value = _get_var(name, ctx, strict=True)
-            except Exception:
-                unresolved.append(name)
-                return match.group(0)
-            if value is None:
-                unresolved.append(name)
-                return match.group(0)
-            return str(value)
-
-        rendered = token_re.sub(repl, template)
-        if unresolved:
-            raise CicadaRuntimeError(
-                f"Не удалось интерполировать шаблон '{template}': "
-                f"не определены переменные {', '.join(sorted(set(unresolved)))}"
-            )
-        if "{" in rendered or "}" in rendered:
-            raise CicadaRuntimeError(
-                f"Некорректный шаблон '{template}': шаблон должен быть интерполирован полностью"
-            )
-        return rendered
-
-    def _resolve_db_key(self, key, ctx) -> str:
-        """Ключ save/get/delete: выражение или строка с шаблоном {…}."""
-        if isinstance(key, str):
-            return self._render_template_string(key, ctx)
-        return str(self._resolve_val(key, ctx))
-
-    def _render_http_template(self, template: str, ctx) -> str:
-        """Подставляет {выражения} в HTTP URL/тела, не ломая обычные JSON-скобки."""
-        if not isinstance(template, str) or "{" not in template:
-            return template
-
-        token_re = re.compile(r"\{([^{}]+)\}")
-
-        def repl(match):
-            expr_src = match.group(1).strip()
-            try:
-                expr = parse_expr(expr_src)
-            except SyntaxError:
-                return match.group(0)
-            value = self._eval(expr, ctx)
-            return "" if value is None else str(value)
-
-        return token_re.sub(repl, template)
-
-    def _resolve_http_url(self, url, ctx) -> str:
-        value = url if isinstance(url, str) else self._resolve_val(url, ctx)
-        return self._render_http_template(str(value), ctx)
-
-    def _render_http_value(self, value, ctx):
-        if isinstance(value, str):
-            return self._render_http_template(value, ctx)
-        if isinstance(value, list):
-            return [self._render_http_value(item, ctx) for item in value]
-        if isinstance(value, dict):
-            return {
-                self._render_http_value(key, ctx): self._render_http_value(val, ctx)
-                for key, val in value.items()
-            }
-        return value
-
     def _exec_save_to_db(self, stmt: SaveToDB, ctx):
         value = self._resolve_val(stmt.value, ctx)
         key = self._resolve_db_key(stmt.key, ctx)
         if self.debug:
-            self._log("DEBUG", f"[STATE] saving key={key!r} user_id={ctx.user_id}", ctx)
-        get_db().set(str(ctx.user_id), key, value)
+            print(f"[STATE] saving key={key!r} user_id={ctx.user_id}")
+        self.store.set(str(ctx.user_id), key, value)
 
     def _exec_load_from_db(self, stmt: LoadFromDB, ctx):
         key = self._resolve_db_key(stmt.key, ctx)
         if self.debug:
-            self._log("DEBUG", f"[STATE] loading key={key!r} user_id={ctx.user_id}", ctx)
-        value = get_db().get(str(ctx.user_id), key)
+            print(f"[STATE] loading key={key!r} user_id={ctx.user_id}")
+        value = self.store.get(str(ctx.user_id), key)
         ctx.set(stmt.variable, value if value is not None else "")
 
     def _exec_log(self, stmt: Log, ctx):
@@ -1759,14 +1813,14 @@ class Executor:
         user_id = self._resolve_val(stmt.user_id, ctx)
         text    = self._render_parts(stmt.parts, ctx)
         try:
-            self.tg.send_message(int(user_id), text)
+            self._send_message(int(user_id), text)
         except Exception as e:
             self._log("ERROR", f"уведомить {user_id}: {e}", ctx)
 
     def _exec_broadcast(self, stmt: Broadcast, ctx):
         """рассылка всем / рассылка группе — массовая рассылка."""
         text    = self._render_parts(stmt.parts, ctx)
-        db      = get_db()
+        db      = self.store
         all_ids = db.get_all_user_ids()
         sent = 0
         for uid in all_ids:
@@ -1775,7 +1829,7 @@ class Executor:
                 if seg != stmt.segment:
                     continue
             try:
-                self.tg.send_message(int(uid), text)
+                self._send_message(int(uid), text)
                 sent += 1
             except Exception as e:
                 self._log("DEBUG", f"Рассылка: ошибка для {uid}: {e}", ctx)
@@ -1809,14 +1863,14 @@ class Executor:
             ctx.set(stmt.variable, "left")
 
     def _exec_forward_msg(self, stmt: ForwardMsg, ctx):
-        """переслать USER_ID — пересылает текущее сообщение."""
+        """переслать сообщение USER_ID — пересылает текущее сообщение."""
         to_id    = self._resolve_val(stmt.to_user_id, ctx)
         msg_id   = ctx.get("сообщение_id", 0)
         from_id  = ctx.chat_id
         try:
             self.tg.forward_message(int(to_id), from_id, int(msg_id))
         except Exception as e:
-            self._log("ERROR", f"переслать {to_id}: {e}", ctx)
+            self._log("ERROR", f"переслать сообщение {to_id}: {e}", ctx)
 
     # ── Файлы и JSON ─────────────────────────────────────────────────
 
@@ -1830,6 +1884,18 @@ class Executor:
             raise CicadaRuntimeError(f"json_файл: файл не найден: {path}", stmt)
         except _json.JSONDecodeError as e:
             raise CicadaRuntimeError(f"json_файл: ошибка разбора JSON: {e}", stmt)
+
+    def _exec_parse_json(self, stmt: ParseJson, ctx):
+        """разобрать_json источник → переменная."""
+        source = self._resolve_val(stmt.source, ctx)
+        if isinstance(source, (dict, list)):
+            ctx.set(stmt.variable, source)
+            return
+        try:
+            data = _json.loads(str(source))
+        except _json.JSONDecodeError as e:
+            raise CicadaRuntimeError(f"разобрать_json: ошибка разбора JSON: {e}", stmt)
+        ctx.set(stmt.variable, data)
 
     def _exec_save_json(self, stmt: SaveJson, ctx):
         """сохранить_json "путь" = переменная."""
@@ -1874,6 +1940,12 @@ class Executor:
 
     # ── HTTP расширения ───────────────────────────────────────────────
 
+    def _resolve_http_url(self, url, ctx) -> str:
+        """URL может быть строковым шаблоном или выражением."""
+        if isinstance(url, str):
+            return self._render_template_string(url, ctx)
+        return str(self._resolve_val(url, ctx))
+
     def _get_http_headers(self, stmt_headers: dict, ctx) -> dict:
         """Возвращает объединённые заголовки: ctx._http_headers + заголовки инструкции."""
         base = dict(getattr(ctx, "_http_headers", {}) or {})
@@ -1883,7 +1955,9 @@ class Executor:
     def _resolve_http_data(self, data, ctx):
         """Разрешает тело запроса; dict → отправляется как json."""
         resolved = self._resolve_val(data, ctx)
-        return self._render_http_value(resolved, ctx)
+        if isinstance(resolved, str):
+            return self._render_template_string(resolved, ctx)
+        return resolved
 
     def _exec_http_patch(self, stmt: HttpPatch, ctx):
         url     = self._resolve_http_url(stmt.url, ctx)
@@ -1891,9 +1965,9 @@ class Executor:
         headers = self._get_http_headers(stmt.headers, ctx)
         try:
             if isinstance(data, dict):
-                resp = requests.patch(url, json=data, headers=headers, timeout=30)
+                resp = self.http.patch(url, json=data, headers=headers, timeout=30)
             else:
-                resp = requests.patch(url, data=str(data) if data is not None else None,
+                resp = self.http.patch(url, data=str(data) if data is not None else None,
                                       headers=headers, timeout=30)
             ctx.set(stmt.variable, resp.text)
         except Exception as e:
@@ -1906,9 +1980,9 @@ class Executor:
         headers = self._get_http_headers(stmt.headers, ctx)
         try:
             if isinstance(data, dict):
-                resp = requests.put(url, json=data, headers=headers, timeout=30)
+                resp = self.http.put(url, json=data, headers=headers, timeout=30)
             else:
-                resp = requests.put(url, data=str(data) if data is not None else None,
+                resp = self.http.put(url, data=str(data) if data is not None else None,
                                     headers=headers, timeout=30)
             ctx.set(stmt.variable, resp.text)
         except Exception as e:
@@ -1919,7 +1993,7 @@ class Executor:
         url     = self._resolve_http_url(stmt.url, ctx)
         headers = self._get_http_headers(stmt.headers, ctx)
         try:
-            resp = requests.delete(url, headers=headers, timeout=30)
+            resp = self.http.delete(url, headers=headers, timeout=30)
             ctx.set(stmt.variable, resp.text)
         except Exception as e:
             ctx.set(stmt.variable, "")
@@ -1940,36 +2014,11 @@ class Executor:
         url = self._resolve_http_url(stmt.url, ctx)
         try:
             headers = self._get_http_headers(stmt.headers, ctx)
-            resp    = requests.get(url, headers=headers, timeout=30)
+            resp    = self.http.get(url, headers=headers, timeout=30)
             ctx.set(stmt.variable, resp.text)
         except Exception as e:
             ctx.set(stmt.variable, "")
             raise CicadaRuntimeError(f"HTTP GET {url}: {e}", stmt)
-
-    def _exec_fetch_json(self, stmt: FetchJson, ctx):
-        url = self._resolve_http_url(stmt.url, ctx)
-        try:
-            headers = self._get_http_headers(stmt.headers, ctx)
-            resp = requests.get(url, headers=headers, timeout=30)
-            try:
-                data = resp.json()
-            except AttributeError:
-                data = _json.loads(resp.text)
-            ctx.set(stmt.variable, data)
-        except Exception as e:
-            ctx.set(stmt.variable, "")
-            raise CicadaRuntimeError(f"fetch_json {url}: {e}", stmt)
-
-    def _exec_parse_json(self, stmt: ParseJson, ctx):
-        source = self._resolve_val(stmt.source, ctx)
-        if isinstance(source, (dict, list)):
-            ctx.set(stmt.variable, source)
-            return
-        try:
-            ctx.set(stmt.variable, _json.loads(str(source) if source is not None else "null"))
-        except _json.JSONDecodeError as e:
-            ctx.set(stmt.variable, "")
-            raise CicadaRuntimeError(f"разобрать_json: ошибка разбора: {e}", stmt)
 
     def _exec_http_post(self, stmt: HttpPost, ctx):
         url = self._resolve_http_url(stmt.url, ctx)
@@ -1977,38 +2026,57 @@ class Executor:
             data    = self._resolve_http_data(stmt.data, ctx)
             headers = self._get_http_headers(stmt.headers, ctx)
             if isinstance(data, dict):
-                resp = requests.post(url, json=data, headers=headers, timeout=30)
+                resp = self.http.post(url, json=data, headers=headers, timeout=30)
             else:
-                resp = requests.post(url, data=str(data) if data is not None else None,
+                resp = self.http.post(url, data=str(data) if data is not None else None,
                                      headers=headers, timeout=30)
             ctx.set(stmt.variable, resp.text)
         except Exception as e:
             ctx.set(stmt.variable, "")
             raise CicadaRuntimeError(f"HTTP POST {url}: {e}", stmt)
 
+    def _exec_fetch_json(self, stmt: FetchJson, ctx):
+        """fetch_json url → переменная: GET-запрос и разбор JSON-ответа."""
+        url = self._resolve_http_url(stmt.url, ctx)
+        try:
+            headers = self._get_http_headers(stmt.headers, ctx)
+            resp = self.http.get(url, headers=headers, timeout=30)
+            data = _json.loads(resp.text)
+            ctx.set(stmt.variable, data)
+        except _json.JSONDecodeError as e:
+            ctx.set(stmt.variable, "")
+            raise CicadaRuntimeError(f"fetch_json {url}: ошибка разбора JSON: {e}", stmt)
+        except Exception as e:
+            ctx.set(stmt.variable, "")
+            raise CicadaRuntimeError(f"fetch_json {url}: {e}", stmt)
+
     # ── База данных расширения ─────────────────────────────────────────
 
     def _exec_delete_from_db(self, stmt: DeleteFromDB, ctx):
         """удалить "ключ" — удаление ключа из БД."""
         key = self._resolve_db_key(stmt.key, ctx)
-        get_db().delete(str(ctx.user_id), key)
+        self.store.delete(str(ctx.user_id), str(key))
 
     def _exec_get_all_db_keys(self, stmt: GetAllDBKeys, ctx):
         """все_ключи → список — все ключи пользователя в БД."""
-        keys = get_db().get_all_keys(str(ctx.user_id))
+        keys = self.store.get_all_keys(str(ctx.user_id))
         ctx.set(stmt.variable, keys)
 
     def _exec_save_global_db(self, stmt: SaveGlobalDB, ctx):
         """сохранить_глобально "ключ" = значение."""
         key   = self._resolve_db_key(stmt.key, ctx)
         value = self._resolve_val(stmt.value, ctx)
-        get_db().set_global(key, value)
+        if self.debug:
+            print(f"[STATE] saving key={key!r} user_id={ctx.user_id}")
+        self.store.set_global(str(key), value)
 
     def _exec_load_from_user_db(self, stmt: LoadFromUserDB, ctx):
         """получить от USER_ID "ключ" → переменная."""
         uid   = self._resolve_val(stmt.user_id, ctx)
         key   = self._resolve_db_key(stmt.key, ctx)
-        value = get_db().get(str(uid), key)
+        if self.debug:
+            print(f"[STATE] loading key={key!r} user_id={uid}")
+        value = self.store.get(str(uid), str(key))
         ctx.set(stmt.variable, value if value is not None else "")
 
     # ── Управление потоком расширения ──────────────────────────────────
@@ -2049,15 +2117,6 @@ class Executor:
     #  FSM — сценарии
     # ═══════════════════════════════════════════════════════════════
 
-    def _resume_after_wait(self, ctx):
-        """После ответа на «спросить»: выполнить хвост текущего шага, затем продолжить FSM."""
-        pending = getattr(ctx, "_pending_stmts", None)
-        if pending:
-            ctx._pending_stmts = []
-            self._exec_body(pending, ctx)
-        if ctx.scenario and ctx.waiting_for is None:
-            self._continue_scenario(ctx)
-
     def _start_scenario(self, ctx, name: str):
         if name not in self.program.scenarios:
             raise CicadaRuntimeError(f"Сценарий '{name}' не найден")
@@ -2066,33 +2125,32 @@ class Executor:
         ctx.current_step_name = None
         ctx._transition_made  = False
         ctx._pending_stmts    = []
-        ctx._resume_step_name = None
-        ctx._resume_stmt_index = 0
         ctx.set_step_names(self.program.scenarios[name])
         self._continue_scenario(ctx)
 
     def _continue_scenario(self, ctx):
         if not ctx.scenario:
             return
+
+        # Если есть отложенные инструкции текущего шага — выполняем их первыми
+        pending = getattr(ctx, "_pending_stmts", None)
+        if pending:
+            ctx._pending_stmts = []
+            self._exec_body(pending, ctx)
+            # Если снова ждём ввода — останавливаемся
+            if getattr(ctx, "waiting_for", None):
+                return
+            # Иначе продолжаем к следующему шагу
+            if ctx.scenario:
+                self._continue_scenario(ctx)
+            return
+
         steps = self.program.scenarios.get(ctx.scenario, [])
-        resume_name = getattr(ctx, "_resume_step_name", None)
-        if resume_name:
-            for resume_stmt in steps:
-                if isinstance(resume_stmt, Step) and resume_stmt.name == resume_name:
-                    self._exec(resume_stmt, ctx)
-                    if getattr(ctx, "waiting_for", None) or not getattr(ctx, "scenario", None):
-                        return
-                    break
-            else:
-                ctx._resume_step_name = None
-                ctx._resume_stmt_index = 0
         if ctx.step >= len(steps):
             ctx.scenario          = None
             ctx.step              = 0
             ctx.waiting_for       = None
             ctx.current_step_name = None
-            ctx._resume_step_name = None
-            ctx._resume_stmt_index = 0
             return
         stmt = steps[ctx.step]
         ctx.step += 1

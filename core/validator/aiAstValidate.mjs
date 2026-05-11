@@ -15,9 +15,12 @@ const ALLOWED_TYPES = new Set([
   'step',
   'message',
   'buttons',
+  'inline_db',
   'ask',
   'remember',
   'get',
+  'save',
+  'save_global',
   'condition',
   'else',
   'run',
@@ -49,7 +52,7 @@ function validateBlock(block, stackId, errors) {
       if (!needStr(p.token, 1)) errors.push(`стек ${stackId}: bot.token обязателен (непустая строка)`);
       break;
     case 'callback':
-      if (!needStr(p.label, 1)) errors.push(`стек ${stackId}: callback.label обязателен`);
+      if (typeof p.label !== 'string') errors.push(`стек ${stackId}: callback.label обязателен строкой (может быть пустым для общего handler)`);
       break;
     case 'scenario':
     case 'run':
@@ -61,6 +64,10 @@ function validateBlock(block, stackId, errors) {
       break;
     case 'buttons':
       if (!needStr(p.rows, 1)) errors.push(`стек ${stackId}: buttons.rows обязателен`);
+      break;
+    case 'inline_db':
+      if (!needStr(p.key, 1)) errors.push(`стек ${stackId}: inline_db.key обязателен`);
+      if (!needStr(p.callbackPrefix, 1)) errors.push(`стек ${stackId}: inline_db.callbackPrefix обязателен`);
       break;
     case 'ask':
       if (!needStr(p.question, 1)) errors.push(`стек ${stackId}: ask.question обязателен`);
@@ -75,6 +82,13 @@ function validateBlock(block, stackId, errors) {
     case 'get':
       if (!needStr(p.key, 1)) errors.push(`стек ${stackId}: get.key обязателен`);
       if (!needStr(p.varname, 1)) errors.push(`стек ${stackId}: get.varname обязателен`);
+      break;
+    case 'save':
+    case 'save_global':
+      if (!needStr(p.key, 1)) errors.push(`стек ${stackId}: ${t}.key обязателен`);
+      if (!Object.prototype.hasOwnProperty.call(p, 'value')) {
+        errors.push(`стек ${stackId}: ${t}.value обязателен`);
+      }
       break;
     case 'condition':
       if (!needStr(p.cond, 1)) errors.push(`стек ${stackId}: condition.cond обязателен`);

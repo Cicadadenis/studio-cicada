@@ -808,6 +808,120 @@ function resolveBotTokenForNewBlock(stacks, currentUser) {
   return '';
 }
 
+function normalizeAiDiagnosticItems(items) {
+  if (!Array.isArray(items)) return [];
+  return items
+    .map((item) => {
+      if (typeof item === 'string') return { code: 'IR_DIAGNOSTIC', title: 'IR diagnostic', detail: item };
+      if (!item || typeof item !== 'object') return null;
+      return {
+        code: item.code || item.reasonCode || 'IR_DIAGNOSTIC',
+        title: item.title || item.label || item.code || 'IR diagnostic',
+        detail: item.detail || item.message || item.disabledReason || '',
+        severity: item.severity || 'info',
+      };
+    })
+    .filter(Boolean);
+}
+
+function normalizeAiPartialResponse(data) {
+  const sections = data?.diagnosticSections || {};
+  const diagnostics = normalizeAiDiagnosticItems(data?.diagnostics || data?.warnings);
+  const repairActions = normalizeAiDiagnosticItems(
+    (data?.repairActions || []).map((action) => ({
+      code: 'IR_AUTO_REPAIR',
+      title: 'Automatic IR repair',
+      detail: action,
+      severity: 'info',
+    })),
+  );
+  const normalizedFixed = normalizeAiDiagnosticItems(sections.whatWasFixed);
+  const normalizedFailed = normalizeAiDiagnosticItems(sections.whatFailed);
+  const whatWorks = normalizeAiDiagnosticItems(sections.whatWorks);
+  const whatWasFixed = normalizedFixed.length ? normalizedFixed : repairActions;
+  const whatFailed = normalizedFailed.length ? normalizedFailed : diagnostics;
+  const reasonCodes = Array.isArray(data?.reasonCodes)
+    ? data.reasonCodes.filter(Boolean).map(String)
+    : (data?.reason ? [String(data.reason)] : []);
+  const skeletonFallback = reasonCodes.includes('IR_FALLBACK_SKELETON_USED') || data?.irState === 'SKELETON_IR';
+  const safeToRun = Boolean(data?.safeToRun ?? data?.safeToExecute);
+  const userActions = Array.isArray(data?.userActions) ? data.userActions : [];
+  const hasContext = Boolean(
+    reasonCodes.length ||
+    whatWorks.length ||
+    whatWasFixed.length ||
+    whatFailed.length ||
+    data?.reason ||
+    data?.irState,
+  );
+
+  return {
+    raw: data,
+    status: data?.status || 'partial_success',
+    reason: data?.reason || null,
+    reasonCodes,
+    skeletonFallback,
+    safeToRun,
+    userActions,
+    sections: {
+      whatWorks: whatWorks.length
+        ? whatWorks
+        : [{
+          code: skeletonFallback ? 'IR_FALLBACK_SKELETON_USED' : 'IR_CONTEXT_MISSING',
+          title: skeletonFallback ? 'Базовая версия сценария готова' : 'Рабочие части не описаны',
+          detail: skeletonFallback
+            ? 'Запущена базовая версия сценария (без сложной логики).'
+            : 'Сервер не вернул список валидных частей IR, поэтому показана диагностическая карточка.',
+          severity: skeletonFallback ? 'info' : 'warning',
+        }],
+      whatWasFixed,
+      whatFailed: whatFailed.length
+        ? whatFailed
+        : [{ code: data?.reason || 'PARTIAL_IR', title: 'Блокирующих диагностик нет', detail: 'Для partial IR не осталось блокирующих ошибок.', severity: 'info' }],
+    },
+    hasContext,
+    canRunPartial: safeToRun && Array.isArray(data?.stacks) && data.stacks.length > 0,
+  };
+}
+
+function AiDiagnosticSection({ title, items, emptyText }) {
+  const list = Array.isArray(items) ? items : [];
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ fontSize: 10, color: '#fbbf24', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700 }}>
+        {title}
+      </div>
+      {list.length > 0 ? list.map((item, index) => (
+        <div
+          key={`${item.code || title}-${index}`}
+          style={{
+            padding: '7px 9px',
+            borderRadius: 8,
+            background: item.severity === 'error' ? 'rgba(248,113,113,0.08)' : 'rgba(255,255,255,0.04)',
+            border: item.severity === 'error' ? '1px solid rgba(248,113,113,0.18)' : '1px solid rgba(255,255,255,0.08)',
+          }}
+        >
+          <div style={{ display: 'flex', gap: 6, alignItems: 'baseline', flexWrap: 'wrap' }}>
+            <span style={{ fontFamily: 'var(--mono, ui-monospace, monospace)', fontSize: 10, color: '#93c5fd' }}>
+              {item.code}
+            </span>
+            <span style={{ fontSize: 12, color: 'var(--text)', fontWeight: 700 }}>
+              {item.title}
+            </span>
+          </div>
+          {item.detail ? (
+            <div style={{ marginTop: 3, fontSize: 11, color: 'var(--text3)', lineHeight: 1.45 }}>
+              {item.detail}
+            </div>
+          ) : null}
+        </div>
+      )) : (
+        <div style={{ fontSize: 11, color: 'var(--text3)' }}>{emptyText}</div>
+      )}
+    </div>
+  );
+}
+
 // ─── PROPS FIELDS ─────────────────────────────────────────────────────────
 const FIELDS = {
   version:   [{ key:'version',   label:'версия (например 1.0)',                        tag:'input' }],
@@ -887,6 +1001,7 @@ const FIELDS = {
   inline:    [{ key:'buttons',   label:'кнопки: Текст|callback, ...\n(запятая = в ряд, Enter = новый ряд)', tag:'textarea', rows:4 }],
   inline_db: [{ key:'key',       label:'ключ БД со списком', tag:'input' },
               { key:'labelField', label:'поле текста кнопки', tag:'input' },
+              { key:'idField', label:'поле id для callback', tag:'input' },
               { key:'callbackPrefix', label:'callback prefix', tag:'input' },
               { key:'backText',  label:'текст кнопки назад', tag:'input' },
               { key:'backCallback', label:'callback назад', tag:'input' },
@@ -2455,6 +2570,7 @@ function DSLPane({ stacks, isMobile, onClose, onApplyCorrectedCode }) {
   const hasWarnings = (validationResult?.warnings?.length ?? 0) > 0;
   const hasFixes = (computedFixes?.fixes?.length ?? 0) > 0;
   const isValid = validationResult && !hasErrors && !hasWarnings && !hasFixes;
+  const fixPreviewItems = (computedFixes?.fixes || []).slice(0, 3);
 
   const displayCode = previewCorrected ?? dsl;
   const displayLines = displayCode.split('\n');
@@ -2464,7 +2580,7 @@ function DSLPane({ stacks, isMobile, onClose, onApplyCorrectedCode }) {
     <div style={{
       display: 'flex', flexDirection: 'column',
       borderTop: '1px solid var(--border)',
-      flex: isMobile ? '1 1 auto' : '0 0 min(280px, 35%)',
+      flex: isMobile ? '1 1 auto' : '0 0 50%',
       height: isMobile ? '100%' : undefined,
       minHeight: 0,
       minWidth: 0,
@@ -2590,7 +2706,7 @@ function DSLPane({ stacks, isMobile, onClose, onApplyCorrectedCode }) {
       {validationResult && (
         <div style={{
           padding: '6px 10px', borderBottom: '1px solid var(--border)',
-          background: hasErrors ? 'rgba(239,68,68,0.1)' : hasWarnings ? 'rgba(245,158,11,0.1)' : 'rgba(16,185,129,0.1)',
+          background: hasErrors ? 'rgba(239,68,68,0.1)' : hasWarnings ? 'rgba(245,158,11,0.1)' : hasFixes ? 'rgba(14,165,233,0.1)' : 'rgba(16,185,129,0.1)',
           maxHeight: '150px', overflowY: 'auto',
         }}>
           {isValid ? (
@@ -2603,6 +2719,18 @@ function DSLPane({ stacks, isMobile, onClose, onApplyCorrectedCode }) {
               {validationResult.warnings.map((warn, i) => (
                 <div key={`warn-${i}`} style={{ fontSize: 9, color: '#f59e0b' }}>{warn}</div>
               ))}
+              {hasFixes && !previewCorrected && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  <div style={{ fontSize: 9, color: '#38bdf8', fontWeight: 600 }}>
+                    {`Доступно автоисправлений: ${computedFixes?.fixes?.length || 0}`}
+                  </div>
+                  {fixPreviewItems.map((fx, i) => (
+                    <div key={`fix-${i}`} style={{ fontSize: 9, color: 'var(--text3)' }}>
+                      {`строка ${fx.line}: ${fx.message}`}
+                    </div>
+                  ))}
+                </div>
+              )}
               {previewCorrected && (
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
                   <button
@@ -2891,9 +3019,10 @@ function OnboardingTour({ steps, stepIndex, onNext, onPrev, onSkip, labels }) {
 
 /** Этапы для оверлея во время AI-генерации схемы бота */
 const AI_GEN_LOADING_STEPS = [
-  'Анализируем сценарий…',
-  'Подбираем блоки и переходы…',
-  'Формируем схему для редактора…',
+  'Анализирую',
+  'Исправляю структуру',
+  'Проверяю сценарии',
+  'Готово',
 ];
 
 // ─── MAIN APP ─────────────────────────────────────────────────────────────
@@ -2938,6 +3067,8 @@ export default function App() {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiLoadingStep, setAiLoadingStep] = useState(0);
   const [aiError, setAiError] = useState('');
+  const [aiPartialResult, setAiPartialResult] = useState(null);
+  const [aiDiagnosticsOpen, setAiDiagnosticsOpen] = useState(false);
   const [showPythonConvertModal, setShowPythonConvertModal] = useState(false);
   const [pythonConvertSource, setPythonConvertSource] = useState('');
   const [pythonConvertResult, setPythonConvertResult] = useState('');
@@ -3241,6 +3372,8 @@ export default function App() {
     setShowAIModal(true);
     setAiPrompt('');
     setAiError('');
+    setAiPartialResult(null);
+    setAiDiagnosticsOpen(false);
   }, [canUseAiGenerator, showToast]);
 
   useEffect(() => {
@@ -3254,6 +3387,90 @@ export default function App() {
     }, 2100);
     return () => clearInterval(id);
   }, [aiLoading]);
+
+  const applyAiGeneratedStacks = useCallback((generatedStacks, options = {}) => {
+    if (!Array.isArray(generatedStacks) || generatedStacks.length === 0) {
+      throw new Error('AI вернул пустую схему');
+    }
+    const timestamp = Date.now();
+    const offsetX = stacks.length > 0 ? Math.max(...stacks.map((s) => s.x + 300)) : 40;
+    const resolvedTok = resolveBotTokenForNewBlock(stacks, currentUser);
+    const newStacks = generatedStacks.map((s, i) => ({
+      ...s,
+      id: `ai_${timestamp}_${i}`,
+      x: (s.x || 40) + offsetX,
+      y: s.y || 40,
+      blocks: (s.blocks || []).map((b, bi) => ({
+        ...b,
+        id: `ai_b_${timestamp}_${i}_${bi}`,
+        props: b.type === 'bot' && resolvedTok
+          ? { ...b.props, token: resolvedTok }
+          : b.props,
+      })),
+    }));
+    setStacks((prev) => [...prev, ...newStacks]);
+    setAiPartialResult(null);
+    setAiDiagnosticsOpen(false);
+    setShowAIModal(false);
+    showToast(
+      options.skeletonFallback
+        ? 'Запущена базовая версия сценария (без сложной логики).'
+        : options.partial
+        ? 'Частичный сценарий добавлен на холст. Проверьте диагностику перед запуском.'
+        : '✨ AI сгенерировал схему бота!',
+      options.partial || options.skeletonFallback ? 'info' : 'success',
+    );
+  }, [currentUser, showToast, stacks]);
+
+  const runAiGeneration = useCallback(async () => {
+    setAiLoading(true);
+    setAiError('');
+    setAiPartialResult(null);
+    setAiDiagnosticsOpen(false);
+    try {
+      const token = await getCsrfTokenForRequest();
+      const jwt = getStoredJwt();
+      const res = await fetch(`${API_URL}/ai-generate`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-csrf-token': token,
+          ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
+        },
+        body: JSON.stringify({ prompt: aiPrompt.trim() }),
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        let msg = `Ошибка сервера ${res.status}`;
+        try { const j = JSON.parse(text); msg = j.error || msg; } catch { /* не JSON */ }
+        throw new Error(msg);
+      }
+      const data = await res.json();
+      if (data.status === 'partial_success' || data.partial) {
+        const partial = normalizeAiPartialResponse(data);
+        setAiPartialResult(partial);
+        if (!partial.hasContext) {
+          setAiError('Partial IR вернулся без диагностического контекста. Сценарий не применён.');
+        }
+        return;
+      }
+      if (data.status === 'failed') {
+        const partial = normalizeAiPartialResponse(data);
+        if (partial.hasContext) {
+          setAiPartialResult(partial);
+          return;
+        }
+        throw new Error(data.error || `AI generation failed: ${data.reason || 'NO_DIAGNOSTIC_CONTEXT'}`);
+      }
+      if (data.error) throw new Error(data.error);
+      applyAiGeneratedStacks(data.stacks);
+    } catch (e) {
+      setAiError(e.message || 'Что-то пошло не так');
+    } finally {
+      setAiLoading(false);
+    }
+  }, [aiPrompt, applyAiGeneratedStacks]);
 
   const selectedBlock = React.useMemo(() => {
     if (!selectedBlockId) return null;
@@ -3666,6 +3883,7 @@ export default function App() {
       if (t.startsWith('блок '))        return { type: 'block',    props: { name: t.replace(/^блок\s+/, '').replace(/:$/, '').trim() } };
       if (t.startsWith('при команде ')) return { type: 'command',  props: { cmd: (extractString(t) || '').replace(/^\//, '') } };
       if (t.startsWith('команда '))     return { type: 'command',  props: { cmd: (extractString(t) || '').replace(/^\//, '') } };
+      if (t === 'при нажатии:' || t === 'при нажатии') return { type: 'callback', props: { label: '' } };
       if (t.startsWith('при нажатии ')) return { type: 'callback', props: { label: extractString(t) || '' } };
       // Медиа-триггеры — корневые обработчики, правильные типы (не callback)
       if (t === 'при тексте:' || t === 'при тексте')           return { type: 'on_text',     props: {} };
@@ -3708,14 +3926,15 @@ export default function App() {
       if (t.startsWith('кнопка '))      { const label = extractString(t); const cb = t.match(/->\s*"([^"]+)"/)?.[1] || ''; return { type: 'buttons', props: { rows: label, target: cb } }; }
       if (t.startsWith('пауза ') || t.startsWith('подождать ')) { const s = t.match(/\d+/)?.[0] || '1'; return { type: 'delay', props: { seconds: s } }; }
       if (t.startsWith('печатает '))    { const s = t.match(/\d+/)?.[0] || '1'; return { type: 'typing', props: { seconds: s } }; }
-      if (t.startsWith('inline-кнопки из бд ')) {
+      if (/^inline(?:-кнопки)?\s+из\s+бд\s+/i.test(t)) {
         const key = extractString(t);
-        const labelField = t.match(/\sтекст\s+"([^"]*)"/)?.[1] || 'name';
+        const labelField = t.match(/\sтекст\s+"([^"]*)"/)?.[1] || '';
+        const idField = t.match(/\sid\s+"([^"]*)"/)?.[1] || '';
         const callbackPrefix = t.match(/\scallback\s+"([^"]*)"/)?.[1] || 'item:';
         const backText = t.match(/\sназад\s+"([^"]*)"/)?.[1] || '⬅️ Назад';
         const backCallback = t.match(/\sназад\s+"[^"]*"\s*(?:→|->)\s*"([^"]*)"/)?.[1] || 'назад';
-        const columns = t.match(/\sколонки\s+(\d+)/)?.[1] || '1';
-        return { type: 'inline_db', props: { key, labelField, callbackPrefix, backText, backCallback, columns } };
+        const columns = t.match(/(?:\sколонки\s+|\scolumns=)(\d+)/)?.[1] || '1';
+        return { type: 'inline_db', props: { key, labelField, idField, callbackPrefix, backText, backCallback, columns } };
       }
       // HTTP: "запрос GET "url" → var" (формат DSL-генератора)
       if (t.startsWith('http_заголовки ')) { const v = t.replace(/^http_заголовки\s+/, '').trim(); return { type: 'http', props: { method: 'HEADERS', varname: v } }; }
@@ -6266,6 +6485,7 @@ const EXAMPLE_FULL = `версия "1.0"
                   { label: 'Заказ: имя и телефон', text: 'Бот принимает заказы, спрашивает имя и телефон' },
                   { label: 'Бот калькулятор', text: 'Бот калькулятор' },
                   { label: 'Бот с оплатой подписки', text: 'Бот с оплатой подписки' },
+                  { label: 'Каталог inline из БД', text: 'Создай магазин с каталогом на inline-кнопках из БД: при старте показать меню с кнопкой «📦 Каталог» и «➕ Добавить товар». Категории хранятся в глобальном списке «категории» и показываются через inline из БД с callbackPrefix "cat:" и 2 колонками. При выборе категории показать товары этой категории через inline из БД с callbackPrefix "prod:". Нужен общий обработчик inline callback «при нажатии:»: если кнопка начинается с "cat:" — открыть товары категории, если начинается с "prod:" — показать карточку товара с названием, ценой, описанием и кнопкой назад. Добавь сценарий для админа: создать категорию, затем создать товар внутри выбранной категории, сохранить товар в БД и вернуться в каталог. Не добавляй fallback-кнопки, если обработчик делегирует в блок или сценарий.' },
                 ].map((ex) => (
                   <button
                     key={ex.label}
@@ -6310,6 +6530,167 @@ const EXAMPLE_FULL = `версия "1.0"
                   {aiError}
                 </div>
               )}
+
+              {aiPartialResult && (
+                <div
+                  style={{
+                    marginTop: 12,
+                    padding: 12,
+                    borderRadius: 12,
+                    background: 'rgba(15,23,42,0.58)',
+                    border: '1px solid rgba(251,191,36,0.22)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 10,
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start' }}>
+                    <div>
+                      <div style={{ fontSize: 13, color: '#fbbf24', fontWeight: 800 }}>
+                        {aiPartialResult.skeletonFallback ? 'Запущена базовая версия сценария' : 'Сценарий сгенерирован частично'}
+                      </div>
+                      <div style={{ marginTop: 3, fontSize: 11, color: 'var(--text3)', lineHeight: 1.45 }}>
+                        {aiPartialResult.skeletonFallback
+                          ? 'Запущена базовая версия сценария (без сложной логики). Её можно применить и запустить безопасно.'
+                          : 'Degraded compiler output: рабочие части можно применить только если `safeToRun` true.'}
+                      </div>
+                    </div>
+                    <span
+                      style={{
+                        flex: '0 0 auto',
+                        padding: '4px 8px',
+                        borderRadius: 999,
+                        fontFamily: 'var(--mono, ui-monospace, monospace)',
+                        fontSize: 10,
+                        color: aiPartialResult.safeToRun ? '#86efac' : '#fca5a5',
+                        background: aiPartialResult.safeToRun ? 'rgba(34,197,94,0.12)' : 'rgba(248,113,113,0.12)',
+                        border: aiPartialResult.safeToRun ? '1px solid rgba(34,197,94,0.22)' : '1px solid rgba(248,113,113,0.22)',
+                      }}
+                    >
+                      safeToRun: {aiPartialResult.safeToRun ? 'true' : 'false'}
+                    </span>
+                  </div>
+
+                  {aiPartialResult.reasonCodes.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {aiPartialResult.reasonCodes.map((code) => (
+                        <span
+                          key={code}
+                          style={{
+                            padding: '3px 7px',
+                            borderRadius: 999,
+                            background: 'rgba(59,130,246,0.1)',
+                            color: '#93c5fd',
+                            border: '1px solid rgba(59,130,246,0.18)',
+                            fontFamily: 'var(--mono, ui-monospace, monospace)',
+                            fontSize: 10,
+                          }}
+                        >
+                          {code}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  <AiDiagnosticSection
+                    title="What works"
+                    items={aiPartialResult.sections.whatWorks}
+                    emptyText="Запущена базовая версия сценария (без сложной логики)."
+                  />
+                  <AiDiagnosticSection
+                    title="What was fixed"
+                    items={aiPartialResult.sections.whatWasFixed}
+                    emptyText="Автоисправления не применялись."
+                  />
+                  <AiDiagnosticSection
+                    title="What failed"
+                    items={aiPartialResult.sections.whatFailed}
+                    emptyText="Оставшихся диагностик нет."
+                  />
+
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      disabled={!aiPartialResult.canRunPartial || aiLoading}
+                      onClick={() => applyAiGeneratedStacks(aiPartialResult.raw.stacks, {
+                        partial: true,
+                        skeletonFallback: aiPartialResult.skeletonFallback,
+                      })}
+                      style={{
+                        padding: '8px 10px',
+                        borderRadius: 9,
+                        border: '1px solid rgba(34,197,94,0.25)',
+                        background: aiPartialResult.canRunPartial ? 'rgba(34,197,94,0.16)' : 'rgba(34,197,94,0.06)',
+                        color: aiPartialResult.canRunPartial ? '#86efac' : 'rgba(134,239,172,0.35)',
+                        cursor: aiPartialResult.canRunPartial && !aiLoading ? 'pointer' : 'not-allowed',
+                        fontSize: 12,
+                        fontWeight: 700,
+                      }}
+                    >
+                      run partial scenario
+                    </button>
+                    <button
+                      type="button"
+                      disabled={aiLoading || aiPrompt.trim().length < 5}
+                      onClick={runAiGeneration}
+                      style={{
+                        padding: '8px 10px',
+                        borderRadius: 9,
+                        border: '1px solid rgba(251,191,36,0.25)',
+                        background: 'rgba(251,191,36,0.1)',
+                        color: '#fbbf24',
+                        cursor: aiLoading || aiPrompt.trim().length < 5 ? 'not-allowed' : 'pointer',
+                        fontSize: 12,
+                        fontWeight: 700,
+                      }}
+                    >
+                      regenerate
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAiDiagnosticsOpen((open) => !open)}
+                      style={{
+                        padding: '8px 10px',
+                        borderRadius: 9,
+                        border: '1px solid rgba(148,163,184,0.22)',
+                        background: 'rgba(148,163,184,0.08)',
+                        color: '#cbd5e1',
+                        cursor: 'pointer',
+                        fontSize: 12,
+                        fontWeight: 700,
+                      }}
+                    >
+                      view diagnostics
+                    </button>
+                  </div>
+
+                  {aiDiagnosticsOpen && (
+                    <pre
+                      style={{
+                        margin: 0,
+                        maxHeight: 180,
+                        overflow: 'auto',
+                        padding: 10,
+                        borderRadius: 8,
+                        background: 'rgba(0,0,0,0.24)',
+                        color: '#cbd5e1',
+                        fontSize: 10,
+                        lineHeight: 1.45,
+                        whiteSpace: 'pre-wrap',
+                      }}
+                    >
+                      {JSON.stringify({
+                        status: aiPartialResult.status,
+                        reason: aiPartialResult.reason,
+                        reasonCodes: aiPartialResult.reasonCodes,
+                        diagnostics: aiPartialResult.raw.diagnostics || [],
+                        repairActions: aiPartialResult.raw.repairActions || [],
+                        userActions: aiPartialResult.userActions,
+                      }, null, 2)}
+                    </pre>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Footer */}
@@ -6325,56 +6706,7 @@ const EXAMPLE_FULL = `версия "1.0"
               >Отмена</button>
               <button
                 disabled={aiLoading || aiPrompt.trim().length < 5}
-                onClick={async () => {
-                  setAiLoading(true);
-                  setAiError('');
-                  try {
-                    const token = await getCsrfTokenForRequest();
-                    const jwt = getStoredJwt();
-                    const res = await fetch(`${API_URL}/ai-generate`, {
-                      method: 'POST',
-                      credentials: 'include',
-                      headers: {
-                        'Content-Type': 'application/json',
-                        'x-csrf-token': token,
-                        ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
-                      },
-                      body: JSON.stringify({ prompt: aiPrompt.trim() }),
-                    });
-                    if (!res.ok) {
-                      const text = await res.text();
-                      let msg = `Ошибка сервера ${res.status}`;
-                      try { const j = JSON.parse(text); msg = j.error || msg; } catch { /* не JSON */ }
-                      throw new Error(msg);
-                    }
-                    const data = await res.json();
-                    if (data.error) throw new Error(data.error);
-                    if (!Array.isArray(data.stacks) || data.stacks.length === 0) throw new Error('AI вернул пустую схему');
-                    // Расставляем блоки на холсте (смещаем вправо если что-то уже есть)
-                    const offsetX = stacks.length > 0 ? Math.max(...stacks.map(s => s.x + 300)) : 40;
-                    const resolvedTok = resolveBotTokenForNewBlock(stacks, currentUser);
-                    const newStacks = data.stacks.map((s, i) => ({
-                      ...s,
-                      id: 'ai_' + Date.now() + '_' + i,
-                      x: (s.x || 40) + offsetX,
-                      y: s.y || 40,
-                      blocks: (s.blocks || []).map((b, bi) => ({
-                        ...b,
-                        id: 'ai_b_' + Date.now() + '_' + i + '_' + bi,
-                        props: b.type === 'bot' && resolvedTok
-                          ? { ...b.props, token: resolvedTok }
-                          : b.props,
-                      })),
-                    }));
-                    setStacks(prev => [...prev, ...newStacks]);
-                    setShowAIModal(false);
-                    showToast('✨ AI сгенерировал схему бота!', 'success');
-                  } catch(e) {
-                    setAiError(e.message || 'Что-то пошло не так');
-                  } finally {
-                    setAiLoading(false);
-                  }
-                }}
+                onClick={runAiGeneration}
                 style={{
                   flex: 2, padding: '11px', borderRadius: 10, fontSize: 13, fontWeight: 600,
                   background: aiLoading || aiPrompt.trim().length < 5
@@ -6389,7 +6721,7 @@ const EXAMPLE_FULL = `версия "1.0"
                 {aiLoading ? (
                   <>
                     <span style={{ display: 'inline-block', width: 14, height: 14, border: '2px solid rgba(251,191,36,0.3)', borderTopColor: '#fbbf24', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-                    Генерирую...
+                    {AI_GEN_LOADING_STEPS[aiLoadingStep]}
                   </>
                 ) : '✨ Сгенерировать'}
               </button>
@@ -6532,7 +6864,7 @@ const EXAMPLE_FULL = `версия "1.0"
               ))}
             </div>
             <div style={{ marginTop: 22, fontSize: 11, color: 'rgba(148,163,184,0.88)', lineHeight: 1.45 }}>
-              Подождите — AI собирает схему блоков. Обычно это от нескольких секунд до минуты.
+              Подождите — AI собирает и проверяет сценарий. Обычно это от нескольких секунд до минуты.
             </div>
           </div>
         </div>
@@ -7330,8 +7662,8 @@ const EXAMPLE_FULL = `версия "1.0"
             </div>
           </div>
           <div style={{ fontSize: 10, color: 'rgba(148,163,184,0.9)', padding: '6px 12px', lineHeight: 1.45 }}>
-            Сервер выполняет сценарий через mock Telegram (без вашего Bot API). На сервере нужен{' '}
-            <span style={{ color: '#7dd3fc' }}>CICADA_TG_ROOT</span> в .env.
+            Сервер выполняет сценарий через mock Telegram (без вашего Bot API) на установленном ядре{' '}
+            <span style={{ color: '#7dd3fc' }}>cicada-tg</span>.
           </div>
           <div
             ref={previewScrollRef}

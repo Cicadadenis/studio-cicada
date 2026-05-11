@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "targetCore": "0.3.3",
+  "compatibilityModes": ["0.3.3 exact", "0.3.x compatible", "strict-runtime"],
+  "supportedConstructs": {
+    "handlers": ["start", "command", "callback", "text"],
+    "actions": [
+      "message",
+      "buttons",
+      "inline_db",
+      "ask",
+      "remember",
+      "get",
+      "save",
+      "save_global",
+      "condition",
+      "run_scenario",
+      "goto_command",
+      "goto_block",
+      "goto_scenario",
+      "goto",
+      "use_block",
+      "stop",
+      "send_file",
+      "ui_state"
+    ],
+    "features": [
+      "reply",
+      "inline_keyboard",
+      "if_else",
+      "scenarios",
+      "global_kv",
+      "handler_start",
+      "handler_command",
+      "handler_callback",
+      "handler_text"
+    ]
+  },
+  "unsupportedConstructs": [
+    "legacy callbacks",
+    "deprecated media syntax",
+    "obsolete DB template key semantics",
+    "raw DSL generation from AI",
+    "editor stacks as AI output"
+  ]
+}

@@ -55,12 +55,14 @@ function attachRepair(out, diagnostics) {
  *   extract?: { prefer?: 'first' | 'longest' },
  *   runtimeSupportedFeatures?: Iterable<string> | null,
  *   skipCapabilities?: boolean,
+ *   skipSemantic?: boolean,
  *   dependencyGraph?: unknown,
  *   dirtyChunkKeys?: string[],
  *   skipInvalidation?: boolean,
  *   skipProjectGraph?: boolean,
  *   projectGraphOptions?: Record<string, unknown>,
  *   dryRunPolicy?: Record<string, unknown>,
+ *   syntaxTimeoutMs?: number,
  *   skipDryRun?: boolean,
  * }} opts
  */
@@ -109,7 +111,7 @@ export function runAiDslValidationPipeline(opts) {
       opts.runtimeSupportedFeatures != null ? opts.runtimeSupportedFeatures : null,
   });
 
-  const syntaxRaw = lintCicadaWithPython({ code: extraction.dsl, cwd });
+  const syntaxRaw = lintCicadaWithPython({ code: extraction.dsl, cwd, timeoutMs: opts.syntaxTimeoutMs });
   const structuredSyntax = mapPythonLintDiagnosticsToStructured(syntaxRaw.diagnostics || []);
   out.stages.syntax = {
     ok: Boolean(syntaxRaw.available && syntaxRaw.ok && !(syntaxRaw.diagnostics || []).length),
@@ -151,21 +153,25 @@ export function runAiDslValidationPipeline(opts) {
   const flow = parseCCDToFlow(extraction.dsl, [], {});
   out.stages.flow = { ok: true, nodeCount: (flow.nodes || []).length, edgeCount: (flow.edges || []).length };
 
-  const sem = semanticValidateFlow(flow);
-  out.stages.semantic = {
-    ok: sem.ok,
-    errors: sem.errors,
-    warnings: sem.warnings,
-  };
-  for (const w of sem.warnings) {
-    diagnostics.push(diagnosticV1FromSemanticWarning(w));
-  }
-  for (const e of sem.errors) {
-    diagnostics.push(diagnosticV1FromSemanticError(e));
-  }
-  if (!sem.ok) {
-    attachRepair(out, diagnostics);
-    return out;
+  if (!opts.skipSemantic) {
+    const sem = semanticValidateFlow(flow);
+    out.stages.semantic = {
+      ok: sem.ok,
+      errors: sem.errors,
+      warnings: sem.warnings,
+    };
+    for (const w of sem.warnings) {
+      diagnostics.push(diagnosticV1FromSemanticWarning(w));
+    }
+    for (const e of sem.errors) {
+      diagnostics.push(diagnosticV1FromSemanticError(e));
+    }
+    if (!sem.ok) {
+      attachRepair(out, diagnostics);
+      return out;
+    }
+  } else {
+    out.stages.semantic = { skipped: true };
   }
 
   const required = inferRequiredFeaturesFromFlow(flow);

@@ -332,13 +332,19 @@ function emitHttp(p) {
 
 function emitInlineDb(p) {
   const key = p.key || 'категории';
-  const labelField = p.labelField || 'name';
+  const labelField = String(p.labelField || '').trim();
+  const idField = String(p.idField || '').trim();
   const callbackPrefix = p.callbackPrefix || 'category:';
   const backText = p.backText || 'Назад';
   const backCallback = p.backCallback || 'назад';
   const columns = String(p.columns || '1').trim();
-  const suffix = columns && columns !== '1' ? ` колонки ${columns}` : '';
-  return `inline-кнопки из бд ${q(key)} текст ${q(labelField)} callback ${q(callbackPrefix)} назад ${q(backText)} ${ARROW} ${q(backCallback)}${suffix}`;
+  const parts = [`inline из бд ${q(key)}`];
+  if (labelField) parts.push(`текст ${q(labelField)}`);
+  if (idField) parts.push(`id ${q(idField)}`);
+  parts.push(`callback ${q(callbackPrefix)}`);
+  parts.push(`назад ${q(backText)} ${ARROW} ${q(backCallback)}`);
+  if (columns && columns !== '1') parts.push(`колонки ${columns}`);
+  return parts.join(' ');
 }
 
 function emitSwitch(p) {
@@ -423,8 +429,10 @@ export function emitBlockText(block) {
       return 'при старте:';
     case 'command':
       return `при команде ${q('/' + String(p.cmd || '').replace(/^\//, ''))}:`;
-    case 'callback':
-      return `при нажатии ${q(p.label || '')}:`;
+    case 'callback': {
+      const label = String(p.label || '').trim();
+      return label ? `при нажатии ${q(label)}:` : 'при нажатии:';
+    }
     case 'on_text':
       return 'при тексте:';
     case 'on_photo':
