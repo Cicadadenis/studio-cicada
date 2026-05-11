@@ -1683,7 +1683,31 @@ function Sidebar({ onDragStart, onDragEnd, onTapAdd }) {
 }
 
 // ─── PROPS PANEL ──────────────────────────────────────────────────────────
-function PropsPanel({ block, onChange }) {
+function collectReplyButtonOptions(stacks) {
+  const options = [];
+  const seen = new Set();
+  (stacks || []).forEach((stack) => {
+    const blockName = stack?.blocks?.find?.((b) => b?.type === 'block')?.props?.name || 'блок';
+    (stack?.blocks || []).forEach((b) => {
+      if (b?.type !== 'buttons') return;
+      const rows = String(b?.props?.rows || '');
+      rows
+        .split('\n')
+        .flatMap((row) => row.split(','))
+        .map((x) => x.trim())
+        .filter(Boolean)
+        .forEach((text) => {
+          const key = `${blockName}::${text}`;
+          if (seen.has(key)) return;
+          seen.add(key);
+          options.push({ value: text, label: `${blockName} / ${text}` });
+        });
+    });
+  });
+  return options;
+}
+
+function PropsPanel({ block, onChange, stacks }) {
   const ctx = React.useContext(BuilderUiContext);
   const lang = ctx?.lang || 'ru';
   const blockTypes = ctx?.blockTypes || BLOCK_TYPES;
@@ -1701,6 +1725,7 @@ function PropsPanel({ block, onChange }) {
   const fields = localizedPropFields(block.type, lang, FIELDS[block.type] || []);
   const props = block.props || {};
   const beginnerHint = getBeginnerPanelHint(block, { blockTypes, ui, lang });
+  const buttonOptions = React.useMemo(() => collectReplyButtonOptions(stacks), [stacks]);
   return (
     <div style={{ overflowY: 'auto', flex: 1, padding: '10px 12px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
@@ -1743,12 +1768,22 @@ function PropsPanel({ block, onChange }) {
               onChange={e => onChange(f.key, e.target.value)}
               style={{ resize: 'vertical', lineHeight: 1.5 }}
             />
+          ) : (block.type === 'callback' && f.key === 'label' && buttonOptions.length > 0 ? (
+            <select
+              value={props[f.key] || ''}
+              onChange={e => onChange(f.key, e.target.value)}
+            >
+              <option value="">{'Выберите кнопку…'}</option>
+              {buttonOptions.map((opt) => (
+                <option key={`${opt.label}:${opt.value}`} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
           ) : (
             <input
               value={props[f.key] || ''}
               onChange={e => onChange(f.key, e.target.value)}
             />
-          )}
+          ))}
         </div>
       ))}
       {fields.length === 0 && (
@@ -6317,7 +6352,7 @@ const EXAMPLE_FULL = `версия "1.0"
                 display:'flex', alignItems:'center', gap:6,
               }}><span style={{ color:'#06b6d4', fontSize:11 }}>✏</span> {builderUi.propsHeader}</div>
               <div style={{ flex: isMobileView ? 1 : '1', minHeight:0, display:'flex', flexDirection:'column', overflow:'hidden' }}>
-                <PropsPanel block={selectedBlock} onChange={handlePropChange} />
+                <PropsPanel block={selectedBlock} onChange={handlePropChange} stacks={stacks} />
               </div>
             </>
           )}
