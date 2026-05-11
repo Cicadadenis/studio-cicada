@@ -1,59 +1,80 @@
-# Event Relation Engine (IDE-grade)
+# Visual Bot IDE Event-Relation Engine (Production Blueprint)
 
-## Architecture
+## Folder structure
 
-1. **Parser Layer** (`ImmutableAstParser`)
-   - Produces immutable AST documents.
-   - Uses stable ID factory for deterministic node/symbol IDs.
-2. **Index Layer** (`IncrementalIndexer`)
-   - Builds symbol graph + relation index.
-   - Uses two-tier cache:
-     - `Map<uri, IndexBundle>` for version-local reuse.
-     - `WeakMap<AstDocument, IndexBundle>` for memoized object-identity fast path.
-3. **Diagnostics Layer**
-   - Emits missing handler, dangling refs, duplicate symbols.
-4. **Quick Actions Layer**
-   - Converts diagnostics into code actions.
-5. **Refactor Layer** (`RenamePropagation`)
-   - Creates workspace-wide rename transaction.
-6. **Reactive Runtime** (`EventRelationEngine`)
-   - Supports live sync with subscription model for renderer/UI.
+- `core/ide/engine/types.ts` — contracts (AST, semantic model, diagnostics, actions, snapshots)
+- `core/ide/engine/parser.ts` — lexer/parser/AST factory/stable IDs/snapshots
+- `core/ide/engine/semantic.ts` — binder/symbol table/scope+reference resolver/relation graph/semantic diagnostics
+- `core/ide/engine/indexing.ts` — incremental index with WeakMap memoization and cache invalidation boundaries
+- `core/ide/engine/actions.ts` — quick actions + rename propagation/extract flow
+- `core/ide/engine/runtime.ts` — reactive workspace runtime/event bus/undo-redo/plugin host
 
-## Dependency Graph
+## Dependency graph
 
-- `EventRelationEngine`
-  - depends on `Parser`
-  - depends on `IncrementalIndexer`
-  - depends on `QuickActionsEngine`
-- `IncrementalIndexer`
-  - depends on `StableIdFactory`
-- `QuickActionsEngine`
-  - depends on `HandlerGenerator`
-- `RenamePropagation`
-  - depends on indexed bundle state
+`types -> parser -> semantic -> indexing -> actions -> runtime`
 
-## Pipeline
+Plugins wrap runtime stages:
+`parser plugins -> semantic analyzers -> diagnostics plugins -> code action plugins -> renderer plugins`
 
-`source update -> parse -> incremental index -> diagnostics -> code actions -> renderer snapshot -> UI subscribers`
+## Lifecycle pipeline
 
-## Performance Strategy
+1. Source update enters runtime transaction.
+2. Parser plugins preprocess DSL.
+3. Lexer + parser build immutable AST snapshot.
+4. Binder builds symbol graph, scopes, references, relations.
+5. Incremental index reuses previous snapshot via WeakMap/object identity.
+6. Diagnostics detect missing/duplicate/dangling/orphan/unreachable/cyclic/invalid issues.
+7. Quick actions generated.
+8. Renderer plugins consume semantic snapshot.
+9. Snapshot published to event bus + Info Panel subscribers.
+10. History transaction persisted for undo/redo.
 
-- **Immutable snapshots** enable undo/redo safety and deterministic diffing.
-- **Stable IDs** ensure relation continuity across edits.
-- **WeakMap memoization** avoids recompute for unchanged AST object references.
-- **Incremental URI cache** allows partial recomputation on per-document changes.
-- **O(N) linear node scan** in parser/indexer with constrained cross-link search.
-- Ready for future shardable relation indexes and worker-thread partitioning.
+## AST example
 
-## Plugin System (future)
+```txt
+event start
+handler start goto help | reply Hello
+event help
+handler help reply How can I help?
+```
 
-Planned extension points:
+## Semantic model example
 
-- `ParserPlugin`: custom DSL grammars.
-- `RelationPlugin`: custom relation edge inference.
-- `DiagnosticPlugin`: domain-specific lint rules.
-- `CodeActionPlugin`: custom quick fixes.
-- `RendererPlugin`: graph overlays/minimap/timeline projections.
+- symbols: `event:start`, `event:help`, `handler:on_start`, `handler:on_help`
+- references: `on_start -> event:start`
+- relations:
+  - `on_start handles start`
+  - `on_start transition help`
 
-All plugins should consume immutable inputs and return immutable outputs,
-allowing deterministic caching and safe multi-plugin composition.
+## Diagnostics example
+
+- `missing-handlers`
+- `duplicate-handlers`
+- `dangling-references`
+- `orphan-handlers`
+- `unreachable-flows`
+- `cyclic-navigation`
+- `invalid-transitions`
+
+## Performance strategy
+
+- Immutable AST snapshots + structural sharing.
+- Stable deterministic IDs enable fine-grained graph patching.
+- WeakMap memoization avoids full recompute for unchanged AST nodes.
+- URI-index cache + partial subtree reindex scaffolding.
+- Lazy semantic analysis extension point via `semanticAnalyzers` plugins.
+
+## Info Panel integration contract
+
+UI reads from `WorkspaceSnapshot`:
+- `diagnostics`
+- `codeActions`
+- `semantic.references`
+- `navigationTargets`
+
+## Future scaling roadmap
+
+- Worker-pool semantic partitions by module boundary.
+- Persistent on-disk index and bloom filters for symbol lookup.
+- Cross-file relation graph federation.
+- Plugin sandboxing and capability-based execution.
