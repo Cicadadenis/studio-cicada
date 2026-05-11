@@ -1683,7 +1683,31 @@ function Sidebar({ onDragStart, onDragEnd, onTapAdd }) {
 }
 
 // ─── PROPS PANEL ──────────────────────────────────────────────────────────
-function PropsPanel({ block, onChange }) {
+function collectReplyButtonOptions(stacks) {
+  const options = [];
+  const seen = new Set();
+  (stacks || []).forEach((stack) => {
+    const blockName = stack?.blocks?.find?.((b) => b?.type === 'block')?.props?.name || 'блок';
+    (stack?.blocks || []).forEach((b) => {
+      if (b?.type !== 'buttons') return;
+      const rows = String(b?.props?.rows || '');
+      rows
+        .split('\n')
+        .flatMap((row) => row.split(','))
+        .map((x) => x.trim())
+        .filter(Boolean)
+        .forEach((text) => {
+          const key = `${blockName}::${text}`;
+          if (seen.has(key)) return;
+          seen.add(key);
+          options.push({ value: text, label: `${blockName} / ${text}` });
+        });
+    });
+  });
+  return options;
+}
+
+function PropsPanel({ block, onChange, stacks }) {
   const ctx = React.useContext(BuilderUiContext);
   const lang = ctx?.lang || 'ru';
   const blockTypes = ctx?.blockTypes || BLOCK_TYPES;
@@ -1701,6 +1725,7 @@ function PropsPanel({ block, onChange }) {
   const fields = localizedPropFields(block.type, lang, FIELDS[block.type] || []);
   const props = block.props || {};
   const beginnerHint = getBeginnerPanelHint(block, { blockTypes, ui, lang });
+  const buttonOptions = React.useMemo(() => collectReplyButtonOptions(stacks), [stacks]);
   return (
     <div style={{ overflowY: 'auto', flex: 1, padding: '10px 12px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
@@ -1743,12 +1768,22 @@ function PropsPanel({ block, onChange }) {
               onChange={e => onChange(f.key, e.target.value)}
               style={{ resize: 'vertical', lineHeight: 1.5 }}
             />
+          ) : (block.type === 'callback' && f.key === 'label' && buttonOptions.length > 0 ? (
+            <select
+              value={props[f.key] || ''}
+              onChange={e => onChange(f.key, e.target.value)}
+            >
+              <option value="">{'Выберите кнопку…'}</option>
+              {buttonOptions.map((opt) => (
+                <option key={`${opt.label}:${opt.value}`} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
           ) : (
             <input
               value={props[f.key] || ''}
               onChange={e => onChange(f.key, e.target.value)}
             />
-          )}
+          ))}
         </div>
       ))}
       {fields.length === 0 && (
@@ -1963,17 +1998,6 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
     setHighlightRows([]);
   };
 
-  const applySuggestedFixes = async () => {
-    const code = previewCorrected ?? dsl;
-    try {
-      await postJsonWithCsrf('/api/dsl/compile', { code });
-      setFixNotice('DSL отправлен в cicada-tg /compile без локальных изменений');
-    } catch {
-      setFixNotice('Не удалось отправить DSL в cicada-tg /compile');
-    }
-    setTimeout(() => setFixNotice(''), 2200);
-  };
-
   const applySchemaFix = () => {
     const fixed = fixDslSchema(previewCorrected ?? dsl);
     const applied = onApplyCorrectedCode?.(fixed);
@@ -1984,6 +2008,21 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
       setHighlightRows(fixed.split('\n').map((_, idx) => idx));
     }
     setTimeout(() => { check(); }, 0);
+  };
+
+
+
+  const applyDetectedFix = async () => {
+    if (!validationResult) {
+      await check();
+      return;
+    }
+    if ((validationResult.errors || []).length > 0) {
+      applySchemaFix();
+      return;
+    }
+    setFixNotice('Ошибки не найдены: исправление недоступно');
+    setTimeout(() => setFixNotice(''), 2200);
   };
 
   const resetPreview = () => {
@@ -2088,42 +2127,24 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
           >{ui.dslDownload}</button>
           <button
             type="button"
-            onClick={applySuggestedFixes}
-            disabled={!validationResult}
-            style={{
-              background: !validationResult ? 'var(--bg3)' : '#0ea5e9',
-              color: !validationResult ? 'var(--text3)' : '#fff',
-              padding: '2px 7px',
-              borderRadius: 4,
-              fontSize: 9,
-              border: 'none',
-              cursor: !validationResult ? 'default' : 'pointer',
-              opacity: !validationResult ? 0.7 : 1,
-            }}
-            title={!validationResult ? ui.dslFixTitleNeedCheck : 'Отправить DSL в cicada-tg /compile'}
-          >
-            {'🔧 Fix via /compile'}
-          </button>
-          <button
-            type="button"
-            onClick={applySchemaFix}
+            onClick={applyDetectedFix}
+            disabled={!validationResult || !hasErrors}
             style={{
               padding: '4px 10px',
               borderRadius: 6,
               fontSize: 10,
               fontWeight: 600,
-              cursor: 'pointer',
+              cursor: (!validationResult || !hasErrors) ? 'default' : 'pointer',
               fontFamily: 'inherit',
               lineHeight: 1.2,
-              background: '#16a34a',
-              color: '#fff',
-              border: '1px solid #15803d',
+              background: (!validationResult || !hasErrors) ? 'var(--bg3)' : '#0ea5e9',
+              color: (!validationResult || !hasErrors) ? 'var(--text3)' : '#fff',
+              border: '1px solid transparent',
+              opacity: (!validationResult || !hasErrors) ? 0.7 : 1,
             }}
-            title="Нормализовать структуру DSL по UI-правилам"
-            onMouseEnter={e => { e.currentTarget.style.background = '#15803d'; }}
-            onMouseLeave={e => { e.currentTarget.style.background = '#16a34a'; }}
+            title={!validationResult ? ui.dslFixTitleNeedCheck : (!hasErrors ? 'Нет ошибок для исправления' : 'Исправить найденные ошибки DSL')}
           >
-            {'🛠 Исправить DSL'}
+            {'🔧 Исправить найденные ошибки'}
           </button>
         </div>
       </div>
@@ -6331,7 +6352,7 @@ const EXAMPLE_FULL = `версия "1.0"
                 display:'flex', alignItems:'center', gap:6,
               }}><span style={{ color:'#06b6d4', fontSize:11 }}>✏</span> {builderUi.propsHeader}</div>
               <div style={{ flex: isMobileView ? 1 : '1', minHeight:0, display:'flex', flexDirection:'column', overflow:'hidden' }}>
-                <PropsPanel block={selectedBlock} onChange={handlePropChange} />
+                <PropsPanel block={selectedBlock} onChange={handlePropChange} stacks={stacks} />
               </div>
             </>
           )}
