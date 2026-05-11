@@ -2301,8 +2301,8 @@ function DSLPane({ stacks, isMobile, isExpanded = false, onToggleExpanded, onClo
   const canToggleExpanded = typeof onToggleExpanded === 'function';
   const canClose = typeof onClose === 'function';
   const expandTitle = isExpanded
-    ? (isMobile ? 'Свернуть панель до половины экрана' : 'Свернуть панель к обычной высоте')
-    : (isMobile ? 'Развернуть панель на весь экран' : 'Раскрыть панель до половины высоты');
+    ? (isMobile ? 'Свернуть панель до половины экрана' : 'Свернуть панель обратно')
+    : (isMobile ? 'Открыть панель на весь экран' : 'Открыть панель на половину высоты');
 
   return (
     <div style={{
@@ -2324,6 +2324,54 @@ function DSLPane({ stacks, isMobile, isExpanded = false, onToggleExpanded, onClo
           display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'flex-start',
           alignItems: 'center', width: '100%', minWidth: 0,
         }}>
+          {(canToggleExpanded || canClose) && (
+            <div style={{ display: 'flex', gap: 6, flexShrink: 0, marginRight: 4 }}>
+              {canToggleExpanded && (
+                <button
+                  type="button"
+                  onClick={onToggleExpanded}
+                  title={expandTitle}
+                  style={{
+                    padding: '4px 8px',
+                    borderRadius: 6,
+                    fontSize: 10,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                    lineHeight: 1.2,
+                    background: isExpanded ? 'rgba(99,102,241,0.22)' : 'rgba(255,255,255,0.04)',
+                    color: isExpanded ? '#c4b5fd' : 'var(--text3)',
+                    border: `1px solid ${isExpanded ? 'rgba(196,181,253,0.45)' : 'var(--border2)'}`,
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {isMobile ? (isExpanded ? '↧ 1/2' : '↥ На весь') : (isExpanded ? '↧ Свернуть' : '↕ 1/2')}
+                </button>
+              )}
+              {canClose && (
+                <button
+                  type="button"
+                  onClick={onClose}
+                  title="Закрыть панель кода"
+                  style={{
+                    padding: '4px 8px',
+                    borderRadius: 6,
+                    fontSize: 10,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                    lineHeight: 1.2,
+                    background: 'rgba(255,255,255,0.04)',
+                    color: 'var(--text3)',
+                    border: '1px solid var(--border2)',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  × Закрыть
+                </button>
+              )}
+            </div>
+          )}
           <button
             type="button"
             onClick={check}
@@ -2398,56 +2446,10 @@ function DSLPane({ stacks, isMobile, isExpanded = false, onToggleExpanded, onClo
               border: '1px solid transparent',
               opacity: (!validationResult || !hasErrors) ? 0.7 : 1,
             }}
-            title={!validationResult ? ui.dslFixTitleNeedCheck : (!hasErrors ? 'Нет ошибок для исправления' : 'Исправить найденные ошибки DSL')}
+            title={!validationResult ? ui.dslFixTitleNeedCheck : (!hasErrors ? 'Нет ошибок для исправления' : 'Исправить DSL')}
           >
-            {'🔧 Исправить найденные ошибки'}
+            {'🔧 Исправить'}
           </button>
-          {(canToggleExpanded || canClose) && (
-            <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
-              {canToggleExpanded && (
-                <button
-                  type="button"
-                  onClick={onToggleExpanded}
-                  title={expandTitle}
-                  style={{
-                    padding: '4px 8px',
-                    borderRadius: 6,
-                    fontSize: 10,
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                    fontFamily: 'inherit',
-                    lineHeight: 1.2,
-                    background: isExpanded ? 'rgba(99,102,241,0.22)' : 'rgba(255,255,255,0.04)',
-                    color: isExpanded ? '#c4b5fd' : 'var(--text3)',
-                    border: `1px solid ${isExpanded ? 'rgba(196,181,253,0.45)' : 'var(--border2)'}`,
-                  }}
-                >
-                  {isExpanded ? (isMobile ? '1/2' : '280') : (isMobile ? '100%' : '1/2')}
-                </button>
-              )}
-              {canClose && (
-                <button
-                  type="button"
-                  onClick={onClose}
-                  title="Закрыть панель кода"
-                  style={{
-                    padding: '4px 8px',
-                    borderRadius: 6,
-                    fontSize: 11,
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                    fontFamily: 'inherit',
-                    lineHeight: 1.2,
-                    background: 'rgba(255,255,255,0.04)',
-                    color: 'var(--text3)',
-                    border: '1px solid var(--border2)',
-                  }}
-                >
-                  ×
-                </button>
-              )}
-            </div>
-          )}
         </div>
       </div>
 
