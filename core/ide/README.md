@@ -57,3 +57,16 @@ Implemented providers:
   - graph patching
   - partial semantic recompute
   - memory-local weak caches
+
+## Suggestions Engine
+
+- `engine/suggestions.ts` adds:
+  - `collectButtons()`
+  - `detectMissingButtonHandlers()`
+  - `getSuggestions()`
+- Suggestions are immutable, memoized, and stored in `WorkspaceSnapshot.suggestions`.
+- Runtime `applySuggestion()` returns **AST mutation intents** (`create-handler-node`, `remove-handler-node`, `rename-button`, `delete-button`) so handler creation/removal is AST-driven instead of raw text editing.
+- Info Panel can render menu-focused actions:
+  - `⚡ События`
+  - `➕ Добавить при нажатии 'Пункт 1'`
+  - `➕ Добавить при нажатии 'Пункт 2'`

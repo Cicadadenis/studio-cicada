@@ -36,6 +36,7 @@ export class SemanticEngine {
     for (const h of handlers) {
       if (!events.has(h.eventRef)) out.push({ code:'dangling-reference', message:`Unknown event '${h.eventRef}'`, severity:'error', nodeId:h.id });
       if (!h.steps.length) out.push({ code:'orphan-handler', message:`Handler '${h.name}' has no steps`, severity:'warning', nodeId:h.id });
+      if (h.name.startsWith('on_btn_') && !h.steps.some((x)=>x.action==='reply' || x.action==='goto')) out.push({ code:'orphan-button-handler', message:`Button handler '${h.name}' is orphan`, severity:'warning', nodeId:h.id });
       if (this.detectInfiniteLoop(h, transitions)) out.push({ code:'infinite-loop', message:`Potential infinite loop in '${h.name}'`, severity:'warning', nodeId:h.id });
       if (this.detectRecursiveTransition(h.name, transitions, new Set())) out.push({ code:'recursive-transition', message:`Recursive transition from '${h.name}'`, severity:'warning', nodeId:h.id });
     }

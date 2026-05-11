@@ -1,9 +1,12 @@
-import { CompletionItem, HoverResult, LspSemanticToken, WorkspaceSnapshot } from './types.js';
+import { CompletionItem, HoverResult, LspSemanticToken, Suggestion, WorkspaceSnapshot } from './types.js';
 import { RecursiveDescentParser } from './parser.js';
 import { IncrementalIndexer } from './indexing.js';
 
 export interface EngineTx { readonly id: string; readonly uri: string; readonly version: number; readonly content: string; readonly baseVersion?: number }
 export interface CollaborationEnvelope { readonly tx: EngineTx; readonly actorId: string; readonly vectorClock: ReadonlyMap<string, number> }
+
+
+export interface AstMutation { readonly type: 'create-handler-node'|'remove-handler-node'|'rename-button'|'delete-button'; readonly payload: Readonly<Record<string,string>> }
 
 export class TransactionEngine {
   private readonly parser = new RecursiveDescentParser();
@@ -20,6 +23,12 @@ export class TransactionEngine {
   applyRemote(envelope: CollaborationEnvelope): WorkspaceSnapshot { return this.apply(envelope.tx); }
   subscribe(fn: (snapshot: WorkspaceSnapshot) => void): () => void { this.listeners.add(fn); return () => this.listeners.delete(fn); }
   registerWorker(name: string, capacity = 1): void { this.workers.set(name, capacity); }
+  applySuggestion(snapshot: WorkspaceSnapshot, suggestion: Suggestion): AstMutation {
+    if (suggestion.kind === 'create-button-handler') return { type:'create-handler-node', payload:{ button:suggestion.stableKey.replace('button:','') } };
+    if (suggestion.kind === 'remove-orphan-handler') return { type:'remove-handler-node', payload:{ nodeId:String(suggestion.targetNodeId) } };
+    if (suggestion.kind === 'rename-button-sync') return { type:'rename-button', payload:{ stableKey:suggestion.stableKey } };
+    return { type:'delete-button', payload:{ stableKey:suggestion.stableKey } };
+  }
   private emit(snapshot: WorkspaceSnapshot): void { for (const l of this.listeners) l(snapshot); }
 }
 
