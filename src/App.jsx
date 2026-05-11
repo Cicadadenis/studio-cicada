@@ -437,79 +437,105 @@ export const BLOCK_TYPES = [
 export const BuilderUiContext = React.createContext(null);
 
 // ─── COMPATIBILITY: what can stack BELOW a given type ─────────────────────
-// Базовый набор без buttons и inline — они только после message
-const FLOW_CHILDREN = ['message','typing','delay','condition','else','switch','ask','remember','get','save','random','loop','http','log','notify','broadcast','role','payment','analytics','photo','video','audio','document','send_file','sticker','contact','location','poll','database','classify','use','stop','goto','menu','check_sub','member_role','forward_msg','db_delete','save_global','set_global','get_user','all_keys','call_block'];
-const FLOW_NO_MEDIA = ['message','typing','delay','condition','switch','ask','remember','get','save','random','loop','http','log','stop','goto','use','set_global'];
-const TERMINAL = [];
+const TERMINAL_CHILDREN = [];
+const UI_ATTACHMENT_LEGACY_BLOCK_TYPES = new Set(['buttons', 'inline', 'inline_db']);
+const FLOW_CHILDREN = [
+  'message', 'typing', 'delay', 'condition', 'else', 'switch', 'ask', 'remember',
+  'get', 'save', 'random', 'loop', 'http', 'log', 'notify', 'broadcast', 'role',
+  'payment', 'analytics', 'photo', 'video', 'audio', 'document', 'send_file',
+  'sticker', 'contact', 'location', 'poll', 'database', 'classify', 'use',
+  'call_block', 'stop', 'goto', 'menu', 'check_sub', 'member_role', 'forward_msg',
+  'db_delete', 'save_global', 'set_global', 'get_user', 'all_keys',
+];
+const FLOW_NO_MEDIA = [
+  'message', 'typing', 'delay', 'condition', 'switch', 'ask', 'remember', 'get',
+  'save', 'random', 'loop', 'http', 'log', 'stop', 'goto', 'use', 'call_block',
+  'set_global',
+];
+const TEXT_ATTACHMENTS = ['buttons', 'inline', 'inline_db'];
 
 const CAN_STACK_BELOW = {
-  start:      [...FLOW_CHILDREN],
-  command:    [...FLOW_CHILDREN],
-  callback:   [...FLOW_CHILDREN],
-  on_photo:   [...FLOW_CHILDREN],
-  on_voice:   [...FLOW_CHILDREN],
-  on_document:[...FLOW_CHILDREN],
-  on_sticker: [...FLOW_CHILDREN],
-  on_location:[...FLOW_CHILDREN],
-  on_contact: [...FLOW_CHILDREN],
-  middleware: [...FLOW_CHILDREN],
-  message:    [...FLOW_CHILDREN, 'buttons', 'inline', 'inline_db'],  // кнопки и inline — только после текста
-  buttons:    [...FLOW_CHILDREN],                        // после кнопок нельзя снова кнопки/inline
-  menu:       ['message','buttons','inline','typing','delay','condition','stop','goto'],
-  condition:  [...FLOW_CHILDREN],
-  else:       [...FLOW_CHILDREN],
-  switch:     [...FLOW_CHILDREN],
-  ask:        ['message','remember','get','save','condition','http','log','notify','stop','goto','use'],
-  remember:   [...FLOW_NO_MEDIA, 'notify'],
-  get:        [...FLOW_NO_MEDIA],
-  save:       [...FLOW_NO_MEDIA],
-  random:     ['message','typing','delay','condition','goto','stop','use','log'],
-  loop:       [...FLOW_CHILDREN],
-  http:       ['message','remember','save','condition','log','stop','goto','use'],
-  delay:      ['message','typing','condition','ask','remember','get','save','http','log','stop','goto','use'],
-  typing:     ['message','photo','video','audio','document','send_file','sticker','condition','ask','delay','stop','goto','use'],
-  photo:      ['message','typing','delay','condition','ask','stop','goto','use','log'],
-  video:      ['message','typing','delay','condition','ask','stop','goto','use','log'],
-  audio:      ['message','typing','delay','condition','ask','stop','goto','use','log'],
-  document:   ['message','typing','delay','condition','ask','stop','goto','use','log'],
-  send_file:  ['message','typing','delay','condition','ask','stop','goto','use','log'],
-  sticker:    ['message','typing','delay','condition','ask','stop','goto','use','log'],
-  contact:    ['message','typing','delay','condition','ask','stop','goto','use','log'],
-  location:   ['message','typing','delay','condition','ask','stop','goto','use','log'],
-  poll:       ['message','typing','delay','condition','ask','stop','goto','use','log'],
-  log:        [...FLOW_NO_MEDIA, 'notify'],
-  notify:     ['message','typing','delay','stop','goto','log'],
-  database:   ['message','remember','get','save','condition','log','stop','goto','use'],
-  payment:    ['message','condition','stop','goto','log'],
-  analytics:  ['message','stop','goto','log'],
-  classify:   ['message','condition','stop','goto','use','log'],
-  role:       ['message','condition','stop','goto','use','log'],
-  block:      [...FLOW_CHILDREN],
-  scenario:   ['step','message','typing','delay','condition','switch','ask','remember','get','save','random','loop','http','log','stop','goto','use'],
-  step:       ['message','typing','delay','condition','switch','ask','remember','get','save','random','loop','http','log','stop','goto','use','step'],
-  inline:     ['message','condition','stop','goto'],     // после inline тоже можно message
-  inline_db:  ['message','condition','stop','goto'],
-  use:        [...FLOW_CHILDREN],
-  stop:       TERMINAL,
-  goto:       TERMINAL,
-  bot:        TERMINAL,
-  version:    TERMINAL,
-  global:     TERMINAL,
-  commands:   TERMINAL,
-  // ── Новые типы ───────────────────────────────────────────────────────────
-  check_sub:   ['message','condition','stop','goto','use','log'],
-  member_role: ['message','condition','remember','save','stop','goto','log'],
-  forward_msg: ['message','condition','stop','goto','log'],
-  broadcast:   ['message','stop','goto','log'],
-  db_delete:   [...FLOW_NO_MEDIA, 'notify'],
-  save_global: [...FLOW_NO_MEDIA],
-  set_global:  [...FLOW_NO_MEDIA],
-  get_user:    [...FLOW_NO_MEDIA, 'notify'],
-  all_keys:    [...FLOW_NO_MEDIA, 'notify'],
-  call_block:  ['message','remember','save','condition','log','stop','goto','use'],
-};
+  version: TERMINAL_CHILDREN,
+  bot: TERMINAL_CHILDREN,
+  commands: TERMINAL_CHILDREN,
+  global: TERMINAL_CHILDREN,
+  block: FLOW_CHILDREN,
+  use: FLOW_CHILDREN,
+  call_block: ['message', 'remember', 'save', 'condition', 'log', 'stop', 'goto', 'use'],
 
-const UI_ATTACHMENT_LEGACY_BLOCK_TYPES = new Set(['buttons', 'inline', 'inline_db']);
+  start: FLOW_CHILDREN,
+  command: FLOW_CHILDREN,
+  callback: FLOW_CHILDREN,
+  on_text: FLOW_CHILDREN,
+  on_photo: FLOW_CHILDREN,
+  photo_received: FLOW_CHILDREN,
+  on_voice: FLOW_CHILDREN,
+  voice_received: FLOW_CHILDREN,
+  on_document: FLOW_CHILDREN,
+  document_received: FLOW_CHILDREN,
+  on_sticker: FLOW_CHILDREN,
+  sticker_received: FLOW_CHILDREN,
+  on_location: FLOW_CHILDREN,
+  location_received: FLOW_CHILDREN,
+  on_contact: FLOW_CHILDREN,
+  contact_received: FLOW_CHILDREN,
+  middleware: FLOW_CHILDREN,
+
+  message: [...FLOW_CHILDREN, ...TEXT_ATTACHMENTS],
+  reply: [...FLOW_CHILDREN, ...TEXT_ATTACHMENTS],
+  caption: [...FLOW_CHILDREN, ...TEXT_ATTACHMENTS],
+  buttons: FLOW_CHILDREN,
+  inline: ['message', 'condition', 'stop', 'goto'],
+  inline_db: ['message', 'condition', 'stop', 'goto'],
+  menu: ['message', 'condition', 'stop', 'goto', 'use'],
+
+  condition: FLOW_CHILDREN,
+  else: FLOW_CHILDREN,
+  switch: FLOW_CHILDREN,
+  ask: ['message', 'remember', 'get', 'save', 'condition', 'http', 'log', 'notify', 'stop', 'goto', 'use'],
+  remember: [...FLOW_NO_MEDIA, 'notify'],
+  get: FLOW_NO_MEDIA,
+  save: FLOW_NO_MEDIA,
+  random: ['message', 'typing', 'delay', 'condition', 'goto', 'stop', 'use', 'log'],
+  loop: FLOW_CHILDREN,
+
+  http: ['message', 'remember', 'save', 'condition', 'log', 'stop', 'goto', 'use'],
+  delay: ['message', 'typing', 'condition', 'ask', 'remember', 'get', 'save', 'http', 'log', 'stop', 'goto', 'use'],
+  typing: ['message', 'photo', 'video', 'audio', 'document', 'send_file', 'sticker', 'condition', 'ask', 'delay', 'stop', 'goto', 'use'],
+  stop: TERMINAL_CHILDREN,
+  goto: TERMINAL_CHILDREN,
+  log: [...FLOW_NO_MEDIA, 'notify'],
+  notify: ['message', 'typing', 'delay', 'stop', 'goto', 'log'],
+  database: ['message', 'remember', 'get', 'save', 'condition', 'log', 'stop', 'goto', 'use'],
+  payment: ['message', 'condition', 'stop', 'goto', 'log'],
+  analytics: ['message', 'stop', 'goto', 'log'],
+  classify: ['message', 'condition', 'stop', 'goto', 'use', 'log'],
+  role: ['message', 'condition', 'stop', 'goto', 'use', 'log'],
+
+  photo: ['message', 'typing', 'delay', 'condition', 'ask', 'stop', 'goto', 'use', 'log'],
+  video: ['message', 'typing', 'delay', 'condition', 'ask', 'stop', 'goto', 'use', 'log'],
+  audio: ['message', 'typing', 'delay', 'condition', 'ask', 'stop', 'goto', 'use', 'log'],
+  document: ['message', 'typing', 'delay', 'condition', 'ask', 'stop', 'goto', 'use', 'log'],
+  send_file: ['message', 'typing', 'delay', 'condition', 'ask', 'stop', 'goto', 'use', 'log'],
+  sticker: ['message', 'typing', 'delay', 'condition', 'ask', 'stop', 'goto', 'use', 'log'],
+  contact: ['message', 'typing', 'delay', 'condition', 'ask', 'stop', 'goto', 'use', 'log'],
+  location: ['message', 'typing', 'delay', 'condition', 'ask', 'stop', 'goto', 'use', 'log'],
+  poll: ['message', 'typing', 'delay', 'condition', 'ask', 'stop', 'goto', 'use', 'log'],
+
+  scenario: ['step', 'message', 'typing', 'delay', 'condition', 'switch', 'ask', 'remember', 'get', 'save', 'random', 'loop', 'http', 'log', 'stop', 'goto', 'use'],
+  step: ['message', 'typing', 'delay', 'condition', 'switch', 'ask', 'remember', 'get', 'save', 'random', 'loop', 'http', 'log', 'stop', 'goto', 'use', 'step'],
+
+  check_sub: ['message', 'condition', 'stop', 'goto', 'use', 'log'],
+  member_role: ['message', 'condition', 'remember', 'save', 'stop', 'goto', 'log'],
+  forward_msg: ['message', 'condition', 'stop', 'goto', 'log'],
+  broadcast: ['message', 'stop', 'goto', 'log'],
+
+  db_delete: [...FLOW_NO_MEDIA, 'notify'],
+  save_global: FLOW_NO_MEDIA,
+  set_global: FLOW_NO_MEDIA,
+  get_user: [...FLOW_NO_MEDIA, 'notify'],
+  all_keys: [...FLOW_NO_MEDIA, 'notify'],
+};
 const BLOCK_FOOTER_ACTION_TYPES = Object.freeze({
   buttons: { label: 'Кнопки', icon: '⊞', color: '#a78bfa' },
   inline: { label: 'Inline', icon: '▦', color: '#7c3aed' },
@@ -520,13 +546,6 @@ const BLOCK_FOOTER_ACTION_CAPABILITY_MATRIX = Object.freeze({
   reply: ['buttons', 'inline', 'media'],
   message: ['buttons', 'inline', 'media'],
   caption: ['buttons', 'inline', 'media'],
-  media: ['buttons', 'inline'],
-  photo: ['buttons', 'inline'],
-  video: ['buttons', 'inline'],
-  audio: ['buttons', 'inline'],
-  document: ['buttons', 'inline'],
-  send_file: ['buttons', 'inline'],
-  sticker: ['buttons', 'inline'],
 });
 
 function getBlockFooterAddableActions(type) {
@@ -641,7 +660,6 @@ function addUiAttachment(block, kind, attachment = defaultUiAttachment(kind)) {
 }
 
 function canStackBelow(parentType, childType) {
-  if (UI_ATTACHMENT_LEGACY_BLOCK_TYPES.has(childType)) return false;
   return (CAN_STACK_BELOW[parentType] || []).includes(childType);
 }
 
@@ -694,7 +712,7 @@ function findNewBlockSnapTarget(stacks, worldGhostLeft, worldGhostTop, newType) 
 
 function snapAttachRejectHint(parentType, childType, ui) {
   const t = ui || getConstructorStrings('ru');
-  if (UI_ATTACHMENT_LEGACY_BLOCK_TYPES.has(childType) && !canRenderUi(parentType)) {
+  if (UI_ATTACHMENT_LEGACY_BLOCK_TYPES.has(childType)) {
     return t.snapButtonsNeedMessage;
   }
   if (childType === 'inline' && parentType === 'inline') {
@@ -713,7 +731,7 @@ const NEXT_BLOCK_PRIORITY = [
 ];
 
 function getSuggestedNextBlockLabels(parentType, max = 14, blockTypes = BLOCK_TYPES) {
-  const allowed = (CAN_STACK_BELOW[parentType] || []).filter((type) => !UI_ATTACHMENT_LEGACY_BLOCK_TYPES.has(type));
+  const allowed = CAN_STACK_BELOW[parentType] || [];
   if (!allowed?.length) return [];
   const set = new Set(allowed);
   const out = [];
@@ -901,6 +919,62 @@ const DEFAULT_PROPS = {
   all_keys:    { varname: 'ключи' },
   call_block:  { blockname: 'мой_блок', varname: 'результат' },
 };
+
+const UNIQUE_BLOCK_TYPES = new Set(['version', 'bot', 'start']);
+const FALLBACK_COMMAND_NAMES = ['help', 'menu', 'settings', 'about'];
+
+function flattenBlocks(stacks) {
+  return (stacks || []).flatMap((s) => s.blocks || []);
+}
+
+function hasBlockOfType(stacks, type) {
+  return flattenBlocks(stacks).some((b) => b.type === type);
+}
+
+function normalizeCommandName(cmd) {
+  return String(cmd ?? '').replace(/^\//, '').trim().toLowerCase();
+}
+
+function hasCommandNamed(stacks, commandName) {
+  const name = normalizeCommandName(commandName);
+  if (!name) return false;
+  return flattenBlocks(stacks).some((b) => (
+    b.type === 'command' && normalizeCommandName(b.props?.cmd) === name
+  ));
+}
+
+function getNextAvailableCommandName(stacks) {
+  for (const name of FALLBACK_COMMAND_NAMES) {
+    if (!hasCommandNamed(stacks, name)) return name;
+  }
+  let i = 2;
+  while (hasCommandNamed(stacks, `command${i}`)) i += 1;
+  return `command${i}`;
+}
+
+function getUniqueBlockConflictMessage(stacks, type, props = {}) {
+  if (UNIQUE_BLOCK_TYPES.has(type) && hasBlockOfType(stacks, type)) {
+    const label = getBlockDef(type)?.label || type;
+    return `Блок «${label}» уже есть на холсте. Удалите старый, чтобы добавить новый.`;
+  }
+
+  if (type === 'start' && hasCommandNamed(stacks, 'start')) {
+    return 'Для /start уже есть блок «Команда /start». Удалите его перед добавлением «Старт».';
+  }
+
+  if (type === 'command') {
+    const cmd = normalizeCommandName(props.cmd ?? DEFAULT_PROPS.command.cmd);
+    if (!cmd) return null;
+    if (cmd === 'start' && hasBlockOfType(stacks, 'start')) {
+      return 'Для /start уже есть блок «Старт». Используйте другую команду или удалите «Старт».';
+    }
+    if (hasCommandNamed(stacks, cmd)) {
+      return `Команда /${cmd} уже есть на холсте. У каждой команды должен быть один обработчик.`;
+    }
+  }
+
+  return null;
+}
 
 /** Токен для нового блока «Бот»: test_token из профиля или первый непустой токен с холста. */
 function resolveBotTokenForNewBlock(stacks, currentUser) {
@@ -1512,7 +1586,7 @@ function CompatibleBlocksHint({ type, color, mode = 'tooltip', onAdd }) {
   const blockTypes = ctx?.blockTypes || localizeBlockTypes(BLOCK_TYPES, 'ru');
   const ui = ctx?.t || getConstructorStrings('ru');
 
-  const allowed = (CAN_STACK_BELOW[type] || []).filter((childType) => !UI_ATTACHMENT_LEGACY_BLOCK_TYPES.has(childType));
+  const allowed = CAN_STACK_BELOW[type] || [];
   const isModal = mode === 'modal';
   const grouped = {};
   allowed.forEach((ct) => {
@@ -1600,7 +1674,7 @@ function BlockTooltip({ type, color }) {
   const ctx = React.useContext(BuilderUiContext);
   const lang = ctx?.lang || 'ru';
   const ui = ctx?.t || getConstructorStrings('ru');
-  const allowed = (CAN_STACK_BELOW[type] || []).filter((childType) => !UI_ATTACHMENT_LEGACY_BLOCK_TYPES.has(childType));
+  const allowed = CAN_STACK_BELOW[type] || [];
   const rawNote = BLOCK_NOTES[type];
   const note = blockNoteForLang(lang, type, rawNote);
 
@@ -1617,69 +1691,6 @@ function BlockTooltip({ type, color }) {
     <div style={{ minWidth: 200, maxWidth: 260 }}>
       {note && <BlockNoteBox note={note} compact={false} />}
       <CompatibleBlocksHint type={type} color={color} mode="tooltip" />
-    </div>
-  );
-}
-
-function BlockFooterActions({ block, selected, onAdd }) {
-  if (!selected || !block || !onAdd) return null;
-  if (!canRenderUi(block.type)) return null;
-  const allowed = normalizeBlockUi(block).addableActions;
-  if (!allowed.length) return null;
-  const attachmentCount = countUiAttachments(block);
-  return (
-    <div
-      onClick={(e) => e.stopPropagation()}
-      onMouseDown={(e) => e.stopPropagation()}
-      style={{
-        position: 'absolute',
-        left: 0,
-        top: 'calc(100% + 2px)',
-        width: BLOCK_W,
-        display: 'flex',
-        gap: 4,
-        flexWrap: 'wrap',
-        padding: '5px 6px',
-        borderRadius: 9,
-        background: 'rgba(8, 12, 24, 0.92)',
-        border: '1px solid rgba(255,255,255,0.12)',
-        boxShadow: '0 8px 22px rgba(0,0,0,0.36)',
-        zIndex: 20,
-      }}
-    >
-      {allowed.map((kind) => {
-        const cfg = BLOCK_FOOTER_ACTION_TYPES[kind];
-        return (
-          <button
-            key={kind}
-            type="button"
-            title={`Добавить ${cfg.label} как UI attachment`}
-            onClick={() => onAdd(block.id, kind)}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 3,
-              padding: '4px 6px',
-              borderRadius: 7,
-              border: `1px solid ${cfg.color}55`,
-              background: `${cfg.color}18`,
-              color: '#fff',
-              fontSize: 9,
-              fontWeight: 700,
-              cursor: 'pointer',
-              fontFamily: 'Syne, system-ui',
-            }}
-          >
-            <span>{cfg.icon}</span>
-            <span>{cfg.label}</span>
-          </button>
-        );
-      })}
-      {attachmentCount > 0 && (
-        <span style={{ marginLeft: 'auto', alignSelf: 'center', color: 'rgba(255,255,255,0.48)', fontSize: 9 }}>
-          UI: {attachmentCount}
-        </span>
-      )}
     </div>
   );
 }
@@ -1723,6 +1734,11 @@ function BlockShape({ block, type, props, isFirst, selected, attention, onClick,
         animation: attention ? 'editorNewBlockBlink 0.9s ease-in-out infinite' : undefined,
       }}
       onClick={onClick}
+      onDoubleClick={e => {
+        if (e.target.closest?.('button')) return;
+        e.stopPropagation();
+        if (openBlockInfo) openBlockInfo({ type: actualType, props: actualProps });
+      }}
     >
       <svg
         width={BLOCK_W + 24}
@@ -1812,7 +1828,6 @@ function BlockShape({ block, type, props, isFirst, selected, attention, onClick,
             }}>×</button>
         )}
       </div>
-      <BlockFooterActions block={actualBlock} selected={selected} onAdd={onAddFooterAction} />
     </div>
   );
 }
@@ -2030,7 +2045,7 @@ function Sidebar({ onDragStart, onDragEnd, onTapAdd }) {
   });
 
   return (
-    <div style={{ overflowY: 'auto', flex: 1 }}>
+    <div style={{ overflowY: 'auto', flex: 1, padding: '6px 6px 14px' }}>
       {SIDEBAR_GROUP_ORDER.map((gid) => {
         const blocks = groups[gid];
         if (!blocks?.length) return null;
@@ -2051,17 +2066,21 @@ function Sidebar({ onDragStart, onDragEnd, onTapAdd }) {
                 className="editor-sidebar-block"
                 style={{
                   display: 'flex', alignItems: 'center', gap: 8,
-                  padding: '7px 10px', cursor: 'pointer', userSelect: 'none',
-                  transition: 'background .15s',
+                  padding: '9px 10px', cursor: 'pointer', userSelect: 'none',
+                  transition: 'background .15s, border-color .15s, transform .15s',
+                  borderRadius: 10,
+                  margin: '2px 0',
+                  background: 'rgba(255,255,255,0.018)',
                 }}
               >
                 <span style={{
-                  width: 22, height: 22, borderRadius: 4,
+                  width: 23, height: 23, borderRadius: 7,
                   background: b.color + '28', color: b.color,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   fontSize: 12, flexShrink: 0,
+                  boxShadow: `0 0 12px ${b.color}20`,
                 }}>{b.icon}</span>
-                <div style={{ fontSize: 12, color: 'var(--text)', flex: 1 }}>{b.label}</div>
+                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.82)', flex: 1, fontFamily: 'Syne, system-ui', fontWeight: 650 }}>{b.label}</div>
                 {onTapAdd && <span style={{ fontSize: 16, color: 'var(--text3)', opacity: 0.5 }}>+</span>}
               </div>
             ))}
@@ -2386,7 +2405,6 @@ function PropsPanel({ block, onChange, onAttachmentChange, onAttachmentDelete, s
   const def = getBlockDef(block.type, blockTypes);
   const fields = localizedPropFields(block.type, lang, FIELDS[block.type] || []);
   const props = block.props || {};
-  const beginnerHint = getBeginnerPanelHint(block, { blockTypes, ui, lang });
   const pickerByKind = React.useMemo(
     () => collectProjectBlockPickerOptionsByKind(stacks, blockTypes),
     [stacks, blockTypes],
@@ -2398,29 +2416,6 @@ function PropsPanel({ block, onChange, onAttachmentChange, onAttachmentDelete, s
         <span style={{ fontSize: 14 }}>{def?.icon}</span>
         <span style={{ fontSize: 12, fontWeight: 700, color: def?.color }}>{def?.label}</span>
       </div>
-      {beginnerHint && (
-        <div style={{
-          marginBottom: 12,
-          padding: '8px 10px',
-          borderRadius: 8,
-          background: 'rgba(96, 165, 250, 0.08)',
-          border: '1px solid rgba(96, 165, 250, 0.22)',
-          fontSize: 10,
-          lineHeight: 1.55,
-          color: 'var(--text2)',
-          whiteSpace: 'pre-wrap',
-        }}>
-          <div style={{
-            fontSize: 9,
-            color: '#60a5fa',
-            textTransform: 'uppercase',
-            letterSpacing: '.08em',
-            marginBottom: 5,
-            fontWeight: 600,
-          }}>{ui.hintLabel}</div>
-          {beginnerHint}
-        </div>
-      )}
       {fields.map(f => {
         const pickerKind = getPropsFieldPickerKind(block.type, f.key);
         const pickerOptions = pickerKind ? pickerByKind[pickerKind] : [];
@@ -3194,12 +3189,31 @@ function OnboardingTour({ steps, stepIndex, onNext, onPrev, onSkip, labels }) {
   if (!step) return null;
 
   const isLast = stepIndex >= steps.length - 1;
-  const cardTop = targetRect
-    ? Math.min(window.innerHeight - 190, Math.max(16, targetRect.top + targetRect.height + 12))
-    : Math.max(20, (window.innerHeight - 180) / 2);
-  const cardLeft = targetRect
-    ? Math.min(window.innerWidth - 340, Math.max(12, targetRect.left))
-    : Math.max(12, (window.innerWidth - 320) / 2);
+  const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1024;
+  const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 768;
+  const tourGap = 12;
+  const cardWidth = Math.min(340, Math.max(260, viewportWidth - tourGap * 2));
+  const cardMaxHeight = Math.min(360, Math.max(220, viewportHeight - tourGap * 2));
+  const clampTour = (value, min, max) => Math.min(Math.max(value, min), Math.max(min, max));
+  const prefersSideCard = targetRect && (
+    targetRect.height > viewportHeight * 0.35 ||
+    targetRect.width > viewportWidth * 0.45
+  );
+  const rightCardLeft = targetRect ? targetRect.left + targetRect.width + tourGap : 0;
+  const leftCardLeft = targetRect ? targetRect.left - cardWidth - tourGap : 0;
+  const canPlaceRight = targetRect && rightCardLeft + cardWidth <= viewportWidth - tourGap;
+  const canPlaceLeft = targetRect && leftCardLeft >= tourGap;
+  let cardTop = targetRect
+    ? clampTour(targetRect.top + targetRect.height + tourGap, tourGap, viewportHeight - cardMaxHeight - tourGap)
+    : clampTour((viewportHeight - cardMaxHeight) / 2, tourGap, viewportHeight - cardMaxHeight - tourGap);
+  let cardLeft = targetRect
+    ? clampTour(targetRect.left, tourGap, viewportWidth - cardWidth - tourGap)
+    : clampTour((viewportWidth - cardWidth) / 2, tourGap, viewportWidth - cardWidth - tourGap);
+
+  if (targetRect && prefersSideCard && (canPlaceRight || canPlaceLeft)) {
+    cardLeft = canPlaceRight ? rightCardLeft : leftCardLeft;
+    cardTop = clampTour(targetRect.top + 8, tourGap, viewportHeight - cardMaxHeight - tourGap);
+  }
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 20000, pointerEvents: 'none' }}>
@@ -3226,26 +3240,31 @@ function OnboardingTour({ steps, stepIndex, onNext, onPrev, onSkip, labels }) {
           position: 'absolute',
           top: cardTop,
           left: cardLeft,
-          width: 'min(320px, calc(100vw - 24px))',
+          width: cardWidth,
+          maxHeight: `calc(100vh - ${tourGap * 2}px)`,
           background: 'linear-gradient(160deg,#0d0920,#10082a)',
           border: '1px solid rgba(249,115,22,0.35)',
           borderRadius: 14,
           boxShadow: '0 20px 60px rgba(0,0,0,0.7), 0 0 24px rgba(249,115,22,0.1)',
-          padding: 14,
           pointerEvents: 'auto',
           backdropFilter: 'blur(12px)',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
         }}
       >
-        <div style={{ fontSize: 10, color: 'rgba(249,115,22,0.8)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.09em', marginBottom: 6 }}>
-          {stepOf}
+        <div style={{ padding: '14px 14px 10px', overflowY: 'auto', minHeight: 0 }}>
+          <div style={{ fontSize: 10, color: 'rgba(249,115,22,0.8)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.09em', marginBottom: 6 }}>
+            {stepOf}
+          </div>
+          <div style={{ fontFamily: 'Syne,system-ui', fontSize: 15, fontWeight: 700, color: '#fff', marginBottom: 7 }}>
+            {step.title}
+          </div>
+          <div style={{ fontSize: 12, lineHeight: 1.55, color: 'rgba(255,255,255,0.72)' }}>
+            {step.text}
+          </div>
         </div>
-        <div style={{ fontFamily: 'Syne,system-ui', fontSize: 15, fontWeight: 700, color: '#fff', marginBottom: 7 }}>
-          {step.title}
-        </div>
-        <div style={{ fontSize: 12, lineHeight: 1.55, color: 'rgba(255,255,255,0.72)', marginBottom: 12 }}>
-          {step.text}
-        </div>
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', padding: '10px 14px 14px', borderTop: '1px solid rgba(255,255,255,0.08)', flexShrink: 0 }}>
           <button
             onClick={onSkip}
             style={{ background: 'transparent', color: 'rgba(255,255,255,0.55)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 8, padding: '7px 10px', fontSize: 12, cursor: 'pointer' }}
@@ -3541,6 +3560,60 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return undefined;
+    const setAppHeight = () => {
+      const height = window.visualViewport?.height || window.innerHeight;
+      document.documentElement.style.setProperty('--app-height', `${height}px`);
+    };
+    setAppHeight();
+    window.addEventListener('resize', setAppHeight);
+    window.addEventListener('orientationchange', setAppHeight);
+    window.visualViewport?.addEventListener('resize', setAppHeight);
+    return () => {
+      window.removeEventListener('resize', setAppHeight);
+      window.removeEventListener('orientationchange', setAppHeight);
+      window.visualViewport?.removeEventListener('resize', setAppHeight);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return undefined;
+    const root = document.documentElement;
+    const requestFullscreen = root.requestFullscreen || root.webkitRequestFullscreen || root.msRequestFullscreen;
+    const fullscreenEnabled = document.fullscreenEnabled !== false ||
+      document.webkitFullscreenEnabled === true ||
+      document.msFullscreenEnabled === true;
+    if (!requestFullscreen || !fullscreenEnabled) return undefined;
+
+    let cancelled = false;
+    const enterFullscreen = () => {
+      const fullscreenElement = document.fullscreenElement ||
+        document.webkitFullscreenElement ||
+        document.msFullscreenElement;
+      if (cancelled || fullscreenElement) return;
+      try {
+        const request = root.requestFullscreen
+          ? root.requestFullscreen({ navigationUI: 'hide' })
+          : requestFullscreen.call(root);
+        if (request?.catch) request.catch(() => {});
+      } catch {
+        // Browser may require a user gesture; the one-shot listeners below retry on first input.
+      }
+    };
+
+    enterFullscreen();
+    window.addEventListener('pointerdown', enterFullscreen, { once: true, capture: true });
+    window.addEventListener('touchstart', enterFullscreen, { once: true, capture: true });
+    window.addEventListener('keydown', enterFullscreen, { once: true, capture: true });
+    return () => {
+      cancelled = true;
+      window.removeEventListener('pointerdown', enterFullscreen, { capture: true });
+      window.removeEventListener('touchstart', enterFullscreen, { capture: true });
+      window.removeEventListener('keydown', enterFullscreen, { capture: true });
+    };
+  }, []);
+
+  useEffect(() => {
     if (!currentUser || !onboardingKey) {
       setTourActive(false);
       setTourStep(0);
@@ -3772,6 +3845,31 @@ export default function App() {
     setSelectedStackId(null);
   }, []);
 
+  useEffect(() => {
+    const isEditableTarget = (target) => {
+      if (!(target instanceof HTMLElement)) return false;
+      const tag = target.tagName;
+      return (
+        target.isContentEditable ||
+        tag === 'INPUT' ||
+        tag === 'TEXTAREA' ||
+        tag === 'SELECT'
+      );
+    };
+
+    const onKeyDown = (e) => {
+      if (e.key !== 'Delete' || e.altKey || e.ctrlKey || e.metaKey) return;
+      if (!selectedBlockId || !selectedStackId) return;
+      if (isEditableTarget(e.target)) return;
+
+      e.preventDefault();
+      handleDeleteBlock(selectedStackId, selectedBlockId);
+    };
+
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [handleDeleteBlock, selectedBlockId, selectedStackId]);
+
   const handlePropChange = useCallback((key, val) => {
     if (!selectedBlockId) return;
     setStacks(prev => prev.map(s => ({
@@ -3940,16 +4038,22 @@ export default function App() {
         const tok = resolveBotTokenForNewBlock(stacks, currentUser);
         if (tok) base.token = tok;
       }
+      if (t === 'command') {
+        const cmd = normalizeCommandName(base.cmd);
+        if ((cmd === 'start' && hasBlockOfType(stacks, 'start')) || hasCommandNamed(stacks, cmd)) {
+          base.cmd = getNextAvailableCommandName(stacks);
+        }
+      }
       return base;
     };
 
-    if (UI_ATTACHMENT_LEGACY_BLOCK_TYPES.has(type) && snap?.stackId) {
+    if (UI_ATTACHMENT_LEGACY_BLOCK_TYPES.has(type) && snap?.stackId && snap.valid) {
       const legacy = legacyBlockToUiAttachment(type, makeProps(type));
       if (legacy) {
         setStacks(prev => prev.map((s) => {
           if (s.id !== snap.stackId) return s;
           const last = s.blocks[s.blocks.length - 1];
-          if (!last || !canRenderUi(last.type)) return s;
+          if (!last || !canStackBelow(last.type, type)) return s;
           return {
             ...s,
             blocks: s.blocks.map((b) => (
@@ -3968,24 +4072,32 @@ export default function App() {
       return;
     }
 
+    const newProps = makeProps(type);
+    const conflict = getUniqueBlockConflictMessage(stacks, type, newProps);
+    if (conflict) {
+      showToast(conflict, 'info');
+      endPaletteDrag();
+      return;
+    }
+
     if (snap && snap.valid) {
       const id = uid();
       setStacks(prev => prev.map(s => {
         if (s.id !== snap.stackId) return s;
         return {
           ...s,
-          blocks: [...s.blocks, createStudioBlockNode(type, makeProps(type), id)],
+          blocks: [...s.blocks, createStudioBlockNode(type, newProps, id)],
         };
       }));
     } else {
       const id = uid();
       setStacks(prev => [...prev, {
         id: uid(), x: worldLX, y: worldTY,
-        blocks: [createStudioBlockNode(type, makeProps(type), id)],
+        blocks: [createStudioBlockNode(type, newProps, id)],
       }]);
     }
     endPaletteDrag();
-  }, [canvasOffset, canvasScale, stacks, endPaletteDrag, currentUser]);
+  }, [canvasOffset, canvasScale, stacks, endPaletteDrag, currentUser, showToast]);
 
   const handleDragOver = useCallback((e) => {
     e.preventDefault();
@@ -4067,6 +4179,12 @@ export default function App() {
       const tok = resolveBotTokenForNewBlock(baseStacks, currentUser);
       if (tok) props.token = tok;
     }
+    if (type === 'command') {
+      const cmd = normalizeCommandName(props.cmd);
+      if ((cmd === 'start' && hasBlockOfType(baseStacks, 'start')) || hasCommandNamed(baseStacks, cmd)) {
+        props.cmd = getNextAvailableCommandName(baseStacks);
+      }
+    }
     return props;
   }, [currentUser, stacks]);
 
@@ -4076,7 +4194,7 @@ export default function App() {
         const selectedBlock = stacks
           .flatMap((s) => s.blocks || [])
           .find((b) => b.id === selectedBlockId);
-        const legacy = canRenderUi(selectedBlock?.type)
+        const legacy = canStackBelow(selectedBlock?.type, type)
           ? legacyBlockToUiAttachment(type, makePropsForNewBlock(type))
           : null;
         if (legacy) handleAddFooterAction(selectedBlockId, legacy.kind);
@@ -4085,12 +4203,18 @@ export default function App() {
     }
     const id = uid();
     const { x, y } = getCanvasCenterStackPosition();
+    const props = makePropsForNewBlock(type, stacks);
+    const conflict = getUniqueBlockConflictMessage(stacks, type, props);
+    if (conflict) {
+      showToast(conflict, 'info');
+      return;
+    }
     setStacks(prev => [...prev, {
       id: uid(), x, y,
-      blocks: [createStudioBlockNode(type, makePropsForNewBlock(type, prev), id)],
+      blocks: [createStudioBlockNode(type, props, id)],
     }]);
     focusMobileAddedBlock(id, x, y, ROOT_H);
-  }, [focusMobileAddedBlock, getCanvasCenterStackPosition, handleAddFooterAction, makePropsForNewBlock, selectedBlockId, stacks]);
+  }, [focusMobileAddedBlock, getCanvasCenterStackPosition, handleAddFooterAction, makePropsForNewBlock, selectedBlockId, showToast, stacks]);
 
   const addBlockFromContext = useCallback((type) => {
     const id = uid();
@@ -4098,9 +4222,16 @@ export default function App() {
 
     if (!selStack) {
       const { x, y } = getCanvasCenterStackPosition();
+      const props = makePropsForNewBlock(type, stacks);
+      const conflict = getUniqueBlockConflictMessage(stacks, type, props);
+      if (conflict) {
+        showToast(conflict, 'info');
+        setBlockInfo(null);
+        return;
+      }
       setStacks(prev => [...prev, {
         id: uid(), x, y,
-        blocks: [createStudioBlockNode(type, makePropsForNewBlock(type, prev), id)],
+        blocks: [createStudioBlockNode(type, props, id)],
       }]);
       focusMobileAddedBlock(id, x, y, ROOT_H);
       setBlockInfo(null);
@@ -4110,6 +4241,12 @@ export default function App() {
     const parentBlock = selStack.blocks[selStack.blocks.length - 1] || null;
     const smartProps = inferPropsFromParent(parentBlock, type, selStack.blocks);
     const finalProps = { ...makePropsForNewBlock(type), ...smartProps };
+    const conflict = getUniqueBlockConflictMessage(stacks, type, finalProps);
+    if (conflict) {
+      showToast(conflict, 'info');
+      setBlockInfo(null);
+      return;
+    }
     const blockIndex = selStack.blocks.length;
     const blockY = selStack.y + getBlockTopInStack(selStack, blockIndex);
 
@@ -4124,6 +4261,7 @@ export default function App() {
     getCanvasCenterStackPosition,
     makePropsForNewBlock,
     selectedStackId,
+    showToast,
     stacks,
   ]);
 
@@ -5920,13 +6058,18 @@ const EXAMPLE_FULL = `версия "1.0"
             padding:7px 16px; border-radius:999px; font-size:13px; font-weight:600;
             cursor:pointer; transition:all .22s ease; white-space:nowrap;
             font-family:Syne,system-ui; letter-spacing:0.01em;
-            border:1px solid rgba(255,255,255,0.1);
-            background:rgba(255,255,255,0.04);
-            color:rgba(255,255,255,0.72);
-            position:relative; overflow:hidden; backdrop-filter:blur(4px);
+            border:1px solid rgba(99,102,241,0.32);
+            background:linear-gradient(135deg,rgba(29,20,82,0.62),rgba(16,12,45,0.5));
+            color:rgba(235,230,255,0.76);
+            position:relative; overflow:hidden; backdrop-filter:blur(10px) saturate(130%);
+            box-shadow:inset 0 0 18px rgba(99,102,241,0.1),0 6px 18px rgba(0,0,0,0.16);
+          }
+          .lp-nav-pill::before {
+            content:''; position:absolute; inset:0 auto auto 0; width:58%; height:1px;
+            background:linear-gradient(90deg,var(--pill-clr),transparent); opacity:.75;
           }
           .lp-nav-pill:hover {
-            background:rgba(255,215,0,0.07);
+            background:linear-gradient(135deg,rgba(59,130,246,0.2),rgba(168,85,247,0.14));
             color:#fff;
             transform:translateY(-1px);
           }
@@ -6291,37 +6434,194 @@ const EXAMPLE_FULL = `версия "1.0"
     <BlockInfoContext.Provider value={setBlockInfo}>
     <style>{`
       :root {
-        --bg: #06030f;
-        --bg2: #0d0920;
-        --bg3: #1a1230;
+        --bg: #040018;
+        --bg2: #090127;
+        --bg3: #170848;
+        --glass: rgba(21, 9, 68, 0.64);
+        --glass-strong: rgba(33, 14, 96, 0.78);
+        --panel: rgba(8, 3, 34, 0.78);
         --text: rgba(255,255,255,0.92);
         --text2: rgba(255,255,255,0.62);
         --text3: rgba(255,255,255,0.38);
-        --border: rgba(99,102,241,0.18);
-        --border2: rgba(99,102,241,0.28);
-        --accent: #f97316;
-        --accent2: #dc2626;
+        --border: rgba(121, 88, 255, 0.28);
+        --border2: rgba(178, 128, 255, 0.42);
+        --accent: #ff7a35;
+        --accent2: #6f46ff;
+        --cyan: #19d8ff;
+        --violet: #8b5cf6;
+        --hot: #ff3fd7;
         --mono: 'JetBrains Mono', ui-monospace, monospace;
       }
       @keyframes editorNeonPulse { 0%,100%{opacity:0.5} 50%{opacity:1} }
       @keyframes editorGridShift { from{background-position:0 0} to{background-position:60px 60px} }
       @keyframes editorOrbFloat { 0%,100%{transform:translateY(0) scale(1)} 50%{transform:translateY(-22px) scale(1.04)} }
       @keyframes editorScanLine { 0%{transform:translateY(-100%)} 100%{transform:translateY(100vh)} }
+      @keyframes editorStarDrift { from{background-position:0 0, 0 0} to{background-position:72px 54px, -44px 68px} }
       @keyframes blockEntrance { from{opacity:0;transform:translateY(-6px) scale(0.96)} to{opacity:1;transform:translateY(0) scale(1)} }
       @keyframes editorNewBlockBlink { 0%,100%{opacity:1;filter:drop-shadow(0 0 7px var(--new-block-glow,#f97316));transform:scale(1)} 50%{opacity:.42;filter:drop-shadow(0 0 18px var(--new-block-glow,#f97316));transform:scale(1.035)} }
       @keyframes neonBlink { 0%,90%,100%{opacity:1} 95%{opacity:0.6} }
       @keyframes editorRunPulse { 0%,100%{box-shadow:0 0 0 0 rgba(249,115,22,0)} 50%{box-shadow:0 0 0 6px rgba(249,115,22,0.25)} }
+      .editor-shell::before,
+      .editor-shell::after {
+        content:''; position:absolute; pointer-events:none; z-index:0; filter:blur(4px);
+      }
+      .editor-shell::before {
+        inset:-16% -10% auto -8%; height:54%;
+        background:
+          radial-gradient(circle at 18% 9%, rgba(25,216,255,.24), transparent 28%),
+          radial-gradient(circle at 56% 4%, rgba(139,92,246,.42), transparent 36%),
+          radial-gradient(circle at 86% 24%, rgba(255,63,215,.22), transparent 32%);
+      }
+      .editor-shell::after {
+        inset:0;
+        background:
+          radial-gradient(circle, rgba(255,255,255,.12) 0 1px, transparent 1.4px),
+          radial-gradient(circle, rgba(25,216,255,.12) 0 1px, transparent 1.5px),
+          radial-gradient(circle at 50% 34%, rgba(111,70,255,.18), transparent 44%);
+        background-size: 46px 46px, 88px 88px, auto;
+        mask-image: linear-gradient(to bottom, rgba(0,0,0,.88), rgba(0,0,0,.4));
+        animation: editorStarDrift 18s linear infinite;
+      }
+      .editor-topbar {
+        background:
+          linear-gradient(90deg, rgba(9,3,37,.92), rgba(42,13,116,.76) 48%, rgba(8,3,32,.94)),
+          radial-gradient(circle at 38% -20%, rgba(25,216,255,.24), transparent 38%) !important;
+        border-bottom: 1px solid rgba(255,122,53,.28) !important;
+        box-shadow: 0 12px 42px rgba(8,2,30,.62), 0 0 32px rgba(111,70,255,.2), inset 0 1px 0 rgba(255,255,255,.1) !important;
+        backdrop-filter: blur(24px) saturate(1.45);
+        -webkit-backdrop-filter: blur(24px) saturate(1.45);
+      }
+      .editor-brand-logo {
+        width: 29px; height: 29px; border-radius: 9px; object-fit: cover;
+        box-shadow: 0 0 18px rgba(25,216,255,.38), 0 0 30px rgba(139,92,246,.28);
+        filter: saturate(1.25) contrast(1.05);
+      }
+      .editor-brand-mark {
+        color:#21d6ff !important;
+        text-shadow: 0 0 18px rgba(33,214,255,.72), 0 0 36px rgba(139,92,246,.55) !important;
+      }
+      .editor-subbar {
+        position: relative; z-index: 80;
+        min-height: 66px; padding: 11px 12px;
+        display:flex; align-items:center; gap:12px;
+        background:
+          linear-gradient(90deg, rgba(9,4,34,.84), rgba(39,13,110,.62) 45%, rgba(9,4,34,.86)),
+          radial-gradient(circle at 70% 10%, rgba(255,63,215,.12), transparent 38%);
+        border-bottom: 1px solid rgba(121,88,255,.24);
+        box-shadow: 0 12px 34px rgba(7,3,24,.42), inset 0 1px 0 rgba(255,255,255,.06);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+      }
+      .editor-subbar-left,
+      .editor-subbar-center,
+      .editor-subbar-right {
+        display:flex; align-items:center; gap:9px; min-width:0;
+      }
+      .editor-subbar-left { width: 126px; flex-shrink:0; }
+      .editor-subbar-center { flex:1; }
+      .editor-subbar-right { justify-content:flex-end; }
+      .editor-chip {
+        display:inline-flex; align-items:center; gap:7px;
+        height:38px; padding:0 15px; border-radius:19px;
+        background: linear-gradient(135deg, rgba(255,255,255,.07), rgba(111,70,255,.07));
+        border: 1px solid rgba(178,128,255,.28);
+        color: rgba(255,255,255,.82);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,.09), 0 8px 22px rgba(5,2,20,.28);
+        font-family: Syne, system-ui; font-size:12px; font-weight:700;
+        white-space:nowrap;
+      }
+      .editor-chip.active {
+        color:#fff;
+        background: linear-gradient(135deg, rgba(255,122,53,.22), rgba(111,70,255,.18));
+        border-color: rgba(255,122,53,.64);
+        box-shadow: 0 0 18px rgba(255,122,53,.22), inset 0 1px 0 rgba(255,255,255,.12);
+      }
+      .editor-chip.small { width:38px; justify-content:center; padding:0; font-size:14px; border-radius:13px; }
+      .editor-chip.hot {
+        color:#fff; border-color: rgba(255,122,53,.42);
+        background: linear-gradient(135deg, rgba(255,122,53,.95), rgba(255,79,216,.72));
+        box-shadow: 0 0 22px rgba(255,122,53,.34);
+      }
+      .editor-chip.premium {
+        color:#ffd29a;
+        border-color: rgba(255,122,53,.48);
+        background: linear-gradient(135deg, rgba(255,122,53,.16), rgba(255,63,215,.08));
+      }
+      .editor-main-grid {
+        border-top: 1px solid rgba(255,255,255,.025);
+        background: radial-gradient(circle at 48% 20%, rgba(116,61,255,.34), transparent 35%);
+      }
+      .editor-sidebar-shell,
+      .editor-right-panel {
+        background:
+          linear-gradient(180deg, rgba(11,4,43,.86), rgba(6,2,25,.95)),
+          radial-gradient(circle at 50% 0%, rgba(111,70,255,.18), transparent 42%) !important;
+        backdrop-filter: blur(20px) saturate(1.2);
+        -webkit-backdrop-filter: blur(20px) saturate(1.2);
+      }
+      .editor-sidebar-shell {
+        border-right: 1px solid rgba(121,88,255,.32) !important;
+        box-shadow: 10px 0 34px rgba(5,2,20,.46), inset -1px 0 0 rgba(255,255,255,.025) !important;
+      }
+      .editor-right-panel {
+        border-left: 1px solid rgba(121,88,255,.32) !important;
+        box-shadow: -10px 0 34px rgba(5,2,20,.46), inset 1px 0 0 rgba(255,255,255,.025) !important;
+      }
+      .editor-panel-title {
+        background: linear-gradient(90deg, rgba(25,216,255,.12), rgba(139,92,246,.12), transparent) !important;
+        border-bottom: 1px solid rgba(121,88,255,.26) !important;
+        color: rgba(205,217,255,.74) !important;
+      }
+      .canvas-bg {
+        background:
+          radial-gradient(circle at 56% 14%, rgba(153,89,255,.42), transparent 34%),
+          radial-gradient(circle at 31% 78%, rgba(25,216,255,.12), transparent 38%),
+          radial-gradient(circle at 84% 72%, rgba(255,63,215,.14), transparent 34%),
+          linear-gradient(160deg, #060019 0%, #14053d 48%, #050116 100%) !important;
+      }
+      .canvas-bg::before {
+        content:''; position:absolute; inset:0; pointer-events:none; z-index:0;
+        background:
+          linear-gradient(rgba(162,132,255,.09) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(162,132,255,.09) 1px, transparent 1px),
+          radial-gradient(circle, rgba(255,255,255,.18) 0 1px, transparent 1.5px);
+        background-size: 48px 48px, 48px 48px, 24px 24px;
+        opacity:.62;
+      }
+      .canvas-bg::after {
+        content:''; position:absolute; inset:0; pointer-events:none; z-index:0;
+        background:
+          radial-gradient(circle at center, transparent 0 45%, rgba(3,1,12,.28) 74%, rgba(3,1,12,.65) 100%),
+          repeating-linear-gradient(0deg, rgba(255,255,255,.025) 0 1px, transparent 1px 4px);
+      }
+      .editor-empty-card {
+        background: linear-gradient(180deg, rgba(21,9,68,.68), rgba(7,2,28,.74)) !important;
+        border: 1px solid rgba(178,128,255,.25) !important;
+        box-shadow: 0 28px 80px rgba(5,1,22,.66), 0 0 42px rgba(111,70,255,.16), inset 0 1px 0 rgba(255,255,255,.08) !important;
+      }
+      input, textarea, select {
+        background: rgba(255,255,255,.045) !important;
+        border-color: rgba(167,139,250,.25) !important;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
+      }
+      input:focus, textarea:focus, select:focus {
+        border-color: rgba(33,214,255,.62) !important;
+        box-shadow: 0 0 0 3px rgba(33,214,255,.08), inset 0 1px 0 rgba(255,255,255,.05);
+      }
       .tb-btn {
         display: inline-flex; align-items: center; gap: 4px;
-        padding: 5px 8px; border-radius: 8px; font-size: 11px; font-weight: 500;
+        min-width: 38px; height: 34px; justify-content: center;
+        padding: 0 12px; border-radius: 12px; font-size: 11px; font-weight: 700;
         cursor: pointer; transition: all 0.18s ease; white-space: nowrap;
         font-family: Syne, system-ui; letter-spacing: 0.01em; line-height: 1;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
       }
       .tb-btn-ghost {
-        background: rgba(99,102,241,0.06); color: rgba(255,255,255,0.55);
-        border: 1px solid rgba(99,102,241,0.2);
+        background: linear-gradient(135deg, rgba(255,255,255,0.07), rgba(111,70,255,0.08));
+        color: rgba(255,255,255,0.74);
+        border: 1px solid rgba(178,128,255,0.3);
       }
-      .tb-btn-ghost:hover { background: rgba(99,102,241,0.14); color: rgba(255,255,255,0.9); border-color: rgba(99,102,241,0.5); }
+      .tb-btn-ghost:hover { background: rgba(127,92,255,0.18); color: rgba(255,255,255,0.94); border-color: rgba(167,139,250,0.55); box-shadow:0 0 18px rgba(127,92,255,.18); }
       .tb-btn-danger { background: rgba(239,68,68,0.08); color: #f87171; border: 1px solid rgba(239,68,68,0.2); }
       .tb-btn-danger:hover { background: rgba(239,68,68,0.18); color: #fca5a5; border-color: rgba(239,68,68,0.5); }
       .tb-btn-green { background: rgba(62,207,142,0.08); color: #3ecf8e; border: 1px solid rgba(62,207,142,0.22); }
@@ -6332,8 +6632,9 @@ const EXAMPLE_FULL = `версия "1.0"
       .tb-btn-purple:hover { background: rgba(167,139,250,0.18); border-color: #a78bfa; }
       .tb-btn-run {
         background: linear-gradient(135deg,#f97316,#dc2626); color:#fff;
-        border:none; font-weight:700; font-size:13px;
-        box-shadow:0 2px 14px rgba(249,115,22,0.4);
+        border:1px solid rgba(255,205,132,.2); font-weight:800; font-size:13px;
+        min-width: 82px; border-radius: 18px;
+        box-shadow:0 2px 18px rgba(249,115,22,0.48), inset 0 1px 0 rgba(255,255,255,.24);
         animation: editorRunPulse 2.5s ease-in-out infinite;
       }
       .tb-btn-run:hover { background:linear-gradient(135deg,#fb923c,#ef4444); box-shadow:0 4px 20px rgba(249,115,22,0.6); transform:translateY(-1px); }
@@ -6346,12 +6647,12 @@ const EXAMPLE_FULL = `версия "1.0"
       .tb-btn-stop:hover { background:linear-gradient(135deg,#f87171,#ef4444); box-shadow:0 4px 18px rgba(239,68,68,0.6); transform:translateY(-1px); }
       .tb-divider { width:1px; height:22px; background:rgba(99,102,241,0.22); flex-shrink:0; }
       .tb-btn-ai {
-        background:linear-gradient(135deg,rgba(249,115,22,0.18),rgba(220,38,38,0.12));
-        color:#f97316; border:1px solid rgba(249,115,22,0.4); font-weight:700;
+        background:linear-gradient(135deg,rgba(25,216,255,0.14),rgba(139,92,246,0.16));
+        color:#8beaff; border:1px solid rgba(25,216,255,0.38); font-weight:700;
       }
       .tb-btn-ai:hover {
-        background:linear-gradient(135deg,rgba(249,115,22,0.3),rgba(220,38,38,0.2));
-        border-color:rgba(249,115,22,0.7); color:#fb923c; box-shadow:0 0 16px rgba(249,115,22,0.25);
+        background:linear-gradient(135deg,rgba(33,214,255,0.22),rgba(139,92,246,0.24));
+        border-color:rgba(33,214,255,0.72); color:#fff; box-shadow:0 0 18px rgba(33,214,255,0.22);
       }
       .tb-files-menu {
         position: absolute; top: calc(100% + 6px); left: 0;
@@ -6368,13 +6669,18 @@ const EXAMPLE_FULL = `версия "1.0"
       }
       .tb-files-menu-item:last-child { border-bottom: none; }
       .tb-files-menu-item:hover { background: rgba(255,255,255,0.06); }
-      .editor-sidebar-block:hover { background:rgba(99,102,241,0.12) !important; }
+      .editor-sidebar-block { border-left: 2px solid transparent; }
+      .editor-sidebar-block:hover {
+        background:linear-gradient(90deg, rgba(127,92,255,0.18), rgba(33,214,255,0.04)) !important;
+        border-left-color: rgba(139,92,246,.95);
+        transform: translateX(2px);
+      }
       .editor-group-header { 
-        padding:8px 12px 3px; font-size:9px; letter-spacing:.14em; text-transform:uppercase; font-weight:700;
-        border-top:1px solid rgba(99,102,241,0.15); color:rgba(99,102,241,0.6);
+        padding:11px 12px 5px; font-size:9px; letter-spacing:.14em; text-transform:uppercase; font-weight:800;
+        border-top:1px solid rgba(127,92,255,0.16); color:rgba(167,139,250,0.68);
         display:flex; align-items:center; gap:6px;
       }
-      .editor-group-header::after { content:''; flex:1; height:1px; background:linear-gradient(90deg,rgba(99,102,241,0.3),transparent); }
+      .editor-group-header::after { content:''; flex:1; height:1px; background:linear-gradient(90deg,rgba(33,214,255,0.32),transparent); }
       .editor-zoom-btn {
         width:34px; height:34px; border-radius:9px;
         background:rgba(10,8,28,0.9); border:1px solid rgba(99,102,241,0.25);
@@ -6405,27 +6711,30 @@ const EXAMPLE_FULL = `версия "1.0"
       *::-webkit-scrollbar-thumb:hover { background:rgba(249,115,22,0.5); }
     `}</style>
     <div
-      style={{ display:'flex', flexDirection:'column', height:'100vh', background:'var(--bg)' }}
+      className="editor-shell"
+      style={{ display:'flex', flexDirection:'column', height:'var(--app-height, 100vh)', background:'var(--bg)', position:'relative', overflow:'hidden' }}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onTouchEnd={handleMouseUp}
     >
       {/* Top bar */}
-      <div style={{
+      <div className="editor-topbar" style={{
         background: 'linear-gradient(90deg, #0d0920 0%, #080618 100%)',
         borderBottom: '1px solid rgba(99,102,241,0.25)',
         boxShadow: '0 1px 0 rgba(249,115,22,0.08), 0 4px 24px rgba(0,0,0,0.6)',
-        display: 'flex', alignItems: 'center', padding: isMobileView ? '0 12px' : '0 16px', gap: isMobileView ? 8 : 8,
-        flexShrink: 0, height: isMobileView ? 52 : 60,
+        display: 'flex', alignItems: 'center', padding: isMobileView ? '0 12px' : '0 18px', gap: isMobileView ? 8 : 10,
+        flexShrink: 0, height: isMobileView ? 52 : 64,
         overflowX: isMobileView ? 'auto' : 'visible',
         position: 'relative', zIndex: 90,
       }}>
         {/* Left neon accent line */}
         <div style={{ position:'absolute', left:0, top:0, bottom:0, width:3, background:'linear-gradient(180deg, #f97316, #6366f1)', borderRadius:'0 2px 2px 0', opacity:0.9 }} />
-        <div style={{ fontFamily:'Syne, system-ui', fontWeight:800, fontSize:22, color:'var(--text)', flexShrink: 0, paddingLeft: 6 }}>
-          <span style={{ color:'#f97316', textShadow: '0 0 12px rgba(249,115,22,0.7)', animation:'neonBlink 4s ease-in-out infinite' }}>◈</span>
-          <span style={{ background: 'linear-gradient(135deg, #06b6d4 0%, #a78bfa 60%, #f97316 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text', marginLeft: 6 }}>Cicada</span>
-          {!isMobileView && <span style={{ fontSize:13, background:'linear-gradient(135deg,#6366f1,#a78bfa)', WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent', backgroundClip:'text', marginLeft:7, fontWeight:500, opacity:0.8 }}>Studio</span>}
+        <div style={{ fontFamily:'Syne, system-ui', fontWeight:800, fontSize:22, color:'var(--text)', flexShrink: 0, paddingLeft: 2, display:'flex', alignItems:'center', gap:8 }}>
+          <img src={cicadaLogo} alt="" className="editor-brand-logo" />
+          <div style={{ display:'flex', alignItems:'baseline', lineHeight:1 }}>
+            <span style={{ background: 'linear-gradient(135deg, #19d8ff 0%, #a78bfa 56%, #ff7a35 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Cicada</span>
+            {!isMobileView && <span style={{ fontSize:13, background:'linear-gradient(135deg,#8b5cf6,#d8b4fe)', WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent', backgroundClip:'text', marginLeft:7, fontWeight:500, opacity:0.84 }}>Studio</span>}
+          </div>
         </div>
         {/* Mobile Examples Button */}
         {isMobileView && (
@@ -6452,7 +6761,7 @@ const EXAMPLE_FULL = `версия "1.0"
                 onClick={() => setShowExamples(!showExamples)}
               >⚡ <span style={{ opacity: 0.5, fontSize: 10 }}>▼</span></button>
             </div>
-            <ModuleLibraryButton t={builderUi} lang={uiLang} currentUser={currentUser} dataTour="top-library-desktop" onInsert={(code) => {
+            <ModuleLibraryButton compact t={builderUi} lang={uiLang} currentUser={currentUser} dataTour="top-library-desktop" onInsert={(code) => {
               const parsed = parseDSL(code);
               if (parsed) {
                 setStacks(prev => mergeLibraryStacks(prev, parsed));
@@ -6698,90 +7007,51 @@ const EXAMPLE_FULL = `версия "1.0"
                 cursor: 'pointer', transition: 'all 0.15s',
               }}
             >⋯</button>
-            {mobileMoreOpen && (
-              <>
-                <div style={{ position: 'fixed', inset: 0, zIndex: 399 }} onClick={() => setMobileMoreOpen(false)} />
-                <div style={{
-                  position: 'fixed', top: 58, right: 8,
-                  background: 'var(--bg2)', border: '1px solid var(--border)',
-                  borderRadius: 14, zIndex: 400, minWidth: 220,
-                  boxShadow: '0 12px 40px rgba(0,0,0,0.8)',
-                  overflow: 'hidden', padding: '6px 0',
-                }}>
-                  {/* Очистить */}
-                  <button
-                    onClick={() => { setStacks([]); setSelectedBlockId(null); setSelectedStackId(null); setMobileMoreOpen(false); }}
-                    style={{ width:'100%', padding:'10px 16px', textAlign:'left', background:'transparent', color:'#f87171', border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui', display:'flex', alignItems:'center', gap:8 }}
-                  >✕ {builderUi.clearCanvas}</button>
-                  {/* Сохранить */}
-                  <button
-                    onClick={() => { saveProject(); setMobileMoreOpen(false); }}
-                    style={{ width:'100%', padding:'10px 16px', textAlign:'left', background:'transparent', color:'#3ecf8e', border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui', display:'flex', alignItems:'center', gap:8 }}
-                  >💾 {builderUi.saveFile}</button>
-                  {/* Облако */}
-                  {currentUser && (
-                    <button
-                      onClick={async () => {
-                        const name = projectName.trim() || 'Без названия';
-                        await saveProjectToCloud(currentUser.id, name, stacks);
-                        await loadUserProjects(currentUser.id);
-                        showToast('☁ Проект сохранён в облако: ' + name, 'success');
-                        setMobileMoreOpen(false);
-                      }}
-                      style={{ width:'100%', padding:'10px 16px', textAlign:'left', background:'transparent', color:'#3ecf8e', border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui', display:'flex', alignItems:'center', gap:8 }}
-                    >☁ {builderUi.saveCloud}</button>
-                  )}
-                  {/* Загрузить .ccd — только при доступе к панели кода (активный PRO). */}
-                  {canSeeCode && (
-                  <button
-                    onClick={() => { loadCCD(); setMobileMoreOpen(false); }}
-                    style={{ width:'100%', padding:'10px 16px', textAlign:'left', background:'transparent', color:'#a78bfa', border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui', display:'flex', alignItems:'center', gap:8 }}
-                  >{builderUi.mobileLoadCcd}</button>
-                  )}
-                  <div style={{ height:1, background:'var(--border)', margin:'4px 0' }} />
-                  <button
-                    onClick={() => { setBotDebugOpen(v => !v); setMobileMoreOpen(false); }}
-                    style={{ width:'100%', padding:'10px 16px', textAlign:'left', background:'transparent', color:'#fde047', border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui', display:'flex', alignItems:'center', gap:8 }}
-                  >{builderUi.mobileMenuDebug}</button>
-                  {/* Старт/Стоп */}
-                  {isBotRunning ? (
-                    <button
-                      onClick={() => { stopBot(); setMobileMoreOpen(false); }}
-                      style={{ width:'100%', padding:'10px 16px', textAlign:'left', background:'rgba(239,68,68,0.08)', color:'#f87171', border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui', fontWeight:700, display:'flex', alignItems:'center', gap:8 }}
-                    >{builderUi.mobileStopBot}</button>
-                  ) : (
-                    <button
-                      onClick={() => { startBot(); setMobileMoreOpen(false); }}
-                      disabled={!stacks.some(s => s.blocks.some(b => b.type === 'bot' && b.props?.token?.trim()))}
-                      style={{ width:'100%', padding:'10px 16px', textAlign:'left', background:'rgba(62,207,142,0.08)', color:'#3ecf8e', border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui', fontWeight:700, display:'flex', alignItems:'center', gap:8, opacity: stacks.some(s => s.blocks.some(b => b.type === 'bot' && b.props?.token?.trim())) ? 1 : 0.4 }}
-                    >{builderUi.mobileStartBot}</button>
-                  )}
-                  <div style={{ height:1, background:'var(--border)', margin:'4px 0' }} />
-                  {isAdmin && (
-                    <button
-                      type="button"
-                      title={builderUi.adminPythonTitle}
-                      onClick={() => {
-                        setPythonConvertError('');
-                        setPythonConvertMeta(null);
-                        setPythonConvertResult('');
-                        setShowPythonConvertModal(true);
-                        setMobileMoreOpen(false);
-                      }}
-                      style={{ width:'100%', padding:'10px 16px', textAlign:'left', background:'transparent', color:'#e9d5ff', border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui', fontWeight:600, display:'flex', alignItems:'center', gap:8 }}
-                    >🐍</button>
-                  )}
-                  {/* Инструкция */}
-                  <button
-                    onClick={() => { setShowInstructions(true); setMobileMoreOpen(false); }}
-                    style={{ width:'100%', padding:'10px 16px', textAlign:'left', background:'transparent', color:'var(--text2)', border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui', display:'flex', alignItems:'center', gap:8 }}
-                  >{builderUi.mobileInstructions}</button>
-                </div>
-              </>
-            )}
           </div>
         )}
       </div>
+
+      {currentUser && !isMobileView && (
+        <div className="editor-subbar">
+          <div className="editor-subbar-left">
+            <div className="editor-chip active">
+              <span style={{ color: '#ffb86b' }}>▣</span>
+              {builderUi.mobileTabBlocks}
+            </div>
+          </div>
+          <div className="editor-subbar-center">
+            <button
+              type="button"
+              className="editor-chip"
+              onClick={() => setShowLibrary(true)}
+              title={builderUi.moduleLibrary}
+            >
+              <span style={{ color: '#8b5cf6' }}>▰</span>
+              {builderUi.moduleLibrary}
+            </button>
+          </div>
+          <div className="editor-subbar-right">
+            <button
+              type="button"
+              className="editor-chip premium"
+              onClick={() => setShowProfileModal(true)}
+            >
+              + Premium
+            </button>
+            <div className="editor-chip" title="Текущее время">
+              ◷ {new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
+            </div>
+            <button
+              type="button"
+              className="editor-chip small"
+              onClick={() => setShowInstructions(true)}
+              title="Помощь"
+            >
+              ⌕
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Instructions Modal */}
 
@@ -7540,14 +7810,122 @@ const EXAMPLE_FULL = `версия "1.0"
         document.body,
       )}
 
+      {mobileMoreOpen && isMobileView && typeof document !== 'undefined' && createPortal(
+        <>
+          <div
+            role="presentation"
+            style={{ position: 'fixed', inset: 0, zIndex: 10052 }}
+            onClick={() => setMobileMoreOpen(false)}
+          />
+          <div
+            role="menu"
+            style={{
+              position: 'fixed',
+              top: 58,
+              right: 8,
+              background: 'var(--bg2)',
+              border: '1px solid var(--border)',
+              borderRadius: 14,
+              zIndex: 10053,
+              minWidth: 220,
+              boxShadow: '0 12px 40px rgba(0,0,0,0.8)',
+              overflow: 'hidden',
+              padding: '6px 0',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => { setStacks([]); setSelectedBlockId(null); setSelectedStackId(null); setMobileMoreOpen(false); }}
+              style={{ width:'100%', padding:'10px 16px', textAlign:'left', background:'transparent', color:'#f87171', border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui', display:'flex', alignItems:'center', gap:8 }}
+            >✕ {builderUi.clearCanvas}</button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => { saveProject(); setMobileMoreOpen(false); }}
+              style={{ width:'100%', padding:'10px 16px', textAlign:'left', background:'transparent', color:'#3ecf8e', border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui', display:'flex', alignItems:'center', gap:8 }}
+            >💾 {builderUi.saveFile}</button>
+            {currentUser && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={async () => {
+                  const name = projectName.trim() || 'Без названия';
+                  await saveProjectToCloud(currentUser.id, name, stacks);
+                  await loadUserProjects(currentUser.id);
+                  showToast('☁ Проект сохранён в облако: ' + name, 'success');
+                  setMobileMoreOpen(false);
+                }}
+                style={{ width:'100%', padding:'10px 16px', textAlign:'left', background:'transparent', color:'#3ecf8e', border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui', display:'flex', alignItems:'center', gap:8 }}
+              >☁ {builderUi.saveCloud}</button>
+            )}
+            {canSeeCode && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => { loadCCD(); setMobileMoreOpen(false); }}
+                style={{ width:'100%', padding:'10px 16px', textAlign:'left', background:'transparent', color:'#a78bfa', border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui', display:'flex', alignItems:'center', gap:8 }}
+              >{builderUi.mobileLoadCcd}</button>
+            )}
+            <div style={{ height:1, background:'var(--border)', margin:'4px 0' }} />
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => { setBotDebugOpen(v => !v); setMobileMoreOpen(false); }}
+              style={{ width:'100%', padding:'10px 16px', textAlign:'left', background:'transparent', color:'#fde047', border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui', display:'flex', alignItems:'center', gap:8 }}
+            >{builderUi.mobileMenuDebug}</button>
+            {isBotRunning ? (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => { stopBot(); setMobileMoreOpen(false); }}
+                style={{ width:'100%', padding:'10px 16px', textAlign:'left', background:'rgba(239,68,68,0.08)', color:'#f87171', border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui', fontWeight:700, display:'flex', alignItems:'center', gap:8 }}
+              >{builderUi.mobileStopBot}</button>
+            ) : (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => { startBot(); setMobileMoreOpen(false); }}
+                disabled={!stacks.some(s => s.blocks.some(b => b.type === 'bot' && b.props?.token?.trim()))}
+                style={{ width:'100%', padding:'10px 16px', textAlign:'left', background:'rgba(62,207,142,0.08)', color:'#3ecf8e', border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui', fontWeight:700, display:'flex', alignItems:'center', gap:8, opacity: stacks.some(s => s.blocks.some(b => b.type === 'bot' && b.props?.token?.trim())) ? 1 : 0.4 }}
+              >{builderUi.mobileStartBot}</button>
+            )}
+            <div style={{ height:1, background:'var(--border)', margin:'4px 0' }} />
+            {isAdmin && (
+              <button
+                type="button"
+                role="menuitem"
+                title={builderUi.adminPythonTitle}
+                onClick={() => {
+                  setPythonConvertError('');
+                  setPythonConvertMeta(null);
+                  setPythonConvertResult('');
+                  setShowPythonConvertModal(true);
+                  setMobileMoreOpen(false);
+                }}
+                style={{ width:'100%', padding:'10px 16px', textAlign:'left', background:'transparent', color:'#e9d5ff', border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui', fontWeight:600, display:'flex', alignItems:'center', gap:8 }}
+              >🐍</button>
+            )}
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => { setShowInstructions(true); setMobileMoreOpen(false); }}
+              style={{ width:'100%', padding:'10px 16px', textAlign:'left', background:'transparent', color:'var(--text2)', border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui', display:'flex', alignItems:'center', gap:8 }}
+            >{builderUi.mobileInstructions}</button>
+          </div>
+        </>,
+        document.body,
+      )}
+
       {currentUser ? (
         /* Main layout */
         <>
-        <div style={{ display:'grid', gridTemplateColumns: isMobileView ? '1fr' : '180px 1fr minmax(300px, 360px)', overflow:'hidden', flex: 1, minHeight: 0, height: '100%', position: 'relative' }}>
+        <div className="editor-main-grid" style={{ display:'grid', gridTemplateColumns: isMobileView ? '1fr' : '150px minmax(0, 1fr) 258px', overflow:'hidden', flex: 1, minHeight: 0, height: '100%', position: 'relative', zIndex: 1 }}>
 
         {/* Sidebar — hidden on mobile unless blocks tab */}
         {(isMobileView && mobileTab !== 'blocks') ? null : (
-        <div style={{
+        <div className="editor-sidebar-shell" style={{
           background:'linear-gradient(180deg, #0d0920 0%, #080618 100%)',
           borderRight: isMobileView ? 'none' : '1px solid rgba(99,102,241,0.2)',
           display:'flex', flexDirection:'column', overflow:'hidden',
@@ -7555,7 +7933,7 @@ const EXAMPLE_FULL = `версия "1.0"
           ...(isMobileView ? { gridColumn: '1', position: 'absolute', top: 0, left: 0, right: 0, bottom: 56, zIndex: 6 } : {}),
         }}
         data-tour={!isMobileView ? 'sidebar-desktop' : undefined}>
-          <div style={{
+          <div className="editor-panel-title" style={{
             padding:'10px 12px 5px', fontSize:9,
             background:'linear-gradient(90deg,rgba(99,102,241,0.12),transparent)',
             borderBottom:'1px solid rgba(99,102,241,0.15)',
@@ -7710,7 +8088,7 @@ const EXAMPLE_FULL = `версия "1.0"
               userSelect: 'none',
             }}>
               {/* AI killer feature */}
-              <div style={{
+              <div className="editor-empty-card" style={{
                 display: 'flex', flexDirection: 'column', alignItems: 'center',
                 gap: 14, pointerEvents: 'all',
                 background: 'rgba(13,9,32,0.6)',
@@ -7837,7 +8215,7 @@ const EXAMPLE_FULL = `версия "1.0"
 
         {/* Right panel: props + DSL — hidden on mobile unless props/dsl tab */}
         {(isMobileView && mobileTab !== 'props' && mobileTab !== 'dsl') ? null : (
-        <div style={{
+        <div className="editor-right-panel" style={{
           display:'flex', flexDirection:'column',
           borderLeft: isMobileView ? 'none' : '1px solid rgba(99,102,241,0.2)', overflow:'hidden',
           background: 'linear-gradient(180deg, #0d0920 0%, #080618 100%)',
@@ -7865,7 +8243,7 @@ const EXAMPLE_FULL = `версия "1.0"
         data-tour={!isMobileView ? 'props-panel-desktop' : undefined}>
           {(!isMobileView || mobileTab === 'props') && (
             <>
-              <div style={{
+              <div className="editor-panel-title" style={{
                 borderBottom:'1px solid rgba(99,102,241,0.15)', padding:'8px 12px',
                 fontSize:9, background:'linear-gradient(90deg,rgba(99,102,241,0.12),transparent)',
                 color:'rgba(99,102,241,0.7)', textTransform:'uppercase', letterSpacing:'.14em', fontWeight:700,
@@ -9078,6 +9456,7 @@ function LandingInfoModal({ page, onClose, isMobile }) {
 
   return (
     <div
+      className="lip-modal-overlay"
       style={{ position:'fixed', inset:0, zIndex:15000, background:'rgba(3,5,9,0.82)', backdropFilter:'blur(14px)', display:'flex', alignItems:'center', justifyContent:'center', padding:isMobile?0:18 }}
       onClick={onClose}
     >
@@ -9085,26 +9464,128 @@ function LandingInfoModal({ page, onClose, isMobile }) {
         @keyframes lipSlide { from{opacity:0;transform:translateY(16px) scale(0.97)} to{opacity:1;transform:translateY(0) scale(1)} }
         @keyframes lipSlideUp { from{opacity:0;transform:translateY(100%)} to{opacity:1;transform:translateY(0)} }
         @keyframes shimmer { 0%{background-position:200% center} 100%{background-position:-200% center} }
-        .lip-scroll::-webkit-scrollbar{width:4px} .lip-scroll::-webkit-scrollbar-track{background:transparent} .lip-scroll::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:2px}
-        .lip-feat-card { padding:16px 18px; border-radius:14px; background:rgba(255,255,255,0.025); border:1px solid rgba(255,255,255,0.07); transition:all .22s ease; cursor:default; }
-        .lip-feat-card:hover { background:rgba(255,255,255,0.05); transform:translateY(-2px); box-shadow:0 8px 28px rgba(0,0,0,0.4); }
-        .lip-tpl-card { padding:16px 18px; border-radius:14px; background:rgba(255,255,255,0.025); border:1px solid rgba(255,255,255,0.07); transition:all .22s ease; cursor:default; position:relative; overflow:hidden; }
-        .lip-tpl-card:hover { background:rgba(255,255,255,0.045); transform:translateY(-2px); box-shadow:0 8px 28px rgba(0,0,0,0.4); }
-        .lip-price-free { padding:22px; border-radius:18px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.1); transition:border-color .2s; }
-        .lip-price-free:hover { border-color:rgba(255,255,255,0.22); }
-        .lip-price-pro { padding:22px; border-radius:18px; position:relative; overflow:hidden; background:linear-gradient(145deg,rgba(255,215,0,0.06),rgba(249,115,22,0.04)); border:1px solid rgba(255,215,0,0.28); box-shadow:0 0 40px rgba(255,215,0,0.07); transition:all .2s; }
-        .lip-price-pro:hover { border-color:rgba(255,215,0,0.5); box-shadow:0 0 60px rgba(255,215,0,0.14); }
+        .lip-modal-overlay {
+          background:
+            radial-gradient(circle at 16% 10%, rgba(37,99,235,0.32), transparent 34%),
+            radial-gradient(circle at 84% 16%, rgba(168,85,247,0.36), transparent 36%),
+            radial-gradient(circle at 50% 86%, rgba(14,165,233,0.2), transparent 38%),
+            rgba(5,4,18,0.84) !important;
+          backdrop-filter:blur(16px) saturate(130%) !important;
+        }
+        .lip-modal-shell {
+          position:relative;
+          isolation:isolate;
+          background:
+            linear-gradient(145deg, rgba(18,14,54,0.92), rgba(13,10,37,0.88) 48%, rgba(8,8,26,0.95)),
+            rgba(10,8,30,0.92) !important;
+          border:1px solid rgba(123,92,255,0.58) !important;
+          border-radius:24px !important;
+          box-shadow:
+            0 34px 120px rgba(0,0,0,0.78),
+            0 0 82px rgba(80,70,255,0.27),
+            inset 0 0 0 1px rgba(255,255,255,0.05) !important;
+        }
+        .lip-modal-shell::before {
+          content:"";
+          position:absolute;
+          inset:0;
+          z-index:0;
+          pointer-events:none;
+          background:
+            radial-gradient(circle at 22% 4%, rgba(45,212,191,0.26), transparent 20%),
+            radial-gradient(circle at 92% 0%, rgba(168,85,247,0.34), transparent 24%),
+            linear-gradient(90deg, rgba(34,211,238,0.08), transparent 25%, rgba(168,85,247,0.12));
+        }
+        .lip-modal-shell > * { position:relative; z-index:1; }
+        .lip-top-line {
+          height:2px !important;
+          background:linear-gradient(90deg,transparent,rgba(34,211,238,0.86),rgba(168,85,247,0.92),rgba(251,191,36,0.72),transparent) !important;
+        }
+        .lip-modal-header {
+          background:linear-gradient(180deg, rgba(35,22,86,0.72), rgba(17,12,48,0.36)) !important;
+          border-bottom:1px solid rgba(121,98,255,0.28) !important;
+        }
+        .lip-close {
+          width:34px !important;
+          height:34px !important;
+          border-radius:12px !important;
+          background:rgba(255,255,255,0.06) !important;
+          border:1px solid rgba(255,255,255,0.16) !important;
+          color:rgba(255,255,255,0.72) !important;
+          box-shadow:inset 0 0 18px rgba(139,92,246,0.12) !important;
+        }
+        .lip-close:hover {
+          background:rgba(248,113,113,0.13) !important;
+          border-color:rgba(248,113,113,0.78) !important;
+          color:#fecaca !important;
+        }
+        .lip-modal-body {
+          background:
+            radial-gradient(circle at 78% 18%, rgba(168,85,247,0.14), transparent 34%),
+            radial-gradient(circle at 34% 12%, rgba(14,165,233,0.12), transparent 32%) !important;
+        }
+        .lip-scroll::-webkit-scrollbar{width:5px}
+        .lip-scroll::-webkit-scrollbar-track{background:transparent}
+        .lip-scroll::-webkit-scrollbar-thumb{background:rgba(123,92,255,0.38);border-radius:3px}
+        .lip-feat-card,
+        .lip-tpl-card,
+        .lip-price-free,
+        .lip-price-pro,
+        .lip-note-card,
+        .lip-faq-card {
+          position:relative;
+          overflow:hidden;
+          background:linear-gradient(135deg, rgba(23,17,68,0.74), rgba(25,10,58,0.58)) !important;
+          border:1px solid rgba(90,118,255,0.32) !important;
+          box-shadow:inset 0 0 22px rgba(59,130,246,0.08), 0 10px 24px rgba(0,0,0,0.18) !important;
+        }
+        .lip-feat-card,
+        .lip-tpl-card { padding:16px 18px; border-radius:14px; transition:all .22s ease; cursor:default; }
+        .lip-price-free,
+        .lip-price-pro { padding:22px; border-radius:18px; transition:all .2s; }
+        .lip-feat-card::before,
+        .lip-tpl-card::before,
+        .lip-price-free::before,
+        .lip-price-pro::before,
+        .lip-note-card::before,
+        .lip-faq-card::before {
+          content:"";
+          position:absolute;
+          inset:0 auto auto 0;
+          width:54%;
+          height:1px;
+          background:linear-gradient(90deg, rgba(34,211,238,0.9), transparent);
+          opacity:.75;
+        }
+        .lip-feat-card:hover,
+        .lip-tpl-card:hover,
+        .lip-price-free:hover,
+        .lip-price-pro:hover,
+        .lip-faq-card:hover {
+          transform:translateY(-2px);
+          border-color:rgba(34,211,238,0.55) !important;
+          box-shadow:inset 0 0 26px rgba(59,130,246,0.12), 0 0 28px rgba(59,130,246,0.16) !important;
+        }
+        .lip-price-pro {
+          background:linear-gradient(135deg, rgba(251,191,36,0.16), rgba(168,85,247,0.22)) !important;
+          border-color:rgba(251,191,36,0.72) !important;
+          box-shadow:inset 0 0 28px rgba(251,191,36,0.1), 0 0 32px rgba(168,85,247,0.22) !important;
+        }
+        @media (max-width: 640px) {
+          .lip-modal-shell { border-radius:22px 22px 0 0 !important; }
+        }
       `}</style>
 
       <div
+        className="lip-modal-shell"
         style={{ width:isMobile?'100%':'min(900px,96vw)', height:isMobile?'100%':'min(700px,93vh)', background:'#0b0c10', borderRadius:isMobile?'22px 22px 0 0':20, border:`1px solid ${meta.border}`, display:'flex', flexDirection:'column', overflow:'hidden', boxShadow:`0 0 80px ${meta.glow}, 0 32px 80px rgba(0,0,0,0.8)`, animation:isMobile?'lipSlideUp .3s cubic-bezier(0.34,1.1,0.64,1)':'lipSlide .26s cubic-bezier(0.34,1.2,0.64,1)' }}
         onClick={e => e.stopPropagation()}
       >
         {/* Top accent line */}
-        <div style={{ height:3, background:meta.grad, flexShrink:0 }} />
+        <div className="lip-top-line" style={{ height:3, background:meta.grad, flexShrink:0 }} />
 
         {/* Header */}
-        <div style={{ padding:isMobile?'14px 16px':'18px 26px', borderBottom:`1px solid ${meta.border.replace('0.35','0.15')}`, display:'flex', alignItems:'center', justifyContent:'space-between', flexShrink:0, background:'rgba(0,0,0,0.25)' }}>
+        <div className="lip-modal-header" style={{ padding:isMobile?'14px 16px':'18px 26px', borderBottom:`1px solid ${meta.border.replace('0.35','0.15')}`, display:'flex', alignItems:'center', justifyContent:'space-between', flexShrink:0, background:'rgba(0,0,0,0.25)' }}>
           <div style={{ display:'flex', alignItems:'center', gap:12 }}>
             <div style={{ width:38, height:38, borderRadius:12, background:meta.grad, display:'flex', alignItems:'center', justifyContent:'center', fontSize:18, flexShrink:0, boxShadow:`0 4px 16px ${meta.glow}` }}>{meta.icon}</div>
             <div>
@@ -9117,11 +9598,11 @@ function LandingInfoModal({ page, onClose, isMobile }) {
               </div>
             </div>
           </div>
-          <button onClick={onClose} style={{ width:34, height:34, borderRadius:10, border:`1px solid ${meta.border.replace('0.35','0.2')}`, background:'rgba(255,255,255,0.04)', color:'rgba(255,255,255,0.45)', fontSize:18, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', transition:'all .15s', flexShrink:0 }} onMouseEnter={e=>{e.currentTarget.style.background='rgba(255,255,255,0.1)';e.currentTarget.style.color='#fff';}} onMouseLeave={e=>{e.currentTarget.style.background='rgba(255,255,255,0.04)';e.currentTarget.style.color='rgba(255,255,255,0.45)';}}>×</button>
+          <button className="lip-close" onClick={onClose} style={{ width:34, height:34, borderRadius:10, border:`1px solid ${meta.border.replace('0.35','0.2')}`, background:'rgba(255,255,255,0.04)', color:'rgba(255,255,255,0.45)', fontSize:18, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', transition:'all .15s', flexShrink:0 }} onMouseEnter={e=>{e.currentTarget.style.background='rgba(255,255,255,0.1)';e.currentTarget.style.color='#fff';}} onMouseLeave={e=>{e.currentTarget.style.background='rgba(255,255,255,0.04)';e.currentTarget.style.color='rgba(255,255,255,0.45)';}}>×</button>
         </div>
 
         {/* Body */}
-        <div style={{ flex:1, overflow:'hidden', display:'flex' }}>
+        <div className="lip-modal-body" style={{ flex:1, overflow:'hidden', display:'flex' }}>
 
           {/* ── FEATURES ── */}
           {page==='features' && (
@@ -9195,7 +9676,7 @@ function LandingInfoModal({ page, onClose, isMobile }) {
                   </div>
                 ))}
               </div>
-              <div style={{ marginTop:18, padding:'14px 18px', borderRadius:14, background:'rgba(251,191,36,0.05)', border:'1px solid rgba(251,191,36,0.18)', display:'flex', alignItems:'center', gap:14 }}>
+              <div className="lip-note-card" style={{ marginTop:18, padding:'14px 18px', borderRadius:14, background:'rgba(251,191,36,0.05)', border:'1px solid rgba(251,191,36,0.18)', display:'flex', alignItems:'center', gap:14 }}>
                 <span style={{ fontSize:22, flexShrink:0 }}>📚</span>
                 <div>
                   <div style={{ fontSize:13, color:'rgba(255,255,255,0.75)', fontWeight:600, marginBottom:3, fontFamily:'Syne,system-ui' }}>Шаблоны доступны в конструкторе</div>
@@ -9308,7 +9789,7 @@ function LandingInfoModal({ page, onClose, isMobile }) {
                     ['Какие способы оплаты принимаются?','Оплата через криптовалюту: USDT, TRX, LTC. Безопасно и без посредников.'],
                     ['Что будет с проектами при переходе на Free?','Проекты сохранятся. Доступен только 1 проект для редактирования.'],
                   ].map(([q,a]) => (
-                    <div key={q} style={{ padding:'13px 16px', borderRadius:12, background:'rgba(255,255,255,0.025)', border:'1px solid rgba(255,255,255,0.07)', transition:'border-color .2s' }} onMouseEnter={e=>e.currentTarget.style.borderColor='rgba(255,255,255,0.14)'} onMouseLeave={e=>e.currentTarget.style.borderColor='rgba(255,255,255,0.07)'}>
+                    <div key={q} className="lip-faq-card" style={{ padding:'13px 16px', borderRadius:12, background:'rgba(255,255,255,0.025)', border:'1px solid rgba(255,255,255,0.07)', transition:'border-color .2s' }} onMouseEnter={e=>e.currentTarget.style.borderColor='rgba(255,255,255,0.14)'} onMouseLeave={e=>e.currentTarget.style.borderColor='rgba(255,255,255,0.07)'}>
                       <div style={{ fontSize:13, fontWeight:700, color:'rgba(255,255,255,0.88)', marginBottom:6, fontFamily:'Syne,system-ui' }}>{q}</div>
                       <div style={{ fontSize:12, color:'rgba(255,255,255,0.45)', lineHeight:1.6 }}>{a}</div>
                     </div>
@@ -9506,6 +9987,7 @@ function AuthModal({ tab, setTab, onClose, onLogin, onRegister, canClose = true,
 
   return (
     <div
+      className="auth-modal-overlay"
       style={{
         position: 'fixed', inset: 0, zIndex: 10000,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -9529,10 +10011,124 @@ function AuthModal({ tab, setTab, onClose, onLogin, onRegister, canClose = true,
         @keyframes passkeyFingerprintPulse { 0%,100%{transform:scale(1);filter:drop-shadow(0 0 2px rgba(255,255,255,.25))} 50%{transform:scale(1.15);filter:drop-shadow(0 0 10px rgba(62,207,142,.85))} }
         @keyframes passkeyRingScan { 0%{transform:scale(.65);opacity:.75} 100%{transform:scale(1.7);opacity:0} }
         .passkey-mobile-login { display:none; }
-        @media (max-width: 640px) { .passkey-mobile-login { display:flex; } }
         .am-social-btn:hover { background:rgba(255,255,255,0.08); border-color:rgba(255,255,255,0.2); transform:translateY(-1px); }
         .am-tg-btn { background:rgba(33,150,243,0.07) !important; border-color:rgba(33,150,243,0.25) !important; }
         .am-tg-btn:hover { background:rgba(33,150,243,0.14) !important; border-color:rgba(33,150,243,0.45) !important; }
+        @media (max-width: 640px) {
+          .auth-modal-overlay {
+            align-items:stretch !important;
+            justify-content:center !important;
+            padding:0 !important;
+            overflow-y:auto !important;
+            background:
+              radial-gradient(circle at 22% 18%, rgba(249,115,22,0.24), transparent 28%),
+              radial-gradient(circle at 78% 12%, rgba(124,58,237,0.34), transparent 32%),
+              radial-gradient(circle at 48% 72%, rgba(249,115,22,0.2), transparent 36%),
+              linear-gradient(160deg,#09041a 0%,#16072d 44%,#09051a 100%) !important;
+          }
+          .auth-modal-overlay::before {
+            content:'';
+            position:absolute;
+            inset:0;
+            pointer-events:none;
+            background:
+              linear-gradient(115deg, transparent 0 28%, rgba(249,115,22,0.08) 28.2%, transparent 28.7%),
+              linear-gradient(24deg, transparent 0 62%, rgba(99,102,241,0.1) 62.2%, transparent 62.8%),
+              radial-gradient(circle, rgba(255,255,255,0.16) 0 1px, transparent 1.8px);
+            background-size:100% 100%,100% 100%,84px 84px;
+            opacity:.7;
+          }
+          .auth-modal-card {
+            width:100% !important;
+            max-width:480px !important;
+            min-height:100dvh !important;
+            max-height:none !important;
+            margin:0 auto !important;
+            border:none !important;
+            border-radius:0 !important;
+            background:linear-gradient(180deg,rgba(14,7,34,0.24),rgba(7,4,22,0.1)) !important;
+            box-shadow:none !important;
+            overflow-y:auto !important;
+            backdrop-filter:none !important;
+          }
+          .auth-modal-head {
+            padding:42px 26px 20px !important;
+          }
+          .auth-modal-card img {
+            border-radius:18px !important;
+          }
+          .auth-modal-card form,
+          .auth-tab-section,
+          .auth-screen-section {
+            padding-left:24px !important;
+            padding-right:24px !important;
+          }
+          .auth-tab-switcher {
+            border-radius:14px !important;
+            padding:4px !important;
+            border:1px solid rgba(99,102,241,0.55) !important;
+            background:linear-gradient(135deg,rgba(249,115,22,0.16),rgba(99,102,241,0.2)) !important;
+            box-shadow:0 0 26px rgba(99,102,241,0.28), inset 0 0 18px rgba(255,255,255,0.04) !important;
+          }
+          .am-input-wrap input {
+            min-height:58px !important;
+            border-radius:14px !important;
+            background:rgba(28,14,56,0.5) !important;
+            border-color:rgba(255,255,255,0.24) !important;
+            box-shadow:
+              0 0 0 1px rgba(99,102,241,0.12),
+              inset 0 0 20px rgba(99,102,241,0.1),
+              0 0 24px rgba(249,115,22,0.08) !important;
+            font-size:16px !important;
+          }
+          .am-input-wrap input:focus {
+            border-color:rgba(249,115,22,0.78) !important;
+            box-shadow:
+              0 0 0 1px rgba(249,115,22,0.26),
+              0 0 24px rgba(249,115,22,0.22),
+              0 0 30px rgba(99,102,241,0.18),
+              inset 0 0 22px rgba(99,102,241,0.12) !important;
+          }
+          .auth-primary-btn {
+            min-height:58px !important;
+            border-radius:14px !important;
+            font-size:16px !important;
+            font-weight:800 !important;
+            background:linear-gradient(135deg,#ff5c1a 0%,#ef1f39 62%,#9d1cff 100%) !important;
+            box-shadow:
+              0 0 0 1px rgba(255,255,255,0.12),
+              0 10px 34px rgba(239,31,57,0.34),
+              0 0 26px rgba(157,28,255,0.26) !important;
+          }
+          .passkey-mobile-login {
+            display:flex !important;
+            min-height:56px !important;
+            border-radius:14px !important;
+            background:linear-gradient(135deg,rgba(34,211,238,0.18),rgba(124,58,237,0.52)) !important;
+            border:1px solid rgba(34,211,238,0.42) !important;
+            box-shadow:
+              0 0 26px rgba(34,211,238,0.22),
+              0 0 30px rgba(124,58,237,0.24),
+              inset 0 0 18px rgba(255,255,255,0.08) !important;
+            letter-spacing:.04em !important;
+          }
+          .auth-link-row {
+            font-size:14px !important;
+          }
+          .auth-divider {
+            margin-top:4px !important;
+          }
+          .auth-social-row {
+            gap:12px !important;
+          }
+          .auth-social-row > * {
+            min-height:52px !important;
+            border-radius:14px !important;
+            border-color:rgba(99,102,241,0.42) !important;
+            background:rgba(28,14,56,0.42) !important;
+            box-shadow:0 0 18px rgba(99,102,241,0.18), inset 0 0 18px rgba(255,255,255,0.04) !important;
+          }
+        }
       `}</style>
 
       {totpRequired && (<div style={{ position:'absolute', top: 16, left:'50%', transform:'translateX(-50%)', zIndex: 20, padding:'10px 14px', borderRadius:12, border:'1px solid rgba(251,191,36,0.45)', background:'rgba(251,191,36,0.12)', color:'#fde68a', fontSize:12, fontWeight:700, fontFamily:'Syne,system-ui' }}>🔐 Включена 2FA — подтвердите вход кодом из Authenticator</div>)}
@@ -9545,6 +10141,7 @@ function AuthModal({ tab, setTab, onClose, onLogin, onRegister, canClose = true,
       <div style={{ position:'absolute', inset:0, pointerEvents:'none', backgroundImage:'linear-gradient(rgba(255,255,255,0.012) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,0.012) 1px,transparent 1px)', backgroundSize:'64px 64px' }} />
 
       <div
+        className="auth-modal-card"
         style={{
           width: 'min(440px, 100%)',
           maxHeight: '96vh',
@@ -9563,7 +10160,7 @@ function AuthModal({ tab, setTab, onClose, onLogin, onRegister, canClose = true,
           <div key={i} style={{ position:'absolute', top:c.t!==undefined?-2:'auto', bottom:c.b!==undefined?-2:'auto', left:c.l!==undefined?-2:'auto', right:c.r!==undefined?-2:'auto', width:18, height:18, borderTop:c.bt==='borderTop'?'2px solid rgba(255,100,30,0.65)':'none', borderBottom:c.bt==='borderBottom'?'2px solid rgba(255,100,30,0.65)':'none', borderLeft:c.bl==='borderLeft'?'2px solid rgba(255,100,30,0.65)':'none', borderRight:c.bl==='borderRight'?'2px solid rgba(255,100,30,0.65)':'none', borderRadius:c.br2, animation:'cornerGlow 2.5s ease-in-out infinite', animationDelay:`${i*0.4}s` }} />
         ))}
         {/* Header */}
-        <div style={{ padding: '32px 32px 24px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        <div className="auth-modal-head" style={{ padding: '32px 32px 24px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <div style={{ position: 'relative', marginBottom: 14 }}>
             <div style={{ position:'absolute', inset:-8, borderRadius:'50%', background:'radial-gradient(circle,rgba(255,100,30,0.22) 0%,transparent 70%)', filter:'blur(8px)' }} />
             <div style={{ width:72, height:72, borderRadius:18, background:'linear-gradient(135deg,rgba(255,100,30,0.12),rgba(50,30,80,0.25))', border:'1px solid rgba(255,100,30,0.28)', display:'flex', alignItems:'center', justifyContent:'center', position:'relative', boxShadow:'0 8px 28px rgba(255,80,20,0.18)' }}>
@@ -9581,8 +10178,8 @@ function AuthModal({ tab, setTab, onClose, onLogin, onRegister, canClose = true,
 
         {/* Tab switcher */}
         {screen === 'form' && (
-          <div style={{ padding: '0 28px 22px' }}>
-            <div style={{ display: 'flex', background: 'rgba(255,255,255,0.04)', borderRadius: 12, padding: 4, border: '1px solid rgba(255,255,255,0.07)', position: 'relative' }}>
+          <div className="auth-tab-section" style={{ padding: '0 28px 22px' }}>
+            <div className="auth-tab-switcher" style={{ display: 'flex', background: 'rgba(255,255,255,0.04)', borderRadius: 12, padding: 4, border: '1px solid rgba(255,255,255,0.07)', position: 'relative' }}>
               {/* Sliding indicator */}
               <div style={{ position:'absolute', top:4, bottom:4, left: tab==='login' ? 4 : 'calc(50% + 2px)', width:'calc(50% - 6px)', background:'linear-gradient(135deg,rgba(255,90,20,0.92),rgba(220,50,0,0.92))', borderRadius:9, transition:'left 0.25s cubic-bezier(0.4,0,0.2,1)', boxShadow:'0 2px 12px rgba(255,80,20,0.35)', pointerEvents:'none' }} />
               {[['login', 'Войти'], ['register', 'Регистрация']].map(([val, label]) => (
@@ -9625,7 +10222,7 @@ function AuthModal({ tab, setTab, onClose, onLogin, onRegister, canClose = true,
 
         {/* ── verify-sent ── */}
         {screen === 'verify-sent' && (
-          <div style={{ padding: '0 32px 36px', textAlign: 'center' }}>
+          <div className="auth-screen-section" style={{ padding: '0 32px 36px', textAlign: 'center' }}>
             {verifyReason === 'register' && (
               <div
                 style={{
@@ -9704,7 +10301,7 @@ function AuthModal({ tab, setTab, onClose, onLogin, onRegister, canClose = true,
 
         {/* ── reset-done ── */}
         {screen === 'reset-done' && (
-          <div style={{ padding: '0 32px 36px', textAlign: 'center' }}>
+          <div className="auth-screen-section" style={{ padding: '0 32px 36px', textAlign: 'center' }}>
             <div style={{ fontSize: 48, marginBottom: 16 }}>✅</div>
             <div style={{ fontFamily: 'Syne,system-ui', fontWeight: 700, fontSize: 16, color: '#fff', marginBottom: 12 }}>Пароль изменён!</div>
             <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.45)', lineHeight: 1.6, marginBottom: 24 }}>Теперь вы можете войти с новым паролем.</div>
@@ -9714,7 +10311,7 @@ function AuthModal({ tab, setTab, onClose, onLogin, onRegister, canClose = true,
 
         {/* ── Main form ── */}
         {screen === 'form' && (
-          <form onSubmit={handleSubmit} style={{ padding: '0 28px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <form className="auth-form" onSubmit={handleSubmit} style={{ padding: '0 28px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
 
 
             {tab === 'login' && totpRequired && (
@@ -9809,6 +10406,7 @@ function AuthModal({ tab, setTab, onClose, onLogin, onRegister, canClose = true,
 
             <button
               type="submit"
+              className="auth-primary-btn"
               disabled={loading}
               style={{ width: '100%', padding: '15px 20px', fontSize: 15, fontWeight: 600, fontFamily: 'inherit', background: loading ? 'rgba(249,115,22,0.35)' : 'linear-gradient(135deg,#ff5c1a 0%,#dc2626 100%)', color: '#fff', border: 'none', borderRadius: 12, cursor: loading ? 'not-allowed' : 'pointer', transition: 'all 0.2s', boxShadow: loading ? 'none' : '0 4px 24px rgba(255,80,20,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, letterSpacing: '0.02em', position: 'relative', overflow: 'hidden' }}
               onMouseEnter={e => { if (!loading) { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 8px 32px rgba(255,80,20,0.55)'; } }}
@@ -9823,19 +10421,19 @@ function AuthModal({ tab, setTab, onClose, onLogin, onRegister, canClose = true,
             {tab === 'login' && (
               <button
                 type="button"
-                className="passkey-mobile-login"
+                className="passkey-mobile-login auth-passkey-btn"
                 onClick={handlePasskeyLogin}
                 disabled={loading}
                 style={{ width: '100%', padding: '14px 18px', fontSize: 15, fontWeight: 800, fontFamily: 'Syne,system-ui', background: 'linear-gradient(135deg,#7c3aed,#2563eb)', color: '#fff', border: 'none', borderRadius: 12, cursor: loading ? 'not-allowed' : 'pointer', boxShadow: '0 8px 24px rgba(37,99,235,0.32)', alignItems: 'center', justifyContent: 'center', gap: 10, letterSpacing: '0.12em', position: 'relative', overflow: 'hidden', opacity: loading ? 0.65 : 1 }}
               >
                 <span style={{ position: 'absolute', width: 42, height: 42, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.25)', animation: 'passkeyRingScan 1.5s ease-out infinite' }} />
-                <span style={{ fontSize: 21, lineHeight: 1, animation: 'passkeyFingerprintPulse 1.4s ease-in-out infinite', zIndex: 1 }}>🫆</span>
-                <span style={{ zIndex: 1 }}>ВОЙТИ ПО ОТПЕЧАТКУ</span>
+                <span style={{ fontSize: 21, lineHeight: 1, animation: 'passkeyFingerprintPulse 1.4s ease-in-out infinite', zIndex: 1 }}>⌾</span>
+                <span style={{ zIndex: 1 }}>Войти по отпечатку</span>
               </button>
             )}
 
             {tab === 'login' && (
-              <div style={{ textAlign: 'center', fontSize: 13, color: 'rgba(255,255,255,0.3)' }}>
+              <div className="auth-link-row" style={{ textAlign: 'center', fontSize: 13, color: 'rgba(255,255,255,0.3)' }}>
                 Нет аккаунта?{' '}
                 <span onClick={() => setTab('register')} style={{ color: '#ffd700', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 3 }}>Зарегистрируйтесь</span>
               </div>
@@ -9852,21 +10450,21 @@ function AuthModal({ tab, setTab, onClose, onLogin, onRegister, canClose = true,
             )}
 
             {tab === 'register' && (
-              <div style={{ textAlign: 'center', fontSize: 13, color: 'rgba(255,255,255,0.3)' }}>
+              <div className="auth-link-row" style={{ textAlign: 'center', fontSize: 13, color: 'rgba(255,255,255,0.3)' }}>
                 Уже есть аккаунт?{' '}
                 <span onClick={() => setTab('login')} style={{ color: '#ffd700', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 3 }}>Войти</span>
               </div>
             )}
 
             {/* OR divider */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 2 }}>
+            <div className="auth-divider" style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 2 }}>
               <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.08)' }} />
               <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.25)', fontFamily: 'system-ui', letterSpacing: '0.08em' }}>или войти через</span>
               <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.08)' }} />
             </div>
 
             {/* OAuth buttons — side by side */}
-            <div style={{ display: 'flex', gap: 10 }}>
+            <div className="auth-social-row" style={{ display: 'flex', gap: 10 }}>
               <GoogleLoginButton />
               <TelegramLoginButton onLogin={onLogin} />
             </div>
@@ -10544,6 +11142,7 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onUploa
   const avatarColors = ['#ffd700,#ff8c00', '#3ecf8e,#0ea5e9', '#a78bfa,#ec4899', '#f87171,#fb923c'];
   const avatarColor = avatarColors[(user.name || user.email || '?').charCodeAt(0) % avatarColors.length];
   const avatarSrc = resolveApiAssetUrl(newAvatar);
+  const showProfileSidebar = !isMobile;
 
   const inputBase = (field) => ({
     width: '100%', padding: '12px 16px', fontSize: 13,
@@ -10559,7 +11158,7 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onUploa
     <div
       style={{
         position: 'fixed', inset: 0, zIndex: 10000,
-        background: 'radial-gradient(ellipse at 40% 30%, rgba(99,40,240,0.18) 0%, rgba(0,0,0,0) 60%), radial-gradient(ellipse at 70% 80%, rgba(249,115,22,0.1) 0%, rgba(0,0,0,0) 55%), rgba(2,1,12,0.85)',
+        background: 'radial-gradient(ellipse at 42% 18%, rgba(106,56,255,0.28) 0%, rgba(0,0,0,0) 58%), radial-gradient(ellipse at 80% 90%, rgba(249,115,22,0.14) 0%, rgba(0,0,0,0) 55%), rgba(2,1,12,0.88)',
         display: 'flex',
         alignItems: isMobile ? 'flex-end' : 'center',
         justifyContent: 'center',
@@ -10573,12 +11172,54 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onUploa
         @keyframes projectFade { from { opacity: 0; transform: translateX(-8px) } to { opacity: 1; transform: translateX(0) } }
         @keyframes spin2 { to { transform: rotate(360deg) } }
         @keyframes pmCornerGlow { 0%,100%{opacity:0.6} 50%{opacity:1} }
-        @keyframes pmAvatarPulse { 0%,100%{box-shadow:0 0 0 2px rgba(249,115,22,0.4),0 0 16px rgba(249,115,22,0.2)} 50%{box-shadow:0 0 0 3px rgba(249,115,22,0.7),0 0 28px rgba(249,115,22,0.4)} }
-        .pm-nav-btn { display:flex; align-items:center; gap:10px; padding:9px 12px; border-radius:9px; cursor:pointer; border:none; background:none; color:rgba(255,255,255,0.5); font-size:13px; font-family:system-ui,sans-serif; width:100%; text-align:left; transition:all .18s; position:relative; }
-        .pm-nav-btn:hover { background:rgba(255,255,255,0.05); color:rgba(255,255,255,0.9); }
-        .pm-nav-btn.pmactive { background:linear-gradient(135deg,rgba(249,115,22,0.18),rgba(220,38,38,0.12)); color:#f97316; border-left:2px solid #f97316; padding-left:10px; }
-        .pm-nav-btn.pmactive:hover { background:linear-gradient(135deg,rgba(249,115,22,0.24),rgba(220,38,38,0.18)); }
-        .pm-action-card:hover { border-color:rgba(249,115,22,0.3) !important; background:rgba(249,115,22,0.05) !important; transform:translateY(-1px); box-shadow:0 4px 16px rgba(249,115,22,0.1) !important; }
+        @keyframes pmAvatarPulse { 0%,100%{box-shadow:0 0 0 2px rgba(25,216,255,0.55),0 0 18px rgba(25,216,255,0.35),0 0 34px rgba(139,92,246,0.28)} 50%{box-shadow:0 0 0 3px rgba(25,216,255,0.78),0 0 28px rgba(25,216,255,0.5),0 0 44px rgba(139,92,246,0.38)} }
+        @keyframes pmStarFloat { from{background-position:0 0,0 0} to{background-position:52px 42px,-38px 58px} }
+        .pm-modal-shell::before {
+          content:''; position:absolute; inset:0; pointer-events:none; z-index:0;
+          background:
+            radial-gradient(circle, rgba(255,255,255,.16) 0 1px, transparent 1.4px),
+            radial-gradient(circle, rgba(25,216,255,.13) 0 1px, transparent 1.5px),
+            radial-gradient(circle at 50% 18%, rgba(111,70,255,.24), transparent 42%);
+          background-size: 22px 22px, 58px 58px, auto;
+          animation: pmStarFloat 18s linear infinite;
+          opacity:.52;
+        }
+        .pm-modal-shell::after {
+          content:''; position:absolute; inset:0; pointer-events:none; z-index:0;
+          background: radial-gradient(circle at 50% 48%, transparent 0 50%, rgba(3,1,12,.42) 100%);
+        }
+        .pm-modal-shell > * { position:relative; z-index:1; }
+        .pm-content-scroll { scrollbar-width: thin; scrollbar-color: rgba(139,92,246,.65) transparent; }
+        .pm-content-scroll::-webkit-scrollbar { width: 6px; }
+        .pm-content-scroll::-webkit-scrollbar-track { background: transparent; }
+        .pm-content-scroll::-webkit-scrollbar-thumb { background: linear-gradient(#6f46ff,#ff7a35); border-radius: 999px; }
+        .pm-stat-card {
+          position:relative; overflow:hidden;
+          background: linear-gradient(145deg, rgba(25,216,255,.12), rgba(111,70,255,.16) 54%, rgba(6,2,32,.78)) !important;
+          border: 1px solid rgba(121,88,255,.5) !important;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 0 18px rgba(25,216,255,.16), 0 0 24px rgba(139,92,246,.16) !important;
+        }
+        .pm-stat-card::after {
+          content:''; position:absolute; inset:auto -20% -55% -20%; height:70%;
+          background: radial-gradient(ellipse, rgba(25,216,255,.42), transparent 64%);
+          pointer-events:none;
+        }
+        .pm-panel-card {
+          background: linear-gradient(145deg, rgba(255,255,255,.045), rgba(111,70,255,.055)) !important;
+          border: 1px solid rgba(178,128,255,.22) !important;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 14px 36px rgba(4,1,20,.26);
+        }
+        .pm-action-card {
+          min-height: 86px;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,.1), 0 0 18px rgba(111,70,255,.1);
+        }
+        .pm-nav-btn { display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:12px; cursor:pointer; border:1px solid transparent; background:rgba(255,255,255,0.018); color:rgba(255,255,255,0.58); font-size:13px; font-family:system-ui,sans-serif; width:100%; text-align:left; transition:all .18s; position:relative; }
+        .pm-nav-btn::before { content:''; position:absolute; inset:8px auto 8px 0; width:2px; border-radius:999px; background:transparent; transition:all .18s; }
+        .pm-nav-btn:hover { background:linear-gradient(90deg,rgba(25,216,255,0.08),rgba(139,92,246,0.09)); border-color:rgba(178,128,255,0.24); color:rgba(255,255,255,0.92); box-shadow:inset 0 1px 0 rgba(255,255,255,.06); }
+        .pm-nav-btn.pmactive { background:linear-gradient(135deg,rgba(25,216,255,0.18),rgba(139,92,246,0.22) 56%,rgba(255,122,53,0.12)); color:#fff; border-color:rgba(25,216,255,0.42); box-shadow:0 0 18px rgba(25,216,255,0.16), inset 0 1px 0 rgba(255,255,255,.11); }
+        .pm-nav-btn.pmactive::before { background:linear-gradient(#19d8ff,#8b5cf6,#ff7a35); box-shadow:0 0 12px rgba(25,216,255,.7); }
+        .pm-nav-btn.pmactive:hover { background:linear-gradient(135deg,rgba(25,216,255,0.24),rgba(139,92,246,0.28) 56%,rgba(255,122,53,0.16)); }
+        .pm-action-card:hover { transform:translateY(-1px); filter:saturate(1.15) brightness(1.08); box-shadow:0 6px 18px rgba(111,70,255,0.22) !important; }
         .pm-info-row:hover { border-color:rgba(99,102,241,0.4) !important; }
         .pm-sec-row:hover { background:rgba(255,255,255,0.05) !important; border-color:rgba(255,255,255,0.15) !important; }
         .pm-tab-mobile { flex:0 0 auto; padding:7px 14px; border-radius:8px; font-size:12px; font-weight:700; cursor:pointer; font-family:Syne,system-ui; display:flex; align-items:center; gap:6px; transition:all .18s; }
@@ -10590,15 +11231,16 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onUploa
       <input ref={avatarInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => handleAvatarPick(e.target.files?.[0])} />
 
       <div
+        className="pm-modal-shell"
         style={{
-          width: isMobile ? '100%' : 'min(1040px, 96vw)',
-          height: isMobile ? '100%' : 'min(660px, 92vh)',
-          background: 'linear-gradient(160deg,#0d0920 0%,#080618 50%,#060412 100%)',
-          borderRadius: isMobile ? '20px 20px 0 0' : 18,
-          border: '1px solid rgba(249,115,22,0.28)',
+          width: isMobile ? '100%' : showProfileSidebar ? 'min(928px, 96vw)' : 'min(688px, 96vw)',
+          height: isMobile ? '100%' : 'min(572px, 92vh)',
+          background: 'linear-gradient(160deg,rgba(13,7,42,.98) 0%,rgba(12,4,43,.98) 48%,rgba(5,1,20,.99) 100%)',
+          borderRadius: isMobile ? '20px 20px 0 0' : 20,
+          border: '1px solid rgba(178,128,255,0.34)',
           display: 'flex',
           overflow: 'hidden',
-          boxShadow: '0 0 0 1px rgba(99,40,240,0.18), 0 40px 100px rgba(0,0,0,0.9), 0 0 60px rgba(249,115,22,0.08), 0 0 100px rgba(99,40,240,0.1)',
+          boxShadow: '0 0 0 1px rgba(25,216,255,0.14), 0 40px 110px rgba(0,0,0,0.92), 0 0 70px rgba(111,70,255,0.2), inset 0 1px 0 rgba(255,255,255,.08)',
           animation: isMobile ? 'pmSlideUp 0.3s cubic-bezier(0.34,1.1,0.64,1)' : 'pmSlideIn 0.28s cubic-bezier(0.34,1.2,0.64,1)',
           position: 'relative',
         }}
@@ -10606,22 +11248,22 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onUploa
       >
         {/* Neon corner accents */}
         {!isMobile && [
-          { top:0, left:0, bT:'2px solid #f97316', bL:'2px solid #f97316', br:'16px 0 0 0' },
-          { top:0, right:0, bT:'2px solid #f97316', bR:'2px solid #f97316', br:'0 16px 0 0' },
-          { bottom:0, left:0, bB:'2px solid #f97316', bL:'2px solid #f97316', br:'0 0 0 16px' },
-          { bottom:0, right:0, bB:'2px solid #f97316', bR:'2px solid #f97316', br:'0 0 16px 0' },
+          { top:0, left:0, bT:'2px solid #19d8ff', bL:'2px solid #19d8ff', br:'18px 0 0 0' },
+          { top:0, right:0, bT:'2px solid #8b5cf6', bR:'2px solid #8b5cf6', br:'0 18px 0 0' },
+          { bottom:0, left:0, bB:'2px solid #8b5cf6', bL:'2px solid #8b5cf6', br:'0 0 0 18px' },
+          { bottom:0, right:0, bB:'2px solid #ff7a35', bR:'2px solid #ff7a35', br:'0 0 18px 0' },
         ].map((c, i) => (
           <div key={i} style={{ position:'absolute', top:c.top, right:c.right, bottom:c.bottom, left:c.left, width:20, height:20, borderTop:c.bT, borderRight:c.bR, borderBottom:c.bB, borderLeft:c.bL, borderRadius:c.br, animation:'pmCornerGlow 2.5s ease-in-out infinite', animationDelay:`${i*0.35}s`, pointerEvents:'none', zIndex:10 }} />
         ))}
         {/* ── LEFT SIDEBAR ── */}
-        {!isMobile && (
-          <div style={{ width: 224, background: 'linear-gradient(180deg,rgba(13,9,32,0.98),rgba(8,6,18,1))', borderRight: '1px solid rgba(249,115,22,0.2)', display: 'flex', flexDirection: 'column', flexShrink: 0, position: 'relative' }}>
+        {showProfileSidebar && !isMobile && (
+          <div style={{ width: 236, background: 'linear-gradient(180deg,rgba(13,7,42,0.94),rgba(7,4,28,0.98) 48%,rgba(4,2,16,1))', borderRight: '1px solid rgba(178,128,255,0.28)', display: 'flex', flexDirection: 'column', flexShrink: 0, position: 'relative', boxShadow: '12px 0 34px rgba(4,1,20,.32), inset -1px 0 0 rgba(25,216,255,.08)' }}>
             {/* subtle grid bg */}
-            <div style={{ position:'absolute', inset:0, backgroundImage:'linear-gradient(rgba(99,102,241,0.04) 1px,transparent 1px),linear-gradient(90deg,rgba(99,102,241,0.04) 1px,transparent 1px)', backgroundSize:'24px 24px', pointerEvents:'none' }} />
+            <div style={{ position:'absolute', inset:0, backgroundImage:'radial-gradient(circle at 50% 0%,rgba(25,216,255,.18),transparent 38%),linear-gradient(rgba(139,92,246,0.055) 1px,transparent 1px),linear-gradient(90deg,rgba(139,92,246,0.055) 1px,transparent 1px)', backgroundSize:'auto,24px 24px,24px 24px', pointerEvents:'none' }} />
 
             {/* Logo */}
-            <div style={{ padding: '18px 16px 14px', borderBottom: '1px solid rgba(249,115,22,0.15)', display: 'flex', alignItems: 'center', gap: 7, position: 'relative' }}>
-              <span style={{ color: '#f97316', fontSize: 18, textShadow: '0 0 12px rgba(249,115,22,0.8), 0 0 24px rgba(249,115,22,0.4)' }}>◈</span>
+            <div style={{ padding: '18px 16px 14px', borderBottom: '1px solid rgba(178,128,255,0.2)', display: 'flex', alignItems: 'center', gap: 7, position: 'relative' }}>
+              <span style={{ color: '#19d8ff', fontSize: 18, textShadow: '0 0 12px rgba(25,216,255,0.9), 0 0 24px rgba(139,92,246,0.45)' }}>◈</span>
               <span style={{ fontFamily: 'Syne,system-ui', fontWeight: 800, fontSize: 17, background: 'linear-gradient(90deg,#06b6d4,#818cf8)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Cicada</span>
               <span style={{ fontFamily: 'Syne,system-ui', fontSize: 13, color: 'rgba(255,255,255,0.3)', fontWeight: 400 }}>Studio</span>
             </div>
@@ -10630,7 +11272,7 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onUploa
             <div style={{ padding: '12px 12px 8px', position: 'relative' }}>
               <button
                 onClick={onClose}
-                style={{ width: '100%', padding: '9px 14px', borderRadius: 10, border: 'none', background: 'linear-gradient(135deg,#f97316,#dc2626)', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer', fontFamily: 'Syne,system-ui', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, boxShadow: '0 4px 18px rgba(249,115,22,0.4)' }}
+                style={{ width: '100%', padding: '10px 14px', borderRadius: 12, border: '1px solid rgba(25,216,255,0.55)', background: 'linear-gradient(135deg,rgba(25,216,255,.9),rgba(139,92,246,.82) 58%,rgba(255,122,53,.72))', color: '#fff', fontWeight: 800, fontSize: 13, cursor: 'pointer', fontFamily: 'Syne,system-ui', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, boxShadow: '0 0 22px rgba(25,216,255,0.24), 0 8px 22px rgba(111,70,255,0.22)' }}
               >
                 <span style={{ fontSize: 16, lineHeight: 1 }}>+</span> {t.newProject}
               </button>
@@ -10647,12 +11289,12 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onUploa
                 <button key={key} className={`pm-nav-btn${activeTab === key ? ' pmactive' : ''}`} onClick={() => setActiveTab(key)}>
                   <span style={{ fontSize: 15 }}>{icon}</span>
                   <span style={{ flex: 1 }}>{label}</span>
-                  {badge > 0 && <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 999, background: 'rgba(249,115,22,0.18)', color: '#f97316', border: '1px solid rgba(249,115,22,0.3)' }}>{badge}</span>}
+                  {badge > 0 && <span style={{ fontSize: 10, fontWeight: 800, padding: '2px 7px', borderRadius: 999, background: 'rgba(25,216,255,0.14)', color: '#67e8f9', border: '1px solid rgba(25,216,255,0.34)', boxShadow: '0 0 10px rgba(25,216,255,.16)' }}>{badge}</span>}
                 </button>
               ))}
             </nav>
 
-            <div style={{ height: 1, background: 'linear-gradient(90deg,transparent,rgba(249,115,22,0.25),transparent)', margin: '6px 16px' }} />
+            <div style={{ height: 1, background: 'linear-gradient(90deg,transparent,rgba(25,216,255,0.35),rgba(139,92,246,0.32),transparent)', margin: '8px 16px' }} />
 
             {/* Secondary nav */}
             <nav style={{ padding: '0 8px', display: 'flex', flexDirection: 'column', gap: 2, flex: 1, overflowY: 'auto', position: 'relative' }}>
@@ -10669,19 +11311,19 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onUploa
 
             {/* Pro promo card */}
             {user.plan !== 'pro' && (
-              <div style={{ margin: '8px 10px', padding: '14px 12px', borderRadius: 12, background: 'linear-gradient(145deg,rgba(99,40,240,0.2),rgba(59,130,246,0.1))', border: '1px solid rgba(99,102,241,0.35)', position: 'relative' }}>
-                <div style={{ fontSize: 20, marginBottom: 5 }}>⚡</div>
-                <div style={{ fontFamily: 'Syne,system-ui', fontWeight: 700, fontSize: 12, color: '#c4b5fd', lineHeight: 1.35 }}>Разблокируй все<br />возможности</div>
+              <div style={{ margin: '8px 10px', padding: '14px 12px', borderRadius: 14, background: 'linear-gradient(145deg,rgba(25,216,255,0.12),rgba(139,92,246,0.18) 55%,rgba(255,122,53,0.1))', border: '1px solid rgba(178,128,255,0.3)', position: 'relative', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.08), 0 0 18px rgba(111,70,255,.14)' }}>
+                <div style={{ fontSize: 20, marginBottom: 5, color: '#67e8f9', textShadow: '0 0 14px rgba(25,216,255,.55)' }}>⚡</div>
+                <div style={{ fontFamily: 'Syne,system-ui', fontWeight: 800, fontSize: 12, color: '#e9d5ff', lineHeight: 1.35 }}>Разблокируй все<br />возможности</div>
                 <button
                   onClick={() => setActiveTab('subscription')}
-                  style={{ marginTop: 9, width: '100%', padding: '7px 10px', borderRadius: 8, border: 'none', background: 'linear-gradient(135deg,rgba(99,40,240,0.5),rgba(59,130,246,0.4))', color: '#c4b5fd', fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'Syne,system-ui', display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center', boxShadow: '0 3px 12px rgba(99,40,240,0.3)' }}
+                  style={{ marginTop: 9, width: '100%', padding: '8px 10px', borderRadius: 10, border: '1px solid rgba(25,216,255,0.3)', background: 'linear-gradient(135deg,rgba(25,216,255,0.18),rgba(139,92,246,0.32))', color: '#cffafe', fontSize: 11, fontWeight: 800, cursor: 'pointer', fontFamily: 'Syne,system-ui', display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center', boxShadow: '0 3px 12px rgba(25,216,255,0.16)' }}
                 >{t.upgradePro}</button>
               </div>
             )}
 
             {/* Bottom user info */}
-            <div style={{ padding: '10px 12px', borderTop: '1px solid rgba(249,115,22,0.18)', display: 'flex', alignItems: 'center', gap: 8, position: 'relative' }}>
-              <div style={{ width: 34, height: 34, borderRadius: 9, overflow: 'hidden', background: `linear-gradient(135deg,${avatarColor})`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 800, color: 'rgba(0,0,0,0.7)', fontFamily: 'Syne,system-ui', flexShrink: 0, boxShadow: '0 0 0 1.5px rgba(249,115,22,0.5)' }}>
+            <div style={{ padding: '10px 12px', borderTop: '1px solid rgba(178,128,255,0.2)', display: 'flex', alignItems: 'center', gap: 8, position: 'relative', background: 'rgba(255,255,255,0.018)' }}>
+              <div style={{ width: 34, height: 34, borderRadius: 10, overflow: 'hidden', background: `linear-gradient(135deg,${avatarColor})`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 800, color: 'rgba(0,0,0,0.7)', fontFamily: 'Syne,system-ui', flexShrink: 0, boxShadow: '0 0 0 1.5px rgba(25,216,255,0.55), 0 0 14px rgba(25,216,255,.2)' }}>
                 {newAvatar ? <img src={avatarSrc} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : avatarLetter}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -10700,20 +11342,20 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onUploa
         )}
 
         {/* ── MAIN CONTENT ── */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
 
           {/* Top header */}
-          <div style={{ padding: isMobile ? '14px 16px' : '16px 22px', borderBottom: '1px solid rgba(249,115,22,0.18)', display: 'flex', alignItems: 'center', gap: 14, flexShrink: 0, background: 'linear-gradient(90deg,rgba(13,9,32,0.95),rgba(8,6,18,0.95))', position: 'relative', backdropFilter: 'blur(8px)' }}>
+          <div style={{ padding: isMobile ? '14px 16px' : '18px 20px 17px', borderBottom: '1px solid rgba(178,128,255,0.25)', display: 'flex', alignItems: 'center', gap: 14, flexShrink: 0, background: 'linear-gradient(90deg,rgba(13,7,42,0.72),rgba(22,9,72,0.48),rgba(8,4,30,0.76))', position: 'relative', backdropFilter: 'blur(14px)' }}>
             {/* Neon line accent bottom */}
-            <div style={{ position:'absolute', bottom:0, left:0, right:0, height:1, background:'linear-gradient(90deg,transparent,rgba(249,115,22,0.5),rgba(99,40,240,0.4),transparent)', pointerEvents:'none' }} />
-            <div style={{ position: 'relative', width: isMobile ? 46 : 56, height: isMobile ? 46 : 56, flexShrink: 0 }}>
-              <div style={{ width: '100%', height: '100%', borderRadius: 16, overflow: 'hidden', background: `linear-gradient(135deg,${avatarColor})`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: isMobile ? 20 : 24, fontWeight: 800, color: 'rgba(0,0,0,0.7)', fontFamily: 'Syne,system-ui', animation: 'pmAvatarPulse 3s ease-in-out infinite' }}>
+            <div style={{ position:'absolute', bottom:0, left:0, right:0, height:1, background:'linear-gradient(90deg,transparent,rgba(25,216,255,0.45),rgba(139,92,246,0.5),rgba(255,122,53,0.38),transparent)', pointerEvents:'none' }} />
+            <div style={{ position: 'relative', width: isMobile ? 50 : 58, height: isMobile ? 50 : 58, flexShrink: 0 }}>
+              <div style={{ width: '100%', height: '100%', borderRadius: '50%', overflow: 'hidden', background: `linear-gradient(135deg,${avatarColor})`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: isMobile ? 20 : 24, fontWeight: 800, color: 'rgba(0,0,0,0.7)', fontFamily: 'Syne,system-ui', animation: 'pmAvatarPulse 3s ease-in-out infinite', border: '2px solid rgba(255,255,255,.12)' }}>
                 {newAvatar ? <img src={avatarSrc} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : avatarLetter}
               </div>
             </div>
 
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontFamily: 'Syne,system-ui', fontWeight: 800, fontSize: isMobile ? 18 : 22, color: '#fff', lineHeight: 1.1, textShadow: '0 0 20px rgba(255,255,255,0.15)' }}>{user.name}</div>
+              <div style={{ fontFamily: 'Syne,system-ui', fontWeight: 800, fontSize: isMobile ? 20 : 24, color: '#fff', lineHeight: 1.1, textShadow: '0 0 20px rgba(255,255,255,0.18)' }}>{user.name}</div>
               <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 4, fontFamily: 'var(--mono)', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: isMobile ? 160 : 280 }}>{user.email}</span>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 9px', borderRadius: 20, background: 'rgba(6,182,212,0.12)', border: '1px solid rgba(6,182,212,0.35)', fontSize: 9, fontWeight: 700, color: '#06b6d4', letterSpacing: '0.08em', flexShrink: 0, boxShadow: '0 0 8px rgba(6,182,212,0.2)' }}>● ONLINE</span>
@@ -10724,16 +11366,16 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onUploa
               {!isMobile && (
                 <button
                   onClick={() => setActiveTab('settings')}
-                  style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '7px 14px', borderRadius: 9, border: '1px solid rgba(99,102,241,0.3)', background: 'rgba(99,102,241,0.08)', color: 'rgba(255,255,255,0.65)', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'Syne,system-ui', transition: 'all .15s' }}
-                  onMouseEnter={e => { e.currentTarget.style.background = 'rgba(99,102,241,0.18)'; e.currentTarget.style.borderColor = 'rgba(99,102,241,0.6)'; e.currentTarget.style.color = '#fff'; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = 'rgba(99,102,241,0.08)'; e.currentTarget.style.borderColor = 'rgba(99,102,241,0.3)'; e.currentTarget.style.color = 'rgba(255,255,255,0.65)'; }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '9px 15px', borderRadius: 10, border: '1px solid rgba(178,128,255,0.45)', background: 'rgba(255,255,255,0.035)', color: 'rgba(255,255,255,0.86)', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'Syne,system-ui', transition: 'all .15s', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.08)' }}
+                  onMouseEnter={e => { e.currentTarget.style.background = 'rgba(139,92,246,0.18)'; e.currentTarget.style.borderColor = 'rgba(178,128,255,0.7)'; e.currentTarget.style.color = '#fff'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.035)'; e.currentTarget.style.borderColor = 'rgba(178,128,255,0.45)'; e.currentTarget.style.color = 'rgba(255,255,255,0.86)'; }}
                 >{t.editProfile}</button>
               )}
               <button
                 onClick={onClose}
-                style={{ width: 34, height: 34, borderRadius: 9, border: '1px solid rgba(249,115,22,0.25)', background: 'rgba(249,115,22,0.06)', color: 'rgba(255,255,255,0.5)', fontSize: 18, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all .15s' }}
+                style={{ width: 34, height: 34, borderRadius: 9, border: '1px solid rgba(178,128,255,0.3)', background: 'rgba(255,255,255,0.035)', color: 'rgba(255,255,255,0.5)', fontSize: 18, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all .15s' }}
                 onMouseEnter={e => { e.currentTarget.style.background = 'rgba(249,115,22,0.15)'; e.currentTarget.style.borderColor = '#f97316'; e.currentTarget.style.color = '#f97316'; }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'rgba(249,115,22,0.06)'; e.currentTarget.style.borderColor = 'rgba(249,115,22,0.25)'; e.currentTarget.style.color = 'rgba(255,255,255,0.5)'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.035)'; e.currentTarget.style.borderColor = 'rgba(178,128,255,0.3)'; e.currentTarget.style.color = 'rgba(255,255,255,0.5)'; }}
               >×</button>
             </div>
           </div>
@@ -10759,54 +11401,53 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onUploa
           )}
 
           {/* Tab content */}
-          <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? '14px 12px' : '18px 22px' }}>
+          <div className="pm-content-scroll" style={{ flex: 1, overflowY: 'auto', padding: isMobile ? '14px 12px' : '14px 22px 18px' }}>
 
             {/* ── PROFILE TAB ── */}
             {activeTab === 'profile' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                 {/* Stats row */}
-                <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(4,1fr)', gap: 10 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(3,1fr)', gap: 14 }}>
                   {[
-                    { label: t.projectsCount, value: projects.length, color: '#f97316', isNum: true },
-                    { label: t.daysWithUs, value: user.createdAt ? Math.floor((Date.now() - new Date(user.createdAt)) / 86400000) : '—', color: '#06b6d4', isNum: true },
-                    { label: t.planLabel, value: user.plan === 'pro' ? 'PRO' : 'FREE', isPlan: true },
-                    { label: t.supportLabel, value: '24/7', color: '#818cf8', isNum: true },
-                  ].map(({ label, value, color, isNum, isPlan }) => (
-                    <div key={label} style={{ padding: '13px 14px', borderRadius: 12, background: 'rgba(10,8,28,0.6)', border: '1px solid rgba(99,102,241,0.2)', boxShadow: '0 2px 12px rgba(0,0,0,0.3)' }}>
+                    { label: t.projectsCount, value: projects.length, color: '#d8b4fe', action: () => setActiveTab('projects') },
+                    { label: t.planLabel, value: user.plan === 'pro' ? 'PRO' : 'FREE', color: user.plan === 'pro' ? '#3ecf8e' : '#e5e7eb', isPlan: true, action: () => setActiveTab('subscription') },
+                    { label: t.supportLabel, value: '24/7', color: '#d8b4fe', action: () => setActiveTab('support') },
+                  ].map(({ label, value, color, isPlan, action }) => (
+                    <div key={label} className="pm-stat-card" onClick={action} style={{ padding: '13px 14px', borderRadius: 9, cursor: 'pointer' }}>
                       {isPlan ? (
                         <div style={{ marginBottom: 7 }}>
-                          <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 999, background: user.plan === 'pro' ? 'rgba(62,207,142,0.15)' : 'rgba(255,255,255,0.08)', color: user.plan === 'pro' ? '#3ecf8e' : 'rgba(255,255,255,0.65)', border: `1px solid ${user.plan === 'pro' ? 'rgba(62,207,142,0.3)' : 'rgba(255,255,255,0.15)'}` }}>{value}</span>
+                          <span style={{ fontSize: 13, fontWeight: 900, padding: '3px 12px', borderRadius: 999, background: user.plan === 'pro' ? 'rgba(62,207,142,0.18)' : 'rgba(255,255,255,0.08)', color, border: `1px solid ${user.plan === 'pro' ? 'rgba(62,207,142,0.42)' : 'rgba(255,255,255,0.16)'}`, boxShadow: user.plan === 'pro' ? '0 0 14px rgba(62,207,142,.28)' : 'none' }}>{value}</span>
                         </div>
                       ) : (
-                        <div style={{ fontFamily: 'Syne,system-ui', fontWeight: 800, fontSize: 24, color, lineHeight: 1, marginBottom: 7 }}>{value}</div>
+                        <div style={{ fontFamily: 'Syne,system-ui', fontWeight: 900, fontSize: 28, color, lineHeight: 1, marginBottom: 7, textShadow: '0 0 18px rgba(216,180,254,.35)' }}>{value}</div>
                       )}
-                      <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 700, fontFamily: 'Syne,system-ui' }}>{label}</div>
+                      <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.62)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 800, fontFamily: 'Syne,system-ui' }}>{label}</div>
                     </div>
                   ))}
                 </div>
 
                 {/* Two-column layout */}
-                <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 16, alignItems: 'start' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.07fr .93fr', gap: 16, alignItems: 'start' }}>
                   {/* Left column */}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                     {/* Quick actions */}
                     <section>
                       <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', fontFamily: 'Syne,system-ui', marginBottom: 10 }}>{t.quickActions}</div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                         {[
-                          { icon: '⊕', label: t.newProject, sub: t.newProjectSub, color: '#f97316', glow: 'rgba(249,115,22,0.2)', action: onClose },
-                          { icon: '📖', label: t.docs, sub: t.docsSub, color: '#60a5fa', glow: 'rgba(96,165,250,0.15)', action: onOpenInstructions },
-                          { icon: '🛟', label: t.support, sub: t.supportSub, color: '#34d399', glow: 'rgba(52,211,153,0.15)', action: () => setActiveTab('support') },
-                        ].map(({ icon, label, sub, color, glow, action }) => (
+                          { icon: '✦', label: t.newProject, sub: t.newProjectSub, color: '#fff', glow: 'rgba(249,115,22,0.38)', bg: 'linear-gradient(135deg, rgba(255,122,53,.9), rgba(220,38,38,.44))', border: 'rgba(255,122,53,.78)', action: onClose },
+                          { icon: '▰', label: t.docs, sub: t.docsSub, color: '#dbeafe', glow: 'rgba(96,165,250,0.26)', bg: 'linear-gradient(135deg, rgba(25,216,255,.18), rgba(111,70,255,.32))', border: 'rgba(96,165,250,.42)', action: onOpenInstructions },
+                          { icon: '◉', label: t.support, sub: t.supportSub, color: '#f0abfc', glow: 'rgba(217,70,239,0.26)', bg: 'linear-gradient(135deg, rgba(217,70,239,.2), rgba(111,70,255,.28))', border: 'rgba(217,70,239,.38)', action: () => setActiveTab('support') },
+                        ].map(({ icon, label, sub, color, glow, bg, border, action }) => (
                           <button
                             key={label}
                             className="pm-action-card"
                             onClick={action}
-                            style={{ textAlign: 'left', cursor: 'pointer', borderRadius: 12, padding: '12px 10px', background: 'rgba(10,8,28,0.5)', border: `1px solid ${glow.replace('0.2', '0.25').replace('0.15', '0.2')}`, transition: 'all .2s' }}
+                            style={{ textAlign: 'left', cursor: 'pointer', borderRadius: 9, padding: '13px 12px', background: bg, border: `1px solid ${border}`, transition: 'all .2s' }}
                           >
-                            <div style={{ fontSize: 22, color, marginBottom: 8, textShadow: `0 0 12px ${glow}` }}>{icon}</div>
-                            <div style={{ fontSize: 12, fontWeight: 700, color, fontFamily: 'Syne,system-ui', marginBottom: 4, lineHeight: 1.2 }}>{label}</div>
-                            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.42)', lineHeight: 1.4 }}>{sub}</div>
+                            <div style={{ fontSize: 22, color, marginBottom: 8, textShadow: `0 0 14px ${glow}` }}>{icon}</div>
+                            <div style={{ fontSize: 13, fontWeight: 800, color, fontFamily: 'Syne,system-ui', marginBottom: 5, lineHeight: 1.2, textShadow: `0 0 10px ${glow}` }}>{label}</div>
+                            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.7)', lineHeight: 1.4 }}>{sub}</div>
                           </button>
                         ))}
                       </div>
@@ -10815,7 +11456,7 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onUploa
                     {/* Personal info */}
                     <section>
                       <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', fontFamily: 'Syne,system-ui', marginBottom: 10 }}>{t.personalInfo}</div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                      <div className="pm-panel-card" style={{ display: 'flex', flexDirection: 'column', gap: 5, padding: 0, borderRadius: 10, overflow: 'hidden' }}>
                         {[
                           { icon: '👤', label: t.name, value: user.name, editable: true },
                           { icon: '✉️', label: 'Email', value: user.email, editable: true },
@@ -10826,7 +11467,7 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onUploa
                           <div
                             key={label}
                             className="pm-info-row"
-                            style={{ display: 'flex', alignItems: 'center', padding: '10px 13px', borderRadius: 9, background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)', cursor: editable ? 'pointer' : 'default', transition: 'border-color .2s' }}
+                            style={{ display: 'flex', alignItems: 'center', padding: '10px 13px', borderRadius: 0, background: 'rgba(255,255,255,0.01)', border: 'none', borderBottom: '1px solid rgba(255,255,255,0.065)', cursor: editable ? 'pointer' : 'default', transition: 'border-color .2s' }}
                             onClick={editable ? () => setActiveTab('settings') : undefined}
                           >
                             <span style={{ fontSize: 14, width: 22, flexShrink: 0 }}>{icon}</span>
@@ -10844,23 +11485,23 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onUploa
                     {/* Avatar */}
                     <section>
                       <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', fontFamily: 'Syne,system-ui', marginBottom: 10 }}>{t.avatar}</div>
-                      <div style={{ padding: '16px', borderRadius: 12, background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                      <div className="pm-panel-card" style={{ padding: '14px', borderRadius: 10 }}>
                         <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', marginBottom: 14 }}>
-                          <div style={{ width: 72, height: 72, borderRadius: 18, overflow: 'hidden', background: `linear-gradient(135deg,${avatarColor})`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 30, fontWeight: 800, color: 'rgba(0,0,0,0.7)', fontFamily: 'Syne,system-ui', flexShrink: 0 }}>
+                          <div style={{ width: 88, height: 88, borderRadius: '50%', overflow: 'hidden', background: `linear-gradient(135deg,${avatarColor})`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 32, fontWeight: 800, color: 'rgba(0,0,0,0.7)', fontFamily: 'Syne,system-ui', flexShrink: 0, border: '3px solid rgba(25,216,255,.75)', boxShadow: '0 0 24px rgba(25,216,255,.38), 0 0 34px rgba(139,92,246,.3)' }}>
                             {newAvatar ? <img src={avatarSrc} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : avatarLetter}
                           </div>
-                          <div style={{ paddingTop: 4 }}>
-                            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', marginBottom: 3 }}>JPG/PNG/WebP</div>
-                            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)' }}>{t.maxFile}</div>
+                          <div style={{ paddingTop: 18 }}>
+                            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.74)', marginBottom: 4 }}>JPG/PNG/WebP</div>
+                            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.42)' }}>{t.maxFile}</div>
                           </div>
                         </div>
                         <button
                           type="button"
                           onClick={() => avatarInputRef.current?.click()}
                           disabled={avatarSaving}
-                          style={{ width: '100%', padding: '9px 14px', borderRadius: 8, border: '1px solid rgba(99,102,241,0.35)', background: 'rgba(99,102,241,0.1)', color: '#818cf8', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'Syne,system-ui', marginBottom: newAvatar ? 8 : 0, transition: 'all .15s', opacity: avatarSaving ? 0.6 : 1 }}
-                          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(99,102,241,0.2)'; e.currentTarget.style.borderColor = 'rgba(99,102,241,0.6)'; }}
-                          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(99,102,241,0.1)'; e.currentTarget.style.borderColor = 'rgba(99,102,241,0.35)'; }}
+                          style={{ width: '100%', padding: '9px 14px', borderRadius: 8, border: '1px solid rgba(25,216,255,0.58)', background: 'linear-gradient(135deg, rgba(25,216,255,.22), rgba(111,70,255,.4))', color: '#fff', fontSize: 12, fontWeight: 800, cursor: 'pointer', fontFamily: 'Syne,system-ui', marginBottom: newAvatar ? 8 : 0, transition: 'all .15s', opacity: avatarSaving ? 0.6 : 1, boxShadow: '0 0 18px rgba(25,216,255,.18)' }}
+                          onMouseEnter={e => { e.currentTarget.style.background = 'linear-gradient(135deg, rgba(25,216,255,.32), rgba(111,70,255,.52))'; e.currentTarget.style.borderColor = 'rgba(25,216,255,0.84)'; }}
+                          onMouseLeave={e => { e.currentTarget.style.background = 'linear-gradient(135deg, rgba(25,216,255,.22), rgba(111,70,255,.4))'; e.currentTarget.style.borderColor = 'rgba(25,216,255,0.58)'; }}
                         >{avatarSaving ? t.saving : t.uploadPhoto}</button>
                         {newAvatar && (
                           <button
@@ -10876,7 +11517,7 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onUploa
                                 showToast('Ошибка: ' + (e?.message || 'unknown'), 'error');
                               } finally { setAvatarSaving(false); }
                             }}
-                            style={{ width: '100%', padding: '9px 14px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.03)', color: 'rgba(255,255,255,0.5)', fontSize: 12, cursor: 'pointer', fontFamily: 'Syne,system-ui', transition: 'all .15s', opacity: avatarSaving ? 0.6 : 1 }}
+                            style={{ width: '100%', padding: '9px 14px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.035)', color: 'rgba(255,255,255,0.64)', fontSize: 12, cursor: 'pointer', fontFamily: 'Syne,system-ui', transition: 'all .15s', opacity: avatarSaving ? 0.6 : 1 }}
                             onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.07)'; }}
                             onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
                           >{t.remove}</button>
@@ -10887,7 +11528,7 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onUploa
                     {/* Security */}
                     <section>
                       <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', fontFamily: 'Syne,system-ui', marginBottom: 10 }}>{t.security}</div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <div className="pm-panel-card" style={{ display: 'flex', flexDirection: 'column', gap: 0, borderRadius: 10, overflow: 'hidden' }}>
                         {[
                           { icon: '🔒', title: t.changePassword, sub: t.passwordChangedAgo },
                           { icon: '🫆', title: 'Passkey / отпечаток', sub: passkeyCount == null ? 'Быстрый вход без пароля' : `Активно: ${passkeyCount}`, subGreen: passkeyCount > 0 ? 'Включено' : null },
@@ -10896,7 +11537,7 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onUploa
                             key={title}
                             className="pm-sec-row"
                             onClick={() => setActiveTab('settings')}
-                            style={{ display: 'flex', alignItems: 'center', padding: '12px 13px', borderRadius: 9, background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)', cursor: 'pointer', transition: 'all .15s' }}
+                            style={{ display: 'flex', alignItems: 'center', padding: '13px 14px', borderRadius: 0, background: 'rgba(255,255,255,0.01)', border: 'none', borderBottom: '1px solid rgba(255,255,255,0.065)', cursor: 'pointer', transition: 'all .15s' }}
                           >
                             <span style={{ fontSize: 16, marginRight: 11, flexShrink: 0 }}>{icon}</span>
                             <div style={{ flex: 1 }}>

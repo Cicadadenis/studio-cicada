@@ -2939,7 +2939,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
         position: "fixed", inset: 0,
         background: "rgba(0,0,0,0.75)",
         backdropFilter: "blur(6px)",
-        zIndex: 1000,
+        zIndex: 11000,
         display: "flex",
         alignItems: isMobile ? "flex-end" : "center",
         justifyContent: "center",
