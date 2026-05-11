@@ -1877,6 +1877,47 @@ function collectProjectBlockPickerOptionsByKind(stacks, blockTypes) {
   return map;
 }
 
+function collectReplyButtonOptions(stacks) {
+  const options = [];
+  const seen = new Set();
+  const addOption = (scope, text) => {
+    const value = String(text || '').trim();
+    if (!value) return;
+    const key = `${scope}::${value}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    options.push({ value, label: `${scope} / ${value}` });
+  };
+
+  (stacks || []).forEach((stack) => {
+    const blockName = stack?.blocks?.find?.((b) => b?.type === 'block')?.props?.name || 'блок';
+    (stack?.blocks || []).forEach((b) => {
+      if (b?.type === 'buttons') {
+        const rows = String(b?.props?.rows || '');
+        rows
+          .split('\n')
+          .flatMap((row) => row.split(','))
+          .forEach((text) => addOption(blockName, text));
+      }
+
+      if (b?.type === 'inline') {
+        const rows = String(b?.props?.buttons || '');
+        rows
+          .split('\n')
+          .flatMap((row) => row.split(','))
+          .map((x) => x.trim())
+          .filter(Boolean)
+          .forEach((pair) => {
+            const [title, callback] = pair.split('|').map((x) => x?.trim());
+            if (callback) addOption(`${blockName} (inline)`, callback);
+            else if (title) addOption(`${blockName} (inline)`, title);
+          });
+      }
+    });
+  });
+  return options;
+}
+
 function PropsPanel({ block, onChange, stacks }) {
   const ctx = React.useContext(BuilderUiContext);
   const lang = ctx?.lang || 'ru';
@@ -1899,6 +1940,7 @@ function PropsPanel({ block, onChange, stacks }) {
     () => collectProjectBlockPickerOptionsByKind(stacks, blockTypes),
     [stacks, blockTypes],
   );
+  const buttonOptions = React.useMemo(() => collectReplyButtonOptions(stacks), [stacks]);
   return (
     <div style={{ overflowY: 'auto', flex: 1, padding: '10px 12px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
@@ -1949,6 +1991,16 @@ function PropsPanel({ block, onChange, stacks }) {
               placeholder={f.placeholder || ''}
               style={{ resize: 'vertical', lineHeight: 1.5 }}
             />
+          ) : (block.type === 'callback' && f.key === 'label' && buttonOptions.length > 0 ? (
+            <select
+              value={props[f.key] || ''}
+              onChange={e => onChange(f.key, e.target.value)}
+            >
+              <option value="">{'Выберите кнопку…'}</option>
+              {buttonOptions.map((opt) => (
+                <option key={`${opt.label}:${opt.value}`} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
           ) : (
             <>
               {pickerKind && (
@@ -1980,7 +2032,7 @@ function PropsPanel({ block, onChange, stacks }) {
                 onChange={e => onChange(f.key, e.target.value)}
               />
             </>
-          )}
+          ))}
         </div>
         );
       })}
@@ -2348,7 +2400,7 @@ function DSLPane({ stacks, isMobile, isExpanded = false, onToggleExpanded, onClo
             }}
             title={!validationResult ? ui.dslFixTitleNeedCheck : (!hasErrors ? 'Нет ошибок для исправления' : 'Исправить найденные ошибки DSL')}
           >
-            {'🔧 Исправить'}
+            {'🔧 Исправить найденные ошибки'}
           </button>
           {(canToggleExpanded || canClose) && (
             <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
@@ -5563,6 +5615,13 @@ const EXAMPLE_FULL = `версия "1.0"
                 setStacks(prev => mergeLibraryStacks(prev, parsed));
                 showToast(builderUi.libInsertSuccess, 'success');
               }
+            }} onInsertAndRun={(code) => {
+              const parsed = parseDSL(code);
+              if (parsed) {
+                setStacks(prev => mergeLibraryStacks(prev, parsed));
+                showToast(builderUi.libInsertSuccess, 'success');
+                setTimeout(() => { startBot(); }, 0);
+              }
             }} />
             <button
               className="tb-btn tb-btn-ai"
@@ -5901,6 +5960,15 @@ const EXAMPLE_FULL = `версия "1.0"
             if (parsed) {
               setStacks(prev => mergeLibraryStacks(prev, parsed));
               showToast(builderUi.libInsertSuccess, 'success');
+            }
+            setShowLibrary(false);
+          }}
+          onInsertAndRun={(code) => {
+            const parsed = parseDSL(code);
+            if (parsed) {
+              setStacks(prev => mergeLibraryStacks(prev, parsed));
+              showToast(builderUi.libInsertSuccess, 'success');
+              setTimeout(() => { startBot(); }, 0);
             }
             setShowLibrary(false);
           }}

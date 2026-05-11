@@ -2677,7 +2677,7 @@ const styles = {
 // ─────────────────────────────────────────────────────────────────────────────
 // КОМПОНЕНТ МОДАЛЬНОЙ БИБЛИОТЕКИ
 // ─────────────────────────────────────────────────────────────────────────────
-function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructorStrings('ru'), lang = 'ru' }) {
+function ModuleLibraryModal({ onClose, onInsert, onInsertAndRun, currentUser, t = getConstructorStrings('ru'), lang = 'ru' }) {
   const [tab, setTab] = useState("builtin"); // "builtin" | "mine"
   const [activeCat, setActiveCat] = useState(MODULES[0].category);
   const [selected, setSelected] = useState(null);
@@ -3244,16 +3244,30 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
                           </div>
                           {/* На мобиле — кнопка вставки прямо в карточке при выборе */}
                           {isMobile && sel && (
-                            <button
-                              onClick={(e) => { e.stopPropagation(); onInsert(mod.code); onClose(); }}
-                              style={{
-                                marginTop:12, width:"100%", padding:"11px",
-                                background:"linear-gradient(135deg,#ffd700,#ffaa00)",
-                                border:"none", borderRadius:10, color:"#111",
-                                fontWeight:800, fontFamily:"Syne,system-ui", fontSize:13,
-                                cursor:"pointer",
-                              }}
-                            >{t.libInsertEditor}</button>
+                            <>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); onInsert(mod.code); onClose(); }}
+                                style={{
+                                  marginTop:12, width:"100%", padding:"11px",
+                                  background:"linear-gradient(135deg,#ffd700,#ffaa00)",
+                                  border:"none", borderRadius:10, color:"#111",
+                                  fontWeight:800, fontFamily:"Syne,system-ui", fontSize:13,
+                                  cursor:"pointer",
+                                }}
+                              >{t.libInsertEditor}</button>
+                              {typeof onInsertAndRun === "function" && (
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); onInsertAndRun(mod.code); onClose(); }}
+                                  style={{
+                                    marginTop:8, width:"100%", padding:"10px",
+                                    background:"rgba(167,139,250,0.2)",
+                                    border:"1px solid rgba(167,139,250,0.55)", borderRadius:10, color:"#ddd6fe",
+                                    fontWeight:700, fontFamily:"Syne,system-ui", fontSize:12,
+                                    cursor:"pointer",
+                                  }}
+                                >▶ Запустить пример</button>
+                              )}
+                            </>
                           )}
                         </div>
                       );
@@ -3281,16 +3295,29 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
               color:"rgba(255,255,255,0.55)",
               maxHeight:110, overflowY:"auto", whiteSpace:"pre",
             }}>{selected.code}</div>
-            <button
-              style={{
-                background:"linear-gradient(135deg,#ffd700,#ffaa00)",
-                border:"none", borderRadius:10, padding:"12px 22px",
-                color:"#111", fontWeight:800, fontFamily:"Syne,system-ui",
-                fontSize:13, cursor:"pointer", whiteSpace:"nowrap",
-                boxShadow:"0 4px 16px rgba(255,215,0,0.35)", flexShrink:0,
-              }}
-              onClick={handleInsert}
-            >{t.libInsertEditor}</button>
+            <div style={{ display:"flex", flexDirection:"column", gap:8, flexShrink:0 }}>
+              <button
+                style={{
+                  background:"linear-gradient(135deg,#ffd700,#ffaa00)",
+                  border:"none", borderRadius:10, padding:"12px 22px",
+                  color:"#111", fontWeight:800, fontFamily:"Syne,system-ui",
+                  fontSize:13, cursor:"pointer", whiteSpace:"nowrap",
+                  boxShadow:"0 4px 16px rgba(255,215,0,0.35)",
+                }}
+                onClick={handleInsert}
+              >{t.libInsertEditor}</button>
+              {typeof onInsertAndRun === "function" && (
+                <button
+                  style={{
+                    background:"rgba(167,139,250,0.2)",
+                    border:"1px solid rgba(167,139,250,0.55)", borderRadius:10, padding:"10px 18px",
+                    color:"#ddd6fe", fontWeight:700, fontFamily:"Syne,system-ui",
+                    fontSize:12, cursor:"pointer", whiteSpace:"nowrap",
+                  }}
+                  onClick={() => { onInsertAndRun(selected.code); onClose(); }}
+                >▶ Запустить пример</button>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -3309,7 +3336,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
 //     // setStacks(prev => [...prev, ...parseDSL(code)])
 //   }} />
 // ─────────────────────────────────────────────────────────────────────────────
-export function ModuleLibraryButton({ onInsert, currentUser, t = getConstructorStrings('ru'), lang = 'ru', dataTour }) {
+export function ModuleLibraryButton({ onInsert, onInsertAndRun, currentUser, t = getConstructorStrings('ru'), lang = 'ru', dataTour }) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -3331,6 +3358,7 @@ export function ModuleLibraryButton({ onInsert, currentUser, t = getConstructorS
           currentUser={currentUser}
           onClose={() => setOpen(false)}
           onInsert={onInsert}
+          onInsertAndRun={onInsertAndRun}
         />
       )}
     </>
