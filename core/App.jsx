@@ -692,7 +692,7 @@ const DEFAULT_PROPS = {
   // ── Новые типы ────────────────────────────────────────────────────────────
   check_sub:   { channel: '@mychannel', varname: 'подписан' },
   member_role: { channel: '@mychannel', user_id: 'пользователь.id', varname: 'роль_участника' },
-  forward_msg: { target: 'ADMIN_ID' },
+  forward_msg: { target: '' },
   broadcast:   { mode: 'all', text: 'Привет всем!', tag: '' },
   db_delete:   { key: 'мой_ключ' },
   save_global: { key: 'global_key', value: 'значение' },
@@ -817,7 +817,7 @@ const FIELDS = {
   member_role: [{ key:'channel',label:'канал (например @mychannel)',               tag:'input' },
                 { key:'user_id',label:'user_id (или переменная)',                  tag:'input' },
                 { key:'varname',label:'переменная → (creator/admin/member/left)',  tag:'input' }],
-  forward_msg: [{ key:'target', label:'user_id или переменная',                   tag:'input' }],
+  forward_msg: [{ key:'target', label:'кому переслать (ID или переменная)',       tag:'input' }],
   db_delete:   [{ key:'key',    label:'ключ для удаления из БД',                  tag:'input' }],
   save_global: [{ key:'key',   label:'ключ (глобальная БД)',                       tag:'input' },
                 { key:'value', label:'значение',                                   tag:'input' }],
@@ -2969,7 +2969,7 @@ export default function App() {
       if (t.startsWith('рассылка группе ')) { const m = t.match(/рассылка группе\s+(\S+):\s*"?([^"]*)"?/); return m ? { type: 'broadcast', props: { mode: 'group', tag: m[1], text: m[2] } } : null; }
       if (t.startsWith('проверить подписку ')) { const m = t.match(/проверить подписку\s+(@\S+)\s*→\s*(\S+)/); return m ? { type: 'check_sub', props: { channel: m[1], varname: m[2] } } : null; }
       if (t.startsWith('роль @'))       { const m = t.match(/роль\s+(@\S+)\s+(\S+)\s*→\s*(\S+)/); return m ? { type: 'member_role', props: { channel: m[1], user_id: m[2], varname: m[3] } } : null; }
-      if (t.startsWith('переслать сообщение ')) return { type: 'forward_msg', props: { target: t.replace(/^переслать сообщение\s+/, '').trim() } };
+      if (/^переслать(?!\s+фото\b)(?:\s+сообщение)?\s+/.test(t)) return { type: 'forward_msg', props: { target: t.replace(/^переслать(?:\s+сообщение)?\s+/, '').trim() } };
       if (t.startsWith('оплата '))      { const m = t.match(/оплата\s+(\S+)\s+(\S+)\s+(\S+)\s+"([^"]*)"/); return m ? { type: 'payment', props: { provider: m[1], amount: m[2], currency: m[3], title: m[4] } } : null; }
 
       return null;
@@ -3584,7 +3584,7 @@ const EXAMPLE_FULL = `версия "1.0"
 при нажатии "🛡 Админ":
     проверить подписку @your_channel → подписан
     роль @your_channel пользователь.id → роль_канала
-    переслать сообщение ADMIN_ID
+    переслать ADMIN_ID
     уведомить ADMIN_ID: "Full Test: пользователь {пользователь.id} открыл админ-раздел."
     рассылка группе testers: "Full Test broadcast для группы testers"
     ответ "🛡 Telegram admin: подписка={подписан}, роль={роль_канала}."

@@ -1734,14 +1734,14 @@ class Executor:
             ctx.set(stmt.variable, "left")
 
     def _exec_forward_msg(self, stmt: ForwardMsg, ctx):
-        """переслать сообщение USER_ID — пересылает текущее сообщение."""
+        """переслать USER_ID — пересылает текущее сообщение."""
         to_id    = self._resolve_val(stmt.to_user_id, ctx)
         msg_id   = ctx.get("сообщение_id", 0)
         from_id  = ctx.chat_id
         try:
             self.tg.forward_message(int(to_id), from_id, int(msg_id))
         except Exception as e:
-            self._log("ERROR", f"переслать сообщение {to_id}: {e}", ctx)
+            self._log("ERROR", f"переслать {to_id}: {e}", ctx)
 
     # ── Файлы и JSON ─────────────────────────────────────────────────
 

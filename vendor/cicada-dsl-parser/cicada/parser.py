@@ -467,7 +467,7 @@ class GetChatMemberRole:
 
 @dataclass
 class ForwardMsg:
-    """переслать сообщение USER_ID — пересылает текущее сообщение другому пользователю"""
+    """переслать USER_ID — пересылает текущее сообщение другому пользователю"""
     to_user_id: object
 
 
@@ -1991,8 +1991,8 @@ class Parser:
             return GetChatMemberRole(chat=m.group(1), user_id=pv(m.group(2)),
                                      variable=m.group(3))
 
-        # переслать сообщение USER_ID
-        m = re.match(r'^переслать сообщение\s+(.+)$', line)
+        # переслать USER_ID (старый формат: переслать сообщение USER_ID)
+        m = re.match(r'^переслать(?!\s+фото\b)(?:\s+сообщение)?\s+(.+)$', line)
         if m:
             return ForwardMsg(to_user_id=pv(m.group(1).strip()))
 

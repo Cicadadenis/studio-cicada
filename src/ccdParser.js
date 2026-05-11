@@ -284,9 +284,9 @@ function parseNode(line) {
     const mrMatch = t.match(/^роль @(\S+)\s+(\S+)\s*(?:→|->)\s*(\S+)/);
     if (mrMatch) return { type: 'member_role', props: { channel: '@' + mrMatch[1], user_id: mrMatch[2], varname: mrMatch[3] }, root: false };
   }
-  // переслать сообщение TARGET
+  // переслать TARGET (старый формат: переслать сообщение TARGET)
   {
-    const fwMatch = t.match(/^переслать сообщение\s+(.+)/);
+    const fwMatch = t.match(/^переслать(?!\s+фото\b)(?:\s+сообщение)?\s+(.+)/);
     if (fwMatch) return { type: 'forward_msg', props: { target: fwMatch[1].trim() }, root: false };
   }
 

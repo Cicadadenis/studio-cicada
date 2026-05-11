@@ -546,8 +546,10 @@ export function emitBlockText(block) {
       return `проверить подписку @${stripAt(p.channel)} ${ARROW} ${p.varname || 'var'}`;
     case 'member_role':
       return `роль @${stripAt(p.channel)} ${p.user_id} ${ARROW} ${p.varname || 'var'}`;
-    case 'forward_msg':
-      return `переслать сообщение ${p.target}`;
+    case 'forward_msg': {
+      const target = String(p.target || '').trim();
+      return target ? `переслать ${target}` : 'переслать';
+    }
     case 'database':
       return `запрос_бд ${q(p.query || 'select 1')} ${ARROW} ${p.varname || 'rows'}`;
     case 'payment':
