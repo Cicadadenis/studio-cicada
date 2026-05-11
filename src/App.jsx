@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import cicadaLogo from './cicada-logo_1778117072446.jpeg';
-import { ModuleLibraryButton, ModuleLibraryModal } from './ModuleLibrary';
+import { ModuleLibraryModal } from './ModuleLibrary';
 import InstructionsModal from './InstructionsModal.jsx';
 import { lintDSLSchema, formatDSLDiagnostic } from '../core/validator/schema.js';
 import { validateDSL } from '../core/validator/uiDslValidator.js';
@@ -2825,7 +2825,8 @@ function DSLPane({ stacks, isMobile, onClose, onApplyCorrectedCode }) {
 
   const displayCode = previewCorrected ?? dsl;
   const displayLines = displayCode.split('\n');
-  const canClose = typeof onClose === 'function';
+  const isRuntimeMobile = Boolean(isMobile || isMobileBuilderViewport());
+  const canClose = !isRuntimeMobile && typeof onClose === 'function';
 
   return (
     <div style={{
@@ -2849,28 +2850,26 @@ function DSLPane({ stacks, isMobile, onClose, onApplyCorrectedCode }) {
         }}>
           {canClose && (
             <div style={{ display: 'flex', gap: 6, flexShrink: 0, marginRight: 4 }}>
-              {canClose && (
-                <button
-                  type="button"
-                  onClick={onClose}
-                  title="Закрыть панель кода"
-                  style={{
-                    padding: '4px 8px',
-                    borderRadius: 6,
-                    fontSize: 10,
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                    fontFamily: 'inherit',
-                    lineHeight: 1.2,
-                    background: 'rgba(255,255,255,0.04)',
-                    color: 'var(--text3)',
-                    border: '1px solid var(--border2)',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  × Закрыть
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={onClose}
+                title="Закрыть панель кода"
+                style={{
+                  padding: '4px 8px',
+                  borderRadius: 6,
+                  fontSize: 10,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                  lineHeight: 1.2,
+                  background: 'rgba(255,255,255,0.04)',
+                  color: 'var(--text3)',
+                  border: '1px solid var(--border2)',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                × Закрыть
+              </button>
             </div>
           )}
           <button
@@ -3052,6 +3051,44 @@ function DSLPane({ stacks, isMobile, onClose, onApplyCorrectedCode }) {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function PremiumLockedPanel({ title = 'Функция доступна в Pro', text = 'Оформи Premium, чтобы открыть этот раздел.', onUpgrade, isMobile = false }) {
+  return (
+    <div style={{
+      flex: isMobile ? '1 1 auto' : '0 0 50%',
+      minHeight: isMobile ? 0 : 180,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: isMobile ? 18 : 20,
+      borderTop: '1px solid rgba(178,128,255,0.22)',
+      background: 'linear-gradient(180deg, rgba(255,255,255,0.018), rgba(111,70,255,0.06))',
+    }}>
+      <button
+        type="button"
+        onClick={onUpgrade}
+        style={{
+          width: '100%',
+          maxWidth: 260,
+          padding: '18px 16px',
+          borderRadius: 18,
+          border: '1px solid rgba(251,191,36,0.34)',
+          background: 'linear-gradient(145deg, rgba(251,191,36,0.09), rgba(111,70,255,0.12))',
+          color: 'rgba(255,255,255,0.78)',
+          cursor: 'pointer',
+          textAlign: 'center',
+          fontFamily: 'Syne, system-ui',
+          boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.08), 0 14px 34px rgba(4,1,20,0.24)',
+          filter: 'saturate(0.72)',
+        }}
+      >
+        <div style={{ fontSize: 30, marginBottom: 8 }}>🔒</div>
+        <div style={{ fontSize: 13, fontWeight: 800, color: '#fde68a', marginBottom: 6 }}>{title}</div>
+        <div style={{ fontSize: 11, lineHeight: 1.45, color: 'rgba(255,255,255,0.48)' }}>{text}</div>
+      </button>
     </div>
   );
 }
@@ -3330,6 +3367,7 @@ export default function App() {
 
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
+  const [profileInitialTab, setProfileInitialTab] = useState('profile');
   const [authTab, setAuthTab] = useState('login'); // 'login' | 'register'
   const [oauth2faPending, setOauth2faPending] = useState(false);
   const [userProjects, setUserProjects] = useState([]);
@@ -3373,6 +3411,21 @@ export default function App() {
   const aiPromptTooShort = aiPromptText.length < 5;
   const aiPromptTooLong = aiPromptText.length > AI_PROMPT_MAX_CHARS;
   const canSubmitAiPrompt = !aiLoading && !aiPromptTooShort && !aiPromptTooLong && !aiPartialResult?.skeletonFallback;
+
+  const openProfileModal = useCallback(() => {
+    setProfileInitialTab('profile');
+    setShowProfileModal(true);
+  }, []);
+
+  const openPremiumPurchase = useCallback(() => {
+    if (!currentUser) {
+      setAuthTab('register');
+      setShowAuthModal(true);
+      return;
+    }
+    setProfileInitialTab('subscription');
+    setShowProfileModal(true);
+  }, [currentUser]);
 
   // Mobile state
   const [mobileTab, setMobileTab] = useState('canvas'); // 'canvas' | 'blocks' | 'props' | 'dsl'
@@ -3439,14 +3492,12 @@ export default function App() {
           text: ui.tourMobilePropsBody,
           onEnter: () => setMobileTab('props'),
         },
-        ...(canSeeCode
-          ? [{
-            selector: '[data-tour="mobile-tab-dsl"]',
-            title: ui.tourMobileDslTitle,
-            text: ui.tourMobileDslBody,
-            onEnter: () => setMobileTab('dsl'),
-          }]
-          : []),
+        {
+          selector: '[data-tour="mobile-tab-dsl"]',
+          title: ui.tourMobileDslTitle,
+          text: ui.tourMobileDslBody,
+          onEnter: () => { if (canSeeCode) setMobileTab('dsl'); },
+        },
         {
           selector: '[data-tour="mobile-run"]',
           title: ui.tourRunTitle,
@@ -3467,11 +3518,6 @@ export default function App() {
         selector: '[data-tour="top-examples-desktop"]',
         title: ui.tourExamplesTitle,
         text: ui.tourExamplesBody,
-      },
-      {
-        selector: '[data-tour="top-library-desktop"]',
-        title: ui.tourLibraryTitle,
-        text: ui.tourLibraryBody,
       },
       {
         selector: '[data-tour="top-ai-desktop"]',
@@ -3701,7 +3747,7 @@ export default function App() {
 
   const openAiGeneratorModal = useCallback(() => {
     if (!canUseAiGenerator) {
-      showToast('AI-генерация доступна только с активной подпиской PRO.', 'error');
+      openPremiumPurchase();
       return;
     }
     setShowAIModal(true);
@@ -3709,7 +3755,7 @@ export default function App() {
     setAiError('');
     setAiPartialResult(null);
     setAiDiagnosticsOpen(false);
-  }, [canUseAiGenerator, showToast]);
+  }, [canUseAiGenerator, openPremiumPurchase]);
 
   useEffect(() => {
     if (!aiLoading) {
@@ -6654,6 +6700,19 @@ const EXAMPLE_FULL = `версия "1.0"
         background:linear-gradient(135deg,rgba(33,214,255,0.22),rgba(139,92,246,0.24));
         border-color:rgba(33,214,255,0.72); color:#fff; box-shadow:0 0 18px rgba(33,214,255,0.22);
       }
+      .tb-btn.locked-premium {
+        opacity:.64;
+        filter:saturate(.58);
+        cursor:pointer;
+        border-color:rgba(251,191,36,.28);
+      }
+      .tb-btn.locked-premium:hover {
+        opacity:.92;
+        filter:saturate(.85);
+        color:#fde68a;
+        border-color:rgba(251,191,36,.55);
+        box-shadow:0 0 18px rgba(251,191,36,.16);
+      }
       .tb-files-menu {
         position: absolute; top: calc(100% + 6px); left: 0;
         background: var(--bg2); border: 1px solid rgba(255,255,255,0.1);
@@ -6669,6 +6728,8 @@ const EXAMPLE_FULL = `версия "1.0"
       }
       .tb-files-menu-item:last-child { border-bottom: none; }
       .tb-files-menu-item:hover { background: rgba(255,255,255,0.06); }
+      .tb-files-menu-item.locked-premium { color: rgba(253,230,138,0.72); filter:saturate(.6); }
+      .tb-files-menu-item.locked-premium:hover { color:#fde68a; background:rgba(251,191,36,0.07); }
       .editor-sidebar-block { border-left: 2px solid transparent; }
       .editor-sidebar-block:hover {
         background:linear-gradient(90deg, rgba(127,92,255,0.18), rgba(33,214,255,0.04)) !important;
@@ -6701,6 +6762,8 @@ const EXAMPLE_FULL = `версия "1.0"
       .editor-zoom-pct:hover { color:#06b6d4; border-color:rgba(6,182,212,0.4); }
       .editor-mobile-tab { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; background:transparent; border:none; cursor:pointer; border-top:2px solid transparent; min-width:0; transition:all 0.18s; }
       .editor-mobile-tab.active { border-top-color:#f97316; }
+      .editor-mobile-tab.locked-premium { opacity:.58; filter:saturate(.55); }
+      .editor-mobile-tab.locked-premium:hover { opacity:.86; filter:saturate(.82); }
       .editor-mobile-tab .tab-icon { font-size:16px; }
       .editor-mobile-tab .tab-label { font-size:9px; font-family:Syne,system-ui; font-weight:600; white-space:nowrap; color:var(--text3); }
       .editor-mobile-tab.active .tab-label { color:#f97316; text-shadow:0 0 8px rgba(249,115,22,0.5); }
@@ -6761,20 +6824,12 @@ const EXAMPLE_FULL = `версия "1.0"
                 onClick={() => setShowExamples(!showExamples)}
               >⚡ <span style={{ opacity: 0.5, fontSize: 10 }}>▼</span></button>
             </div>
-            <ModuleLibraryButton compact t={builderUi} lang={uiLang} currentUser={currentUser} dataTour="top-library-desktop" onInsert={(code) => {
-              const parsed = parseDSL(code);
-              if (parsed) {
-                setStacks(prev => mergeLibraryStacks(prev, parsed));
-                showToast(builderUi.libInsertSuccess, 'success');
-              }
-            }} />
             <button
-              className="tb-btn tb-btn-ai"
+              className={`tb-btn tb-btn-ai${canUseAiGenerator ? '' : ' locked-premium'}`}
               data-tour="top-ai-desktop"
               title={canUseAiGenerator ? builderUi.aiTitle : builderUi.aiTitleDisabled}
               onClick={openAiGeneratorModal}
-              style={!canUseAiGenerator ? { opacity: 0.45 } : undefined}
-            >✨ AI</button>
+            >{canUseAiGenerator ? '✨ AI' : '🔒 AI'}</button>
             {isAdmin && (
               <button
                 type="button"
@@ -6833,11 +6888,20 @@ const EXAMPLE_FULL = `версия "1.0"
                     <button className="tb-files-menu-item" onClick={() => { loadProject(); setShowFilesMenu(false); }}>
                       <span style={{ color: '#60a5fa' }}>📂</span> {builderUi.loadFile}
                     </button>
-                    {canSeeCode && (
-                    <button className="tb-files-menu-item" onClick={() => { loadCCD(); setShowFilesMenu(false); }}>
-                      <span style={{ color: '#a78bfa' }}>↑</span> {builderUi.openCcd}
+                    <button
+                      className={`tb-files-menu-item${canSeeCode ? '' : ' locked-premium'}`}
+                      onClick={() => {
+                        setShowFilesMenu(false);
+                        if (!canSeeCode) {
+                          openPremiumPurchase();
+                          return;
+                        }
+                        loadCCD();
+                      }}
+                      title={canSeeCode ? builderUi.openCcd : 'Доступно в Pro'}
+                    >
+                      <span style={{ color: canSeeCode ? '#a78bfa' : '#fbbf24' }}>{canSeeCode ? '↑' : '🔒'}</span> {builderUi.openCcd}
                     </button>
-                    )}
                   </div>
                 </>
               )}
@@ -6907,7 +6971,7 @@ const EXAMPLE_FULL = `версия "1.0"
                   background: 'linear-gradient(135deg, rgba(251,191,36,0.18) 0%, rgba(251,146,60,0.12) 100%)',
                   border: '1px solid rgba(251,191,36,0.45)',
                   borderRadius: 8,
-                  cursor: canUseAiGenerator ? 'pointer' : 'not-allowed',
+                  cursor: 'pointer',
                   transition: 'all 0.18s ease',
                   fontSize: 11,
                   fontWeight: 700,
@@ -6917,12 +6981,13 @@ const EXAMPLE_FULL = `версия "1.0"
                   whiteSpace: 'nowrap',
                   flexShrink: 0,
                   boxShadow: '0 0 12px rgba(251,191,36,0.12)',
-                  opacity: canUseAiGenerator ? 1 : 0.45,
+                  opacity: canUseAiGenerator ? 1 : 0.65,
+                  filter: canUseAiGenerator ? undefined : 'saturate(0.6)',
                 }}
-              >AI</button>
+              >{canUseAiGenerator ? 'AI' : '🔒 AI'}</button>
             ) : (
               <button
-                onClick={() => setShowProfileModal(true)}
+                onClick={openPremiumPurchase}
                 data-tour="top-premium-desktop"
                 title="Premium"
                 style={{
@@ -6945,7 +7010,7 @@ const EXAMPLE_FULL = `версия "1.0"
             {/* User button */}
             <button
               data-tour="profile-button"
-              onClick={() => setShowProfileModal(true)}
+              onClick={openProfileModal}
               style={{
                 display: 'flex', alignItems: 'center', gap: 6,
                 background: 'var(--bg3)', padding: isMobileView ? '5px 10px' : '6px 14px', borderRadius: 20,
@@ -7034,7 +7099,7 @@ const EXAMPLE_FULL = `версия "1.0"
             <button
               type="button"
               className="editor-chip premium"
-              onClick={() => setShowProfileModal(true)}
+              onClick={openPremiumPurchase}
             >
               + Premium
             </button>
@@ -7060,6 +7125,7 @@ const EXAMPLE_FULL = `версия "1.0"
           t={builderUi}
           lang={uiLang}
           currentUser={currentUser}
+          onUpgrade={() => { setShowLibrary(false); openPremiumPurchase(); }}
           onClose={() => setShowLibrary(false)}
           onInsert={(code) => {
             const parsed = parseDSL(code);
@@ -7860,14 +7926,26 @@ const EXAMPLE_FULL = `версия "1.0"
                 style={{ width:'100%', padding:'10px 16px', textAlign:'left', background:'transparent', color:'#3ecf8e', border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui', display:'flex', alignItems:'center', gap:8 }}
               >☁ {builderUi.saveCloud}</button>
             )}
-            {canSeeCode && (
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => { loadCCD(); setMobileMoreOpen(false); }}
-                style={{ width:'100%', padding:'10px 16px', textAlign:'left', background:'transparent', color:'#a78bfa', border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui', display:'flex', alignItems:'center', gap:8 }}
-              >{builderUi.mobileLoadCcd}</button>
-            )}
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setMobileMoreOpen(false);
+                if (!canSeeCode) {
+                  openPremiumPurchase();
+                  return;
+                }
+                loadCCD();
+              }}
+              style={{
+                width:'100%', padding:'10px 16px', textAlign:'left', background:'transparent',
+                color: canSeeCode ? '#a78bfa' : 'rgba(253,230,138,0.72)',
+                border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui',
+                display:'flex', alignItems:'center', gap:8,
+                opacity: canSeeCode ? 1 : 0.72,
+                filter: canSeeCode ? undefined : 'saturate(0.6)',
+              }}
+            >{canSeeCode ? '' : '🔒 '}{builderUi.mobileLoadCcd}</button>
             <div style={{ height:1, background:'var(--border)', margin:'4px 0' }} />
             <button
               type="button"
@@ -8129,13 +8207,14 @@ const EXAMPLE_FULL = `версия "1.0"
                     background: canUseAiGenerator
                       ? 'linear-gradient(135deg, #f97316, #dc2626)'
                       : 'rgba(255,255,255,0.06)',
-                    color: canUseAiGenerator ? '#fff' : 'rgba(255,255,255,0.35)',
-                    border: canUseAiGenerator ? 'none' : '1px solid rgba(255,255,255,0.12)',
+                    color: canUseAiGenerator ? '#fff' : 'rgba(253,230,138,0.72)',
+                    border: canUseAiGenerator ? 'none' : '1px solid rgba(251,191,36,0.18)',
                     borderRadius: 14,
-                    cursor: canUseAiGenerator ? 'pointer' : 'not-allowed',
+                    cursor: 'pointer',
                     boxShadow: canUseAiGenerator ? '0 8px 28px rgba(249,115,22,0.45)' : 'none',
                     transition: 'all 0.2s',
                     opacity: canUseAiGenerator ? 1 : 0.7,
+                    filter: canUseAiGenerator ? undefined : 'saturate(0.65)',
                   }}
                   onMouseEnter={e => {
                     if (!canUseAiGenerator) return;
@@ -8148,7 +8227,7 @@ const EXAMPLE_FULL = `версия "1.0"
                     e.currentTarget.style.boxShadow = '0 8px 28px rgba(249,115,22,0.45)';
                   }}
                 >
-                  {canUseAiGenerator ? builderUi.emptyCanvasAi : builderUi.emptyCanvasAiLocked}
+                  {canUseAiGenerator ? builderUi.emptyCanvasAi : `🔒 ${builderUi.emptyCanvasAiLocked}`}
                 </button>
                 <button
                   onClick={startFirstWowFlow}
@@ -8264,8 +8343,16 @@ const EXAMPLE_FULL = `версия "1.0"
             <DSLPane
               stacks={stacks}
               isMobile={isMobileView}
-              onClose={isMobileView ? () => setMobileTab('canvas') : undefined}
+              onClose={undefined}
               onApplyCorrectedCode={applyCorrectedDSLCode}
+            />
+          )}
+          {!canSeeCode && (!isMobileView || mobileTab === 'dsl') && (
+            <PremiumLockedPanel
+              title="Код сценария доступен в Pro"
+              text="Нажми, чтобы открыть меню покупки Premium."
+              isMobile={isMobileView}
+              onUpgrade={openPremiumPurchase}
             />
           )}
         </div>
@@ -8288,19 +8375,24 @@ const EXAMPLE_FULL = `версия "1.0"
             { key: 'canvas', icon: '⊞', label: builderUi.mobileTabCanvas },
             { key: 'blocks', icon: '🧱', label: builderUi.mobileTabBlocks },
             { key: 'props',  icon: '✏️', label: builderUi.mobileTabProps },
-            ...(canSeeCode ? [{ key: 'dsl', icon: '📜', label: builderUi.mobileTabDsl }] : []),
+            { key: 'dsl', icon: canSeeCode ? '📜' : '🔒', label: builderUi.mobileTabDsl, locked: !canSeeCode },
           ].map(tab => (
             <button
               key={tab.key}
               data-tour={tab.key === 'canvas' ? 'mobile-tab-canvas' : tab.key === 'blocks' ? 'mobile-tab-blocks' : tab.key === 'props' ? 'mobile-tab-props' : tab.key === 'dsl' ? 'mobile-tab-dsl' : undefined}
               onClick={() => {
+                if (tab.locked) {
+                  openPremiumPurchase();
+                  return;
+                }
                 if (tab.key === 'dsl') {
                   setMobileTab(prev => prev === 'dsl' ? 'canvas' : 'dsl');
                   return;
                 }
                 setMobileTab(tab.key);
               }}
-              className={`editor-mobile-tab${mobileTab === tab.key ? ' active' : ''}`}
+              className={`editor-mobile-tab${mobileTab === tab.key ? ' active' : ''}${tab.locked ? ' locked-premium' : ''}`}
+              title={tab.locked ? 'Доступно в Pro' : undefined}
             >
               <span className="tab-icon">{tab.icon}</span>
               <span className="tab-label">{tab.label}</span>
@@ -8380,6 +8472,7 @@ const EXAMPLE_FULL = `версия "1.0"
         <ProfileModal
           user={currentUser}
           projects={userProjects}
+          initialTab={profileInitialTab}
           onClose={() => setShowProfileModal(false)}
           onLogout={async () => {
             await clearSession();
@@ -10739,7 +10832,7 @@ function SaveToCloudButton({ onSaveToCloud }) {
   );
 }
 
-function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onUploadAvatar, onLoadProject, onDeleteProject, onSaveToCloud, showToast, isMobile, onOpenInstructions }) {
+function ProfileModal({ user, projects, initialTab = 'profile', onClose, onLogout, onUpdateUser, onUploadAvatar, onLoadProject, onDeleteProject, onSaveToCloud, showToast, isMobile, onOpenInstructions }) {
   const builderUiContext = React.useContext(BuilderUiContext);
   const builderUiForToast = builderUiContext?.t;
   const uiLang = (builderUiContext?.lang || user.uiLanguage || 'ru').toLowerCase();
@@ -10920,7 +11013,7 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onUploa
     },
   };
   const t = I18N[uiLang] || I18N.ru;
-  const [activeTab, setActiveTab] = useState('profile');
+  const [activeTab, setActiveTab] = useState(initialTab || 'profile');
   const [newName, setNewName] = useState(user.name);
   const [newEmail, setNewEmail] = useState(user.email);
   const [newAvatar, setNewAvatar] = useState(user.photo_url || '');
@@ -10933,6 +11026,10 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onUploa
   const [avatarSaving, setAvatarSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const avatarInputRef = React.useRef(null);
+
+  React.useEffect(() => {
+    if (initialTab) setActiveTab(initialTab);
+  }, [initialTab]);
 
   // Синхронизируем newAvatar если user.photo_url изменился снаружи
   React.useEffect(() => {

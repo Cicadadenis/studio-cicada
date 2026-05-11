@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Cicada Studio
+Comment=Open Cicada Studio fullscreen
+Exec=/var/www/cicada-studio/scripts/launch-desktop.sh
+Path=/var/www/cicada-studio
+Terminal=false
+Categories=Development;

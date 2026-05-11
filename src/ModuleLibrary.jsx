@@ -2783,7 +2783,7 @@ const styles = {
 // ─────────────────────────────────────────────────────────────────────────────
 // КОМПОНЕНТ МОДАЛЬНОЙ БИБЛИОТЕКИ
 // ─────────────────────────────────────────────────────────────────────────────
-function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructorStrings('ru'), lang = 'ru' }) {
+function ModuleLibraryModal({ onClose, onInsert, onUpgrade, currentUser, t = getConstructorStrings('ru'), lang = 'ru' }) {
   const [tab, setTab] = useState("builtin"); // "builtin" | "mine"
   const [activeCat, setActiveCat] = useState(MODULES[0].category);
   const [selected, setSelected] = useState(null);
@@ -2811,6 +2811,13 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
   const [snipCode, setSnipCode] = useState("");
   const [snipLoading, setSnipLoading] = useState(false);
   const [snipError, setSnipError] = useState("");
+  const categoryDropdownRef = useRef(null);
+  const mobileTapGuardRef = useRef({
+    startX: 0,
+    startY: 0,
+    moved: false,
+    suppressUntil: 0,
+  });
 
   const isPro = currentUser?.plan === 'pro' &&
     currentUser?.subscriptionExp && currentUser.subscriptionExp > Date.now();
@@ -2831,6 +2838,104 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
     window.addEventListener("resize", handler);
     return () => window.removeEventListener("resize", handler);
   }, []);
+
+  useEffect(() => {
+    if (!isMobile || tab !== "builtin" || search.trim()) {
+      setCatDropOpen(false);
+    }
+  }, [isMobile, tab, search]);
+
+  useEffect(() => {
+    if (!catDropOpen) return undefined;
+    const handleOutside = (event) => {
+      if (categoryDropdownRef.current?.contains(event.target)) return;
+      setCatDropOpen(false);
+    };
+    document.addEventListener("pointerdown", handleOutside, true);
+    document.addEventListener("mousedown", handleOutside, true);
+    document.addEventListener("touchstart", handleOutside, true);
+    return () => {
+      document.removeEventListener("pointerdown", handleOutside, true);
+      document.removeEventListener("mousedown", handleOutside, true);
+      document.removeEventListener("touchstart", handleOutside, true);
+    };
+  }, [catDropOpen]);
+
+  const toggleCategoryDropdown = useCallback(() => {
+    setCatDropOpen((open) => !open);
+  }, []);
+
+  const closeCategoryDropdown = useCallback(() => {
+    setCatDropOpen(false);
+  }, []);
+
+  const selectBuiltinCategory = useCallback((categoryRu) => {
+    setActiveCat(categoryRu);
+    setSelected(null);
+    setCatDropOpen(false);
+  }, []);
+
+  const beginMobileTapGesture = useCallback((event) => {
+    if (!isMobile) return;
+    const nativeEvent = event.nativeEvent || event;
+    if (nativeEvent.pointerType && nativeEvent.pointerType !== "touch") return;
+    const point = event.touches?.[0] || event.changedTouches?.[0] || event;
+    mobileTapGuardRef.current = {
+      startX: point.clientX || 0,
+      startY: point.clientY || 0,
+      moved: false,
+      suppressUntil: 0,
+    };
+  }, [isMobile]);
+
+  const trackMobileTapGesture = useCallback((event) => {
+    if (!isMobile) return;
+    const nativeEvent = event.nativeEvent || event;
+    if (nativeEvent.pointerType && nativeEvent.pointerType !== "touch") return;
+    const point = event.touches?.[0] || event.changedTouches?.[0] || event;
+    const dx = Math.abs((point.clientX || 0) - mobileTapGuardRef.current.startX);
+    const dy = Math.abs((point.clientY || 0) - mobileTapGuardRef.current.startY);
+    if (dy > 8 || dx > 12) {
+      mobileTapGuardRef.current.moved = true;
+      mobileTapGuardRef.current.suppressUntil = Date.now() + 450;
+    }
+  }, [isMobile]);
+
+  const endMobileTapGesture = useCallback(() => {
+    if (!isMobile) return;
+    if (mobileTapGuardRef.current.moved) {
+      mobileTapGuardRef.current.suppressUntil = Date.now() + 450;
+    }
+  }, [isMobile]);
+
+  const suppressMobileTapAfterScroll = useCallback((event) => {
+    if (!isMobile) return false;
+    const guard = mobileTapGuardRef.current;
+    if (!guard.moved && Date.now() > guard.suppressUntil) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    return true;
+  }, [isMobile]);
+
+  const handleMobileModuleClick = useCallback((event, mod, isSelected) => {
+    if (suppressMobileTapAfterScroll(event)) return;
+    setSelected(isSelected ? null : mod);
+  }, [suppressMobileTapAfterScroll]);
+
+  const handleMobileSnippetClick = useCallback((event, item, isSelected) => {
+    if (suppressMobileTapAfterScroll(event)) return;
+    setSelectedItem(isSelected ? null : { ...item });
+  }, [suppressMobileTapAfterScroll]);
+
+  const handleMobileLibraryHeaderClick = useCallback((event, libId, isOpen) => {
+    if (suppressMobileTapAfterScroll(event)) return;
+    setExpandedLib(isOpen ? null : libId);
+  }, [suppressMobileTapAfterScroll]);
+
+  const handleMobileCategoryClick = useCallback((event, categoryRu) => {
+    if (suppressMobileTapAfterScroll(event)) return;
+    selectBuiltinCategory(categoryRu);
+  }, [selectBuiltinCategory, suppressMobileTapAfterScroll]);
 
   // Load personal libraries when switching to "mine" tab
   useEffect(() => {
@@ -3176,6 +3281,85 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
             border-radius: 22px 22px 0 0 !important;
           }
           .neo-lib-sidebar { width: 100% !important; }
+          .neo-lib-mobile-cats {
+            position: relative !important;
+            z-index: 3 !important;
+            isolation: isolate;
+            contain: layout style;
+          }
+          .neo-lib-body {
+            position: relative;
+            z-index: 1;
+            isolation: isolate;
+          }
+          .neo-lib-dropdown-list {
+            position: relative !important;
+            left: auto !important;
+            right: auto !important;
+            top: auto !important;
+            z-index: 1 !important;
+            margin-top: 8px;
+            max-height: 0;
+            opacity: 0;
+            overflow: hidden !important;
+            pointer-events: none;
+            visibility: hidden;
+            transform: translateY(-4px) translateZ(0);
+            transform-origin: top center;
+            transition:
+              max-height 240ms cubic-bezier(0.22, 1, 0.36, 1),
+              opacity 160ms ease,
+              transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+              visibility 0s linear 240ms;
+            will-change: max-height, opacity, transform;
+            contain: layout paint style;
+            backface-visibility: hidden;
+            -webkit-backface-visibility: hidden;
+          }
+          .neo-lib-dropdown-list-open {
+            max-height: min(55vh, 430px);
+            opacity: 1;
+            overflow-y: auto !important;
+            pointer-events: auto;
+            visibility: visible;
+            transform: translateY(0) translateZ(0);
+            transition:
+              max-height 260ms cubic-bezier(0.22, 1, 0.36, 1),
+              opacity 180ms ease,
+              transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+              visibility 0s;
+            -webkit-overflow-scrolling: touch;
+          }
+          .neo-lib-dropdown-list-closed {
+            max-height: 0 !important;
+            opacity: 0 !important;
+            overflow: hidden !important;
+            pointer-events: none !important;
+            visibility: hidden !important;
+            transform: translateY(-4px) translateZ(0) !important;
+          }
+          .neo-lib-dropdown-list button {
+            transform: translateZ(0);
+            backface-visibility: hidden;
+            -webkit-backface-visibility: hidden;
+          }
+          .neo-lib-mobile-scroll {
+            touch-action: pan-y;
+            -webkit-overflow-scrolling: touch;
+            overscroll-behavior-y: contain;
+          }
+          .neo-lib-card,
+          .neo-lib-snippet-card,
+          .neo-lib-library-card,
+          .neo-lib-dropdown-list button {
+            touch-action: pan-y;
+            -webkit-tap-highlight-color: transparent;
+          }
+          .neo-lib-primary-btn,
+          .neo-lib-close,
+          .neo-lib-tabs button {
+            touch-action: manipulation;
+          }
         }
       `}</style>
 
@@ -3257,7 +3441,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
 
         {/* ═══════════════════ МОИ БИБЛИОТЕКИ ═══════════════════ */}
         {tab === "mine" && (
-          <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column" }}>
+          <div className={isMobile ? "neo-lib-mobile-scroll" : undefined} style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column" }}>
 
             {/* Toolbar */}
             <div className="neo-lib-toolbar" style={{ padding: isMobile ? "10px 12px" : "12px 20px", borderBottom:"1px solid rgba(255,255,255,0.06)", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
@@ -3278,7 +3462,11 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
                 onClick={() => {
                   if (!currentUser) { alert(t.libAlertLogin); return; }
                   if (!isPro && libraries.length >= LIMIT) {
-                    alert(t.libAlertTrialLimit(LIMIT));
+                    if (typeof onUpgrade === "function") {
+                      onUpgrade();
+                    } else {
+                      alert(t.libAlertTrialLimit(LIMIT));
+                    }
                     return;
                   }
                   setShowCreateLib(true);
@@ -3289,16 +3477,28 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
                   background: (!isPro && libraries.length >= LIMIT)
                     ? "rgba(255,255,255,0.05)"
                     : "linear-gradient(135deg,#3ecf8e,#0ea5e9)",
-                  color: (!isPro && libraries.length >= LIMIT) ? "rgba(255,255,255,0.3)" : "#0a0a0a",
-                  border:"none", cursor: (!isPro && libraries.length >= LIMIT) ? "not-allowed" : "pointer",
+                  color: (!isPro && libraries.length >= LIMIT) ? "rgba(253,230,138,0.78)" : "#0a0a0a",
+                  border: (!isPro && libraries.length >= LIMIT) ? "1px solid rgba(251,191,36,0.24)" : "none",
+                  cursor:"pointer",
                   whiteSpace:"nowrap",
-                  opacity: (!isPro && libraries.length >= LIMIT) ? 0.5 : 1,
+                  opacity: (!isPro && libraries.length >= LIMIT) ? 0.72 : 1,
+                  filter: (!isPro && libraries.length >= LIMIT) ? "saturate(0.62)" : undefined,
                 }}
-              >{t.libCreateLibraryBtn}</button>
+              >{(!isPro && libraries.length >= LIMIT) ? `🔒 ${t.libCreateLibraryBtn.replace(/^\+\s*/, "")}` : t.libCreateLibraryBtn}</button>
             </div>
 
             {/* Libraries list */}
-            <div style={{ flex:1, overflowY:"auto", padding: isMobile ? "10px 12px" : "14px 20px" }}>
+            <div
+              className={isMobile ? "neo-lib-mobile-scroll" : undefined}
+              onPointerDown={beginMobileTapGesture}
+              onPointerMove={trackMobileTapGesture}
+              onPointerUp={endMobileTapGesture}
+              onPointerCancel={endMobileTapGesture}
+              onTouchStart={beginMobileTapGesture}
+              onTouchMove={trackMobileTapGesture}
+              onTouchEnd={endMobileTapGesture}
+              style={{ flex:1, overflowY:"auto", padding: isMobile ? "10px 12px" : "14px 20px" }}
+            >
               {!currentUser && (
                 <div style={{ textAlign:"center", padding:"50px 20px", color:"rgba(255,255,255,0.3)", fontSize:13, fontFamily:"Syne,system-ui" }}>
                   {t.libLoginWall}
@@ -3321,7 +3521,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
                     {/* Library header */}
                     <div
                       style={{ padding: isMobile ? "12px 14px" : "13px 16px", display:"flex", alignItems:"center", gap:10, cursor:"pointer" }}
-                      onClick={() => setExpandedLib(isOpen ? null : lib.id)}
+                      onClick={(e) => handleMobileLibraryHeaderClick(e, lib.id, isOpen)}
                     >
                       <span style={{ fontSize:14, transition:"transform 0.2s", display:"inline-block", transform: isOpen ? "rotate(90deg)" : "none", color:"rgba(255,255,255,0.4)" }}>▶</span>
                       <div style={{ flex:1, minWidth:0 }}>
@@ -3346,7 +3546,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
                             const sel = selectedItem?.id === item.id;
                             return (
                               <div key={item.id}
-                                onClick={() => setSelectedItem(sel ? null : {...item})}
+                                onClick={(e) => handleMobileSnippetClick(e, item, sel)}
                                 className={`neo-lib-snippet-card ${sel ? 'neo-lib-card-selected' : ''}`}
                                 style={{ background: sel ? "rgba(255,215,0,0.08)" : "rgba(255,255,255,0.03)", border:`1px solid ${sel ? "rgba(255,215,0,0.4)" : "rgba(255,255,255,0.07)"}`, borderRadius:10, padding:"10px 12px", cursor:"pointer", position:"relative" }}
                               >
@@ -3358,7 +3558,12 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
                                   title={t.libDeleteSnippetHint}
                                 >✕</button>
                                 {isMobile && sel && (
-                                  <button className="neo-lib-primary-btn" onClick={(e) => { e.stopPropagation(); onInsert(item.code); onClose(); }}
+                                  <button className="neo-lib-primary-btn" onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (suppressMobileTapAfterScroll(e)) return;
+                                    onInsert(item.code);
+                                    onClose();
+                                  }}
                                     style={{ marginTop:8, width:"100%", padding:"9px", background:"linear-gradient(135deg,#ffd700,#ffaa00)", border:"none", borderRadius:8, color:"#111", fontWeight:800, fontFamily:"Syne,system-ui", fontSize:12, cursor:"pointer" }}
                                   >{t.libInsert}</button>
                                 )}
@@ -3458,14 +3663,18 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
 
         {/* Categories — dropdown на мобиле, сайдбар на десктопе */}
         {tab === "builtin" && !search && isMobile && (
-          <div style={{ padding:"10px 12px", borderBottom:"1px solid rgba(255,255,255,0.06)", flexShrink:0, position:"relative" }}>
-            {/* Backdrop */}
-            {catDropOpen && (
-              <div style={{ position:"fixed", inset:0, zIndex:10 }} onClick={() => setCatDropOpen(false)} />
-            )}
+          <div
+            ref={categoryDropdownRef}
+            className="neo-lib-mobile-cats"
+            style={{ padding:"10px 12px", borderBottom:"1px solid rgba(255,255,255,0.06)", flexShrink:0, position:"relative" }}
+          >
             {/* Trigger button */}
             <button
-              onClick={() => setCatDropOpen(v => !v)}
+              type="button"
+              aria-expanded={catDropOpen}
+              onPointerDown={(e) => e.stopPropagation()}
+              onTouchStart={(e) => e.stopPropagation()}
+              onClick={toggleCategoryDropdown}
               className="neo-lib-dropdown-btn"
               style={{
                 width:"100%", padding:"11px 14px",
@@ -3486,23 +3695,58 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
               }}>▼</span>
             </button>
 
-            {/* Dropdown list */}
-            {catDropOpen && (
-              <div className="neo-lib-dropdown-list" style={{
-                position:"absolute", left:12, right:12, top:"calc(100% - 2px)",
+            {/* Accordion list: keep mounted so Chrome does not ghost a stale composited layer. */}
+              <div
+                className={`neo-lib-dropdown-list neo-lib-mobile-scroll ${catDropOpen ? "neo-lib-dropdown-list-open" : "neo-lib-dropdown-list-closed"}`}
+                aria-hidden={!catDropOpen}
+                style={{
                 background:"#1a1d24",
                 border:"1px solid rgba(255,215,0,0.25)",
-                borderRadius:14, zIndex:20,
+                borderRadius:14,
                 boxShadow:"0 12px 40px rgba(0,0,0,0.85)",
-                overflow:"hidden",
-                maxHeight:"55vh", overflowY:"auto",
-              }}>
+              }}
+                onPointerDown={(e) => { e.stopPropagation(); beginMobileTapGesture(e); }}
+                onPointerMove={trackMobileTapGesture}
+                onPointerUp={endMobileTapGesture}
+                onPointerCancel={endMobileTapGesture}
+                onMouseDown={(e) => e.stopPropagation()}
+                onTouchStart={(e) => { e.stopPropagation(); beginMobileTapGesture(e); }}
+                onTouchMove={trackMobileTapGesture}
+                onTouchEnd={endMobileTapGesture}
+              >
+                <button
+                  type="button"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    if (suppressMobileTapAfterScroll(e)) return;
+                    closeCategoryDropdown();
+                  }}
+                  tabIndex={catDropOpen ? 0 : -1}
+                  style={{
+                    width:"100%",
+                    padding:"11px 16px",
+                    textAlign:"left",
+                    background:"rgba(34,211,238,0.08)",
+                    border:"none",
+                    borderBottom:"1px solid rgba(34,211,238,0.16)",
+                    color:"rgba(224,242,254,0.78)",
+                    fontSize:12,
+                    fontFamily:"Syne,system-ui",
+                    fontWeight:700,
+                    cursor:"pointer",
+                  }}
+                >
+                  ▲ Свернуть список
+                </button>
                 {localizedBuiltin.map((cat, idx) => {
                   const active = activeCat === cat.categoryRu;
                   return (
                     <button
+                      type="button"
                       key={cat.categoryRu}
-                      onClick={() => { setActiveCat(cat.categoryRu); setSelected(null); setCatDropOpen(false); }}
+                      tabIndex={catDropOpen ? 0 : -1}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={(e) => handleMobileCategoryClick(e, cat.categoryRu)}
                       style={{
                         width:"100%", padding:"13px 16px",
                         textAlign:"left",
@@ -3523,7 +3767,6 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
                   );
                 })}
               </div>
-            )}
           </div>
         )}
 
@@ -3555,7 +3798,17 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
           )}
 
           {/* Modules list */}
-          <div style={{ flex:1, overflowY:"auto", padding: isMobile ? "12px" : "14px 20px" }}>
+          <div
+            className={isMobile ? "neo-lib-mobile-scroll" : undefined}
+            onPointerDown={beginMobileTapGesture}
+            onPointerMove={trackMobileTapGesture}
+            onPointerUp={endMobileTapGesture}
+            onPointerCancel={endMobileTapGesture}
+            onTouchStart={beginMobileTapGesture}
+            onTouchMove={trackMobileTapGesture}
+            onTouchEnd={endMobileTapGesture}
+            style={{ flex:1, overflowY:"auto", padding: isMobile ? "12px" : "14px 20px" }}
+          >
             {filtered.length === 0 ? (
               <div style={{ textAlign:"center", padding:"60px 20px", color:"rgba(255,255,255,0.25)", fontSize:14, fontFamily:"Syne,system-ui" }}>
                 {t.libNothingFound(search)}
@@ -3578,7 +3831,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
                       return (
                         <div
                           key={mod.id}
-                          onClick={() => setSelected(sel ? null : mod)}
+                          onClick={(e) => handleMobileModuleClick(e, mod, sel)}
                           className={`neo-lib-card ${sel ? 'neo-lib-card-selected' : ''}`}
                           style={{
                             background: sel ? "rgba(255,215,0,0.08)" : "rgba(255,255,255,0.03)",
@@ -3598,7 +3851,12 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
                             <>
                               <button
                                 className="neo-lib-primary-btn"
-                                onClick={(e) => { e.stopPropagation(); onInsert(mod.code); onClose(); }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (suppressMobileTapAfterScroll(e)) return;
+                                  onInsert(mod.code);
+                                  onClose();
+                                }}
                                 style={{
                                   marginTop:12, width:"100%", padding:"11px",
                                   background:"linear-gradient(135deg,#ffd700,#ffaa00)",
@@ -3666,7 +3924,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
 //     // setStacks(prev => [...prev, ...parseDSL(code)])
 //   }} />
 // ─────────────────────────────────────────────────────────────────────────────
-export function ModuleLibraryButton({ onInsert, currentUser, t = getConstructorStrings('ru'), lang = 'ru', dataTour, compact = false }) {
+export function ModuleLibraryButton({ onInsert, onUpgrade, currentUser, t = getConstructorStrings('ru'), lang = 'ru', dataTour, compact = false }) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -3688,6 +3946,10 @@ export function ModuleLibraryButton({ onInsert, currentUser, t = getConstructorS
           lang={lang}
           currentUser={currentUser}
           onClose={() => setOpen(false)}
+          onUpgrade={() => {
+            setOpen(false);
+            onUpgrade?.();
+          }}
           onInsert={onInsert}
         />
       )}
