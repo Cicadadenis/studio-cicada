@@ -15,11 +15,11 @@ import requests
 from cicada.parser import (
     Program, Handler, Reply, RandomReply, SwitchStmt, Ask, Remember, If,
     parse_condition,
-    Buttons, InlineButton, InlineKeyboard, Photo, PhotoVar, Sticker,
+    Buttons, InlineButton, InlineKeyboard, InlineKeyboardFromDB, Photo, PhotoVar, Sticker,
     GlobalVar,
     StartScenario, Step,
     Condition, VarRef, FunctionCall, ComplexCondition,
-    ForwardPhoto, SaveFile,
+    ForwardPhoto, ForwardInput, SaveFile,
     SendDocument, SendAudio, SendVideo, SendVoice,
     SendLocation, SendContact, SendPoll, SendInvoice,
     SendGame, SendMarkdown, DownloadFile,
@@ -798,9 +798,11 @@ class Executor:
             Buttons:            self._exec_buttons,
             InlineButton:       self._exec_inline_button,
             InlineKeyboard:     self._exec_inline_keyboard,
+            InlineKeyboardFromDB: self._exec_inline_keyboard_from_db,
             Photo:              self._exec_photo,
             Sticker:            self._exec_sticker,
             ForwardPhoto:       self._exec_forward_photo,
+            ForwardInput:       self._exec_forward_input,
             SaveFile:           self._exec_save_file,
             StartScenario:      self._exec_start_scenario_stmt,
             SendMarkdown:       self._exec_send_markdown,
@@ -1463,6 +1465,58 @@ class Executor:
 
         self.tg.send_inline_keyboard(ctx.chat_id, keyboard, text=pending_text or "\u200b")
 
+    def _exec_inline_keyboard_from_db(self, stmt: InlineKeyboardFromDB, ctx):
+        key = self._resolve_db_key(stmt.key, ctx)
+        db = get_db()
+        items = db.get(str(ctx.user_id), key)
+        if items is None:
+            items = db.get_global(key, [])
+        if isinstance(items, str):
+            try:
+                items = _json.loads(items)
+            except Exception:
+                items = [x.strip() for x in items.splitlines() if x.strip()]
+        if isinstance(items, dict):
+            items = [
+                {"id": item_key, **item} if isinstance(item, dict) else {"id": item_key, "name": item}
+                for item_key, item in items.items()
+            ]
+        if not isinstance(items, list):
+            items = []
+
+        def item_text(item):
+            if isinstance(item, dict):
+                for field in (stmt.label_field, "name", "title", "название", "label", "text"):
+                    if field and item.get(field) not in (None, ""):
+                        return str(item.get(field))
+            return str(item)
+
+        def item_id(item, fallback):
+            if isinstance(item, dict):
+                for field in ("id", "key", "slug", "code", "value"):
+                    if item.get(field) not in (None, ""):
+                        return str(item.get(field))
+            return fallback
+
+        columns = max(1, int(stmt.columns or 1))
+        rows = []
+        row = []
+        for item in items:
+            text = item_text(item).strip()
+            if not text:
+                continue
+            callback = f"{stmt.callback_prefix}{item_id(item, text)}"
+            row.append(InlineButton(text=text, callback=callback))
+            if len(row) >= columns:
+                rows.append(row)
+                row = []
+        if row:
+            rows.append(row)
+        if stmt.back_text:
+            rows.append([InlineButton(text=stmt.back_text, callback=stmt.back_callback or stmt.back_text)])
+        if rows:
+            self._exec_inline_keyboard(InlineKeyboard(rows=rows), ctx)
+
     def _exec_photo(self, stmt: Photo, ctx):
         self.tg.send_photo(ctx.chat_id, stmt.url)
 
@@ -1475,6 +1529,27 @@ class Executor:
             self.tg.send_photo(ctx.chat_id, file_id, caption=stmt.caption)
         else:
             self.tg.send_message(ctx.chat_id, "⚠️ Нет фото для пересылки")
+
+    def _exec_forward_input(self, stmt: ForwardInput, ctx):
+        kind = stmt.kind
+        file_id = ctx.get("файл_id", "")
+        if kind == "text":
+            text = ctx.get("текст", "")
+            self.tg.send_message(ctx.chat_id, text or "⚠️ Нет текста для пересылки")
+            return
+        if not file_id and kind in ("document", "voice", "audio", "sticker"):
+            self.tg.send_message(ctx.chat_id, "⚠️ Нет файла для пересылки")
+            return
+        if kind == "document":
+            self.tg.send_document(ctx.chat_id, file_id, stmt.caption)
+        elif kind == "voice":
+            self.tg.send_voice(ctx.chat_id, file_id, stmt.caption)
+        elif kind == "audio":
+            self.tg.send_audio(ctx.chat_id, file_id, stmt.caption)
+        elif kind == "sticker":
+            self.tg.send_sticker(ctx.chat_id, file_id)
+        else:
+            self.tg.send_message(ctx.chat_id, f"⚠️ Нельзя переслать тип: {kind}")
 
     def _exec_save_file(self, stmt: SaveFile, ctx):
         ctx.set(stmt.variable, ctx.get("файл_id", ""))

@@ -132,6 +132,17 @@ class InlineKeyboard:
 
 
 @dataclass
+class InlineKeyboardFromDB:
+    """inline-кнопки из бд "key" — динамическая клавиатура из списка в БД"""
+    key: object
+    label_field: str = "name"
+    callback_prefix: str = "item:"
+    back_text: str = "⬅️ Назад"
+    back_callback: str = "назад"
+    columns: int = 1
+
+
+@dataclass
 class Photo:
     url: str
 
@@ -200,6 +211,13 @@ class LoadFromDB:
 
 @dataclass
 class ForwardPhoto:
+    caption: str = ""
+
+
+@dataclass
+class ForwardInput:
+    """переслать текст/фото/документ/... — вернуть входящее содержимое в текущий чат"""
+    kind: str
     caption: str = ""
 
 
@@ -1538,6 +1556,23 @@ class Parser:
                     stmts.append(InlineKeyboard(rows=keyboard_rows))
                 continue
 
+            # inline-кнопки из бд "категории" текст "name" callback "category:" назад "Назад" → "back"
+            m = re.match(
+                r'^inline-кнопки из бд\s+(.+?)(?:\s+текст\s+"([^"]*)")?(?:\s+callback\s+"([^"]*)")?(?:\s+назад\s+"([^"]*)"\s*(?:→|->)\s*"([^"]*)")?(?:\s+колонки\s+(\d+))?$',
+                stripped,
+            )
+            if m:
+                stmts.append(InlineKeyboardFromDB(
+                    key=parse_value(m.group(1).strip()),
+                    label_field=m.group(2) or "name",
+                    callback_prefix=m.group(3) or "item:",
+                    back_text=m.group(4) or "⬅️ Назад",
+                    back_callback=m.group(5) or "назад",
+                    columns=max(1, int(m.group(6) or 1)),
+                ))
+                self.consume()
+                continue
+
             # кнопки: (блочный формат с матрицей)
             if stripped == "кнопки:" or stripped == "кнопки":
                 self.consume()
@@ -1642,6 +1677,18 @@ class Parser:
             return ForwardPhoto(m.group(1))
         if line == "переслать фото":
             return ForwardPhoto()
+
+        # переслать текст/документ/голосовое/аудио/стикер — вернуть входящее в текущий чат
+        m = re.match(r'^переслать\s+(текст|документ|голосовое|аудио|стикер)(?:\s+"([^"]*)")?$', line)
+        if m:
+            kind_map = {
+                "текст": "text",
+                "документ": "document",
+                "голосовое": "voice",
+                "аудио": "audio",
+                "стикер": "sticker",
+            }
+            return ForwardInput(kind=kind_map.get(m.group(1), m.group(1)), caption=m.group(2) or "")
 
         # запомни файл → переменная
         m = re.match(r'^запомни файл\s*→\s*(\w+)$', line)

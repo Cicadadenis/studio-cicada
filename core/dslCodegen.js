@@ -91,6 +91,7 @@ const FEATURE_BY_TYPE = {
   call_block: 'block_call',
   random: 'random_reply',
   inline: 'inline_keyboard',
+  inline_db: 'inline_keyboard',
   menu: 'bot_menu',
   switch: 'switch',
 };
@@ -329,6 +330,17 @@ function emitHttp(p) {
   return `http_${method.toLowerCase()} ${q(url)} ${ARROW} ${vn}`;
 }
 
+function emitInlineDb(p) {
+  const key = p.key || 'категории';
+  const labelField = p.labelField || 'name';
+  const callbackPrefix = p.callbackPrefix || 'category:';
+  const backText = p.backText || 'Назад';
+  const backCallback = p.backCallback || 'назад';
+  const columns = String(p.columns || '1').trim();
+  const suffix = columns && columns !== '1' ? ` колонки ${columns}` : '';
+  return `inline-кнопки из бд ${q(key)} текст ${q(labelField)} callback ${q(callbackPrefix)} назад ${q(backText)} ${ARROW} ${q(backCallback)}${suffix}`;
+}
+
 function emitSwitch(p) {
   const v = String(p.varname || 'x').trim();
   const lines = String(p.cases || '')
@@ -520,6 +532,8 @@ export function emitBlockText(block) {
       return emitButtons(p);
     case 'inline':
       return emitInline(p);
+    case 'inline_db':
+      return emitInlineDb(p);
     case 'random':
       return emitRandom(p);
     case 'switch':
@@ -547,6 +561,22 @@ export function emitBlockText(block) {
     case 'member_role':
       return `роль @${stripAt(p.channel)} ${p.user_id} ${ARROW} ${p.varname || 'var'}`;
     case 'forward_msg': {
+      const mode = String(p.mode || (p.target ? 'message' : 'photo')).trim();
+      if (mode && mode !== 'message') {
+        const names = {
+          text: 'текст',
+          photo: 'фото',
+          document: 'документ',
+          voice: 'голосовое',
+          audio: 'аудио',
+          sticker: 'стикер',
+        };
+        const media = names[mode] || mode;
+        const caption = String(p.caption || '').trim();
+        return caption && ['фото', 'документ', 'голосовое', 'аудио'].includes(media)
+          ? `переслать ${media} ${q(caption)}`
+          : `переслать ${media}`;
+      }
       const target = String(p.target || '').trim();
       return target ? `переслать ${target}` : 'переслать';
     }

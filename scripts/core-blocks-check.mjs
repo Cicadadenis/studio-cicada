@@ -34,6 +34,7 @@ const sampleProps = {
   message: { text: 'Ок' },
   buttons: { rows: 'Заказ, Помощь' },
   inline: { buttons: 'Да|cb_yes\nСайт|url:https://example.com' },
+  inline_db: { key: 'категории', labelField: 'name', callbackPrefix: 'category:', backText: 'Назад', backCallback: 'back', columns: '1' },
   menu: { title: 'Меню', items: 'Каталог\nПомощь' },
   condition: { cond: 'текст == "да"' },
   switch: { varname: 'текст', cases: 'да\nнет' },

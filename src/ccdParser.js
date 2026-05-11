@@ -17,6 +17,7 @@ export const FLOW_PORTS = {
   message:     { input: 'flow',         output: 'flow'         },
   buttons:     { input: 'flow',         output: 'flow'         },
   inline:      { input: 'flow',         output: 'flow'         },
+  inline_db:   { input: 'flow',         output: 'flow'         },
   use:         { input: 'flow',         output: 'flow'         },
   condition:   { input: 'flow',         output: 'flow'         },
   ask:         { input: 'flow',         output: 'flow'         },
@@ -274,6 +275,24 @@ function parseNode(line) {
   }
 
   // ── Telegram расширения ─────────────────────────────────────────────────
+  // inline-кнопки из бд "key" текст "name" callback "prefix:" назад "Назад" -> "back"
+  {
+    const dbInlineMatch = t.match(/^inline-кнопки из бд\s+"([^"]+)"(?:\s+текст\s+"([^"]*)")?(?:\s+callback\s+"([^"]*)")?(?:\s+назад\s+"([^"]*)"\s*(?:→|->)\s*"([^"]*)")?(?:\s+колонки\s+(\d+))?/);
+    if (dbInlineMatch) {
+      return {
+        type: 'inline_db',
+        props: {
+          key: dbInlineMatch[1],
+          labelField: dbInlineMatch[2] || 'name',
+          callbackPrefix: dbInlineMatch[3] || 'item:',
+          backText: dbInlineMatch[4] || '⬅️ Назад',
+          backCallback: dbInlineMatch[5] || 'назад',
+          columns: dbInlineMatch[6] || '1',
+        },
+        root: false,
+      };
+    }
+  }
   // проверить подписку @channel → var
   {
     const csMatch = t.match(/^проверить подписку @(\S+)\s*(?:→|->)\s*(\S+)/);
@@ -284,10 +303,18 @@ function parseNode(line) {
     const mrMatch = t.match(/^роль @(\S+)\s+(\S+)\s*(?:→|->)\s*(\S+)/);
     if (mrMatch) return { type: 'member_role', props: { channel: '@' + mrMatch[1], user_id: mrMatch[2], varname: mrMatch[3] }, root: false };
   }
+  // переслать текст/фото/документ/... — вернуть входящее в текущий чат
+  {
+    const selfForwardMatch = t.match(/^переслать\s+(текст|фото|документ|голосовое|аудио|стикер)(?:\s+"([^"]*)")?/);
+    if (selfForwardMatch) {
+      const modeMap = { текст: 'text', фото: 'photo', документ: 'document', голосовое: 'voice', аудио: 'audio', стикер: 'sticker' };
+      return { type: 'forward_msg', props: { mode: modeMap[selfForwardMatch[1]] || selfForwardMatch[1], target: '', caption: selfForwardMatch[2] || '' }, root: false };
+    }
+  }
   // переслать TARGET (старый формат: переслать сообщение TARGET)
   {
-    const fwMatch = t.match(/^переслать(?!\s+фото\b)(?:\s+сообщение)?\s+(.+)/);
-    if (fwMatch) return { type: 'forward_msg', props: { target: fwMatch[1].trim() }, root: false };
+    const fwMatch = t.match(/^переслать(?:\s+сообщение)?\s+(.+)/);
+    if (fwMatch) return { type: 'forward_msg', props: { mode: 'message', target: fwMatch[1].trim() }, root: false };
   }
 
   // ── Интеграции ядра ─────────────────────────────────────────────────────

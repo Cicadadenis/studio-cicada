@@ -400,6 +400,7 @@ export const BLOCK_TYPES = [
   { type:'message',    label:'Ответ',          icon:'✉',  color:'#5b7cf6', group:'Основные',   canBeRoot:false, canStack:true  },
   { type:'buttons',    label:'Кнопки',         icon:'⊞',  color:'#a78bfa', group:'Основные',   canBeRoot:false, canStack:true  },
   { type:'inline',     label:'Inline-кнопки',  icon:'▦',  color:'#7c3aed', group:'Основные',   canBeRoot:false, canStack:true  },
+  { type:'inline_db',  label:'Inline из БД',   icon:'▤',  color:'#06b6d4', group:'Основные',   canBeRoot:false, canStack:true  },
   { type:'menu',       label:'Меню',           icon:'≡',  color:'#8b5cf6', group:'Основные',   canBeRoot:false, canStack:true  },
   // Логика
   { type:'condition',  label:'Если',           icon:'◇',  color:'#fb923c', group:'Логика',     canBeRoot:false, canStack:true  },
@@ -473,7 +474,7 @@ const CAN_STACK_BELOW = {
   on_location:[...FLOW_CHILDREN],
   on_contact: [...FLOW_CHILDREN],
   middleware: [...FLOW_CHILDREN],
-  message:    [...FLOW_CHILDREN, 'buttons', 'inline'],  // кнопки и inline — только после текста
+  message:    [...FLOW_CHILDREN, 'buttons', 'inline', 'inline_db'],  // кнопки и inline — только после текста
   buttons:    [...FLOW_CHILDREN],                        // после кнопок нельзя снова кнопки/inline
   menu:       ['message','buttons','inline','typing','delay','condition','stop','goto'],
   condition:  [...FLOW_CHILDREN],
@@ -508,6 +509,7 @@ const CAN_STACK_BELOW = {
   scenario:   ['step','message','typing','delay','condition','switch','ask','remember','get','save','random','loop','http','log','stop','goto','use'],
   step:       ['message','typing','delay','condition','switch','ask','remember','get','save','random','loop','http','log','stop','goto','use','step'],
   inline:     ['message','condition','stop','goto'],     // после inline тоже можно message
+  inline_db:  ['message','condition','stop','goto'],
   use:        [...FLOW_CHILDREN],
   stop:       TERMINAL,
   goto:       TERMINAL,
@@ -592,7 +594,7 @@ function snapAttachRejectHint(parentType, childType, ui) {
 
 // Порядок подсказки «что поставить ниже» — сначала самые нужные новичку
 const NEXT_BLOCK_PRIORITY = [
-  'message', 'buttons', 'inline', 'condition', 'else', 'ask', 'remember', 'use',
+  'message', 'buttons', 'inline', 'inline_db', 'condition', 'else', 'ask', 'remember', 'use',
   'typing', 'delay', 'get', 'save', 'random', 'photo', 'video', 'stop', 'goto',
   'log', 'loop', 'switch', 'http', 'menu', 'poll', 'document', 'send_file', 'audio', 'sticker',
   'contact', 'location', 'notify', 'broadcast', 'database', 'classify', 'role', 'payment', 'analytics',
@@ -637,6 +639,7 @@ const BEGINNER_GUIDE = {
   message: 'Текст ответа пользователю. Поддерживаются {переменные} и выражения в фигурных скобках.',
   buttons: 'Reply-клавиатура. Только после блока «Ответ» (нужен текст сообщения). Под «При нажатии» укажи тот же текст кнопки.',
   inline: 'Inline-кнопки под сообщением. Только после «Ответ». Формат: Текст|callback — под «При нажатии» укажи callback.',
+  inline_db: 'Создаёт inline-кнопки из списка в БД: по одной кнопке на категорию/запись и последней строкой кнопку «Назад».',
   menu: 'Упрощённое меню из пунктов; часто перед переходами.',
   condition: 'Ветка если условие истинно. После можно добавить «Иначе» на том же уровне.',
   else: 'Ветка «во всех остальных случаях». Ставь сразу под связанным «Если».',
@@ -657,7 +660,7 @@ const BEGINNER_GUIDE = {
   broadcast: 'Рассылка всем (mode=all) или группе (mode=group + тег). Тег — значение поля _сегмент в профиле пользователя.',
   check_sub: 'Проверяет подписку через getChatMember API. Результат true/false сохраняется в переменную. Используй в условии «если» дальше.',
   member_role: 'Возвращает роль участника в канале/группе: creator, administrator, member, restricted, left, kicked.',
-  forward_msg: 'Пересылает последнее входящее сообщение пользователя другому Telegram ID.',
+  forward_msg: 'Пересылает всё сообщение другому Telegram ID или возвращает выбранное входящее содержимое: текст, фото, документ и т.д.',
   db_delete: 'Полностью удаляет ключ из БД (не обнуляет, а удаляет запись). Используй вместо сохранить "" = "".',
   save_global: 'Сохраняет значение в глобальную БД (общую для всех пользователей). Читать через обычный «Получить».',
   set_global: 'Обновляет runtime-глобальную переменную проекта. Подходит для общих списков и настроек, которые используют разные сценарии.',
@@ -766,7 +769,8 @@ const DEFAULT_PROPS = {
   goto:       { target: 'сценарий' },
   stop:       {},
   step:       { name: 'шаг1', text: 'Следующий шаг' },
-  inline:     { buttons: 'Да|callback_да, Нет|callback_нет; навер|callback_нав' },
+  inline:     { buttons: 'Да|callback_да, Нет|callback_нет' },
+  inline_db:  { key: 'категории', labelField: 'name', callbackPrefix: 'category:', backText: '⬅️ Назад', backCallback: 'назад', columns: '1' },
   notify:     { text: 'Ваш заказ готов!', target: 'user_id' },
   database:   { query: 'SELECT * FROM users', varname: 'результат' },
   classify:   { intents: 'заказ\nжалоба\nвопрос', varname: 'намерение' },
@@ -777,7 +781,7 @@ const DEFAULT_PROPS = {
   // ── Новые типы ────────────────────────────────────────────────────────────
   check_sub:   { channel: '@mychannel', varname: 'подписан' },
   member_role: { channel: '@mychannel', user_id: 'пользователь.id', varname: 'роль_участника' },
-  forward_msg: { target: '' },
+  forward_msg: { mode: 'message', target: '', caption: '' },
   broadcast:   { mode: 'all', text: 'Привет всем!', tag: '' },
   db_delete:   { key: 'мой_ключ' },
   save_global: { key: 'global_key', value: 'значение' },
@@ -880,6 +884,12 @@ const FIELDS = {
   goto:      [{ key:'target',    label:'имя сценария',       tag:'input' }],
   stop:      [],
   inline:    [{ key:'buttons',   label:'кнопки: Текст|callback, ...\n(запятая = в ряд, Enter = новый ряд)', tag:'textarea', rows:4 }],
+  inline_db: [{ key:'key',       label:'ключ БД со списком', tag:'input' },
+              { key:'labelField', label:'поле текста кнопки', tag:'input' },
+              { key:'callbackPrefix', label:'callback prefix', tag:'input' },
+              { key:'backText',  label:'текст кнопки назад', tag:'input' },
+              { key:'backCallback', label:'callback назад', tag:'input' },
+              { key:'columns',   label:'кнопок в ряд', tag:'input' }],
   database:  [{ key:'query',     label:'SQL запрос',         tag:'textarea', rows:3 },
               { key:'varname',   label:'переменная →',      tag:'input' }],
   classify:  [{ key:'intents',   label:'намерения (каждое с новой строки)', tag:'textarea', rows:3 },
@@ -905,7 +915,18 @@ const FIELDS = {
   member_role: [{ key:'channel',label:'канал (например @mychannel)',               tag:'input' },
                 { key:'user_id',label:'user_id (или переменная)',                  tag:'input' },
                 { key:'varname',label:'переменная → (creator/admin/member/left)',  tag:'input' }],
-  forward_msg: [{ key:'target', label:'кому переслать (ID или переменная)',       tag:'input' }],
+  forward_msg: [{ key:'mode',   label:'что переслать', tag:'select',
+                  options:[
+                    { value:'message', label:'сообщение другому пользователю' },
+                    { value:'text', label:'текст в этот чат' },
+                    { value:'photo', label:'фото в этот чат' },
+                    { value:'document', label:'документ в этот чат' },
+                    { value:'voice', label:'голосовое в этот чат' },
+                    { value:'audio', label:'аудио в этот чат' },
+                    { value:'sticker', label:'стикер в этот чат' },
+                  ] },
+                { key:'target', label:'кому переслать (ID или переменная)',       tag:'input' },
+                { key:'caption',label:'подпись для медиа (опц.)',                 tag:'input' }],
   db_delete:   [{ key:'key',    label:'ключ для удаления из БД',                  tag:'input' }],
   save_global: [{ key:'key',   label:'ключ (глобальная БД)',                       tag:'input' },
                 { key:'value', label:'значение',                                   tag:'input' }],
@@ -1079,6 +1100,7 @@ function getPreview(type, props) {
     case 'middleware':  return p.type === 'before' ? 'до каждого' : 'после каждого';
     case 'message':    return p.buttons ? `"${(p.text||'').slice(0,20)}" + кнопки` : `"${(p.text||'').slice(0,28)}"`;
     case 'buttons':    return (p.rows||'').split('\n')[0]?.slice(0,28)||'';
+    case 'inline_db':  return `"${p.key||'категории'}" → ${p.callbackPrefix||'callback:'}`;
     case 'command':    return `"/${p.cmd||'start'}"`;
     case 'callback':   return `"${p.label||'Кнопка'}"`;
     case 'condition':  return p.cond?.slice(0,28)||'';
@@ -1106,6 +1128,11 @@ function getPreview(type, props) {
     case 'location':   return `${p.lat||'0'}, ${p.lon||'0'}`;
     case 'poll':       return (p.question||'').slice(0,28);
     case 'send_file':  return (p.file||'file').slice(0,24);
+    case 'forward_msg': {
+      const mode = p.mode || (p.target ? 'message' : 'photo');
+      if (mode === 'message') return p.target ? `→ ${p.target}` : 'сообщение';
+      return mode;
+    }
     case 'on_photo':   return 'входящее фото';
     case 'on_voice':   return 'голосовое';
     case 'on_document':return 'входящий документ';
@@ -1205,7 +1232,7 @@ const BLOCK_NOTES = {
   // ── Новые типы ────────────────────────────────────────────────────────────
   check_sub:   { icon: '💡', color: '#10b981', text: 'Реальная проверка подписки через Telegram API. Результат true/false — проверяй после через «Если».' },
   member_role: { icon: '💡', color: '#059669', text: 'Возвращает роль: creator → administrator → member → restricted → left → kicked.' },
-  forward_msg: { icon: '💡', color: '#34d399', text: 'Пересылает последнее входящее сообщение пользователя. Работает только внутри обработчиков сообщений.' },
+  forward_msg: { icon: '💡', color: '#34d399', text: 'Режим «сообщение» пересылает весь update на ID. Режимы «текст/фото/документ…» возвращают входящее содержимое в текущий чат.' },
   broadcast:   { icon: '⚠️', color: '#0ea5e9', text: 'Рассылка отправляет сообщения последовательно — для больших баз может занять время. Используй только из обработчика кнопки.' },
   db_delete:   { icon: '💡', color: '#ef4444', text: 'Удаляет ключ полностью, не обнуляет. Для обнуления используй «Сохранить» с пустым значением.' },
   save_global: { icon: '💡', color: '#10b981', text: 'Глобальная БД одна для всех пользователей. Читается через обычный «Получить».' },
@@ -1906,6 +1933,7 @@ function getPropsFieldPickerKind(blockType, fieldKey) {
   if (blockType === 'goto' && fieldKey === 'target') return 'goto_target';
   if ((blockType === 'use' || blockType === 'call_block') && fieldKey === 'blockname') return 'use_blockname';
   if (blockType === 'forward_msg' && fieldKey === 'target') return 'forward_target';
+  if (blockType === 'inline_db' && fieldKey === 'key') return 'save_key';
   if (blockType === 'get' && (fieldKey === 'key' || fieldKey === 'varname')) return fieldKey === 'key' ? 'save_key' : 'save_value';
   if (blockType === 'db_delete' && fieldKey === 'key') return 'save_key';
   if (blockType === 'get_user' && (fieldKey === 'key' || fieldKey === 'varname')) return fieldKey === 'key' ? 'save_key' : 'save_value';
@@ -2044,6 +2072,15 @@ function PropsPanel({ block, onChange, stacks }) {
               placeholder={f.placeholder || ''}
               style={{ resize: 'vertical', lineHeight: 1.5 }}
             />
+          ) : f.tag === 'select' ? (
+            <select
+              value={props[f.key] || f.options?.[0]?.value || ''}
+              onChange={e => onChange(f.key, e.target.value)}
+            >
+              {(f.options || []).map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
           ) : (block.type === 'callback' && f.key === 'label' && buttonOptions.length > 0 ? (
             <select
               value={props[f.key] || ''}
@@ -3590,6 +3627,15 @@ export default function App() {
       if (t.startsWith('кнопка '))      { const label = extractString(t); const cb = t.match(/->\s*"([^"]+)"/)?.[1] || ''; return { type: 'buttons', props: { rows: label, target: cb } }; }
       if (t.startsWith('пауза ') || t.startsWith('подождать ')) { const s = t.match(/\d+/)?.[0] || '1'; return { type: 'delay', props: { seconds: s } }; }
       if (t.startsWith('печатает '))    { const s = t.match(/\d+/)?.[0] || '1'; return { type: 'typing', props: { seconds: s } }; }
+      if (t.startsWith('inline-кнопки из бд ')) {
+        const key = extractString(t);
+        const labelField = t.match(/\sтекст\s+"([^"]*)"/)?.[1] || 'name';
+        const callbackPrefix = t.match(/\scallback\s+"([^"]*)"/)?.[1] || 'item:';
+        const backText = t.match(/\sназад\s+"([^"]*)"/)?.[1] || '⬅️ Назад';
+        const backCallback = t.match(/\sназад\s+"[^"]*"\s*(?:→|->)\s*"([^"]*)"/)?.[1] || 'назад';
+        const columns = t.match(/\sколонки\s+(\d+)/)?.[1] || '1';
+        return { type: 'inline_db', props: { key, labelField, callbackPrefix, backText, backCallback, columns } };
+      }
       // HTTP: "запрос GET "url" → var" (формат DSL-генератора)
       if (t.startsWith('http_заголовки ')) { const v = t.replace(/^http_заголовки\s+/, '').trim(); return { type: 'http', props: { method: 'HEADERS', varname: v } }; }
       if (t.startsWith('fetch ')) { const m = t.match(/fetch\s+"([^"]+)"\s*(?:→|->)\s*(\S+)/); return m ? { type: 'http', props: { method: 'GET', url: m[1], varname: m[2] } } : null; }
@@ -3639,7 +3685,13 @@ export default function App() {
       if (t.startsWith('рассылка группе ')) { const m = t.match(/рассылка группе\s+(\S+):\s*"?([^"]*)"?/); return m ? { type: 'broadcast', props: { mode: 'group', tag: m[1], text: m[2] } } : null; }
       if (t.startsWith('проверить подписку ')) { const m = t.match(/проверить подписку\s+(@\S+)\s*→\s*(\S+)/); return m ? { type: 'check_sub', props: { channel: m[1], varname: m[2] } } : null; }
       if (t.startsWith('роль @'))       { const m = t.match(/роль\s+(@\S+)\s+(\S+)\s*→\s*(\S+)/); return m ? { type: 'member_role', props: { channel: m[1], user_id: m[2], varname: m[3] } } : null; }
-      if (/^переслать(?!\s+фото\b)(?:\s+сообщение)?\s+/.test(t)) return { type: 'forward_msg', props: { target: t.replace(/^переслать(?:\s+сообщение)?\s+/, '').trim() } };
+      if (/^переслать\s+(?:текст|фото|документ|голосовое|аудио|стикер)\b/.test(t)) {
+        const modeMap = { текст: 'text', фото: 'photo', документ: 'document', голосовое: 'voice', аудио: 'audio', стикер: 'sticker' };
+        const rawMode = t.match(/^переслать\s+(\S+)/)?.[1] || 'photo';
+        const caption = extractString(t);
+        return { type: 'forward_msg', props: { mode: modeMap[rawMode] || rawMode, target: '', caption } };
+      }
+      if (/^переслать(?:\s+сообщение)?\s+/.test(t)) return { type: 'forward_msg', props: { mode: 'message', target: t.replace(/^переслать(?:\s+сообщение)?\s+/, '').trim() } };
       if (t.startsWith('оплата '))      { const m = t.match(/оплата\s+(\S+)\s+(\S+)\s+(\S+)\s+"([^"]*)"/); return m ? { type: 'payment', props: { provider: m[1], amount: m[2], currency: m[3], title: m[4] } } : null; }
 
       return null;
