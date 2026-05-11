@@ -16,6 +16,7 @@ import requests
 from cicada.parser import (
     Program, Handler, Reply, RandomReply, SwitchStmt, Ask, Remember, If,
     parse_condition,
+    parse_expr,
     parse_string_expr,
     Buttons, InlineButton, InlineKeyboard, Photo, PhotoVar, Sticker,
     GlobalVar,
@@ -27,7 +28,7 @@ from cicada.parser import (
     SendGame, SendMarkdown, DownloadFile,
     EndScenario, ReturnFromScenario, RepeatStep, GotoStep,
     SaveToDB, LoadFromDB,
-    HttpGet, HttpPost,
+    HttpGet, FetchJson, ParseJson, HttpPost,
     Log, Sleep,
     TelegramAPI,
     UseBlock,
@@ -826,6 +827,8 @@ class Executor:
             SaveToDB:           self._exec_save_to_db,
             LoadFromDB:         self._exec_load_from_db,
             HttpGet:            self._exec_http_get,
+            FetchJson:          self._exec_fetch_json,
+            ParseJson:          self._exec_parse_json,
             HttpPost:           self._exec_http_post,
             Log:                self._exec_log,
             Sleep:              self._exec_sleep,
@@ -1607,6 +1610,40 @@ class Executor:
             return self._render_template_string(key, ctx)
         return str(self._resolve_val(key, ctx))
 
+    def _render_http_template(self, template: str, ctx) -> str:
+        """Подставляет {выражения} в HTTP URL/тела, не ломая обычные JSON-скобки."""
+        if not isinstance(template, str) or "{" not in template:
+            return template
+
+        token_re = re.compile(r"\{([^{}]+)\}")
+
+        def repl(match):
+            expr_src = match.group(1).strip()
+            try:
+                expr = parse_expr(expr_src)
+            except SyntaxError:
+                return match.group(0)
+            value = self._eval(expr, ctx)
+            return "" if value is None else str(value)
+
+        return token_re.sub(repl, template)
+
+    def _resolve_http_url(self, url, ctx) -> str:
+        value = url if isinstance(url, str) else self._resolve_val(url, ctx)
+        return self._render_http_template(str(value), ctx)
+
+    def _render_http_value(self, value, ctx):
+        if isinstance(value, str):
+            return self._render_http_template(value, ctx)
+        if isinstance(value, list):
+            return [self._render_http_value(item, ctx) for item in value]
+        if isinstance(value, dict):
+            return {
+                self._render_http_value(key, ctx): self._render_http_value(val, ctx)
+                for key, val in value.items()
+            }
+        return value
+
     def _exec_save_to_db(self, stmt: SaveToDB, ctx):
         value = self._resolve_val(stmt.value, ctx)
         key = self._resolve_db_key(stmt.key, ctx)
@@ -1771,10 +1808,10 @@ class Executor:
     def _resolve_http_data(self, data, ctx):
         """Разрешает тело запроса; dict → отправляется как json."""
         resolved = self._resolve_val(data, ctx)
-        return resolved
+        return self._render_http_value(resolved, ctx)
 
     def _exec_http_patch(self, stmt: HttpPatch, ctx):
-        url     = self._resolve_val(stmt.url, ctx) if not isinstance(stmt.url, str) else stmt.url
+        url     = self._resolve_http_url(stmt.url, ctx)
         data    = self._resolve_http_data(stmt.data, ctx)
         headers = self._get_http_headers(stmt.headers, ctx)
         try:
@@ -1789,7 +1826,7 @@ class Executor:
             raise CicadaRuntimeError(f"HTTP PATCH {url}: {e}", stmt)
 
     def _exec_http_put(self, stmt: HttpPut, ctx):
-        url     = self._resolve_val(stmt.url, ctx) if not isinstance(stmt.url, str) else stmt.url
+        url     = self._resolve_http_url(stmt.url, ctx)
         data    = self._resolve_http_data(stmt.data, ctx)
         headers = self._get_http_headers(stmt.headers, ctx)
         try:
@@ -1804,7 +1841,7 @@ class Executor:
             raise CicadaRuntimeError(f"HTTP PUT {url}: {e}", stmt)
 
     def _exec_http_delete(self, stmt: HttpDelete, ctx):
-        url     = self._resolve_val(stmt.url, ctx) if not isinstance(stmt.url, str) else stmt.url
+        url     = self._resolve_http_url(stmt.url, ctx)
         headers = self._get_http_headers(stmt.headers, ctx)
         try:
             resp = requests.delete(url, headers=headers, timeout=30)
@@ -1825,27 +1862,54 @@ class Executor:
     # ── HTTP GET/POST теперь тоже используют _http_headers ──────────
 
     def _exec_http_get(self, stmt: HttpGet, ctx):
+        url = self._resolve_http_url(stmt.url, ctx)
         try:
             headers = self._get_http_headers(stmt.headers, ctx)
-            resp    = requests.get(stmt.url, headers=headers, timeout=30)
+            resp    = requests.get(url, headers=headers, timeout=30)
             ctx.set(stmt.variable, resp.text)
         except Exception as e:
             ctx.set(stmt.variable, "")
-            raise CicadaRuntimeError(f"HTTP GET {stmt.url}: {e}", stmt)
+            raise CicadaRuntimeError(f"HTTP GET {url}: {e}", stmt)
+
+    def _exec_fetch_json(self, stmt: FetchJson, ctx):
+        url = self._resolve_http_url(stmt.url, ctx)
+        try:
+            headers = self._get_http_headers(stmt.headers, ctx)
+            resp = requests.get(url, headers=headers, timeout=30)
+            try:
+                data = resp.json()
+            except AttributeError:
+                data = _json.loads(resp.text)
+            ctx.set(stmt.variable, data)
+        except Exception as e:
+            ctx.set(stmt.variable, "")
+            raise CicadaRuntimeError(f"fetch_json {url}: {e}", stmt)
+
+    def _exec_parse_json(self, stmt: ParseJson, ctx):
+        source = self._resolve_val(stmt.source, ctx)
+        if isinstance(source, (dict, list)):
+            ctx.set(stmt.variable, source)
+            return
+        try:
+            ctx.set(stmt.variable, _json.loads(str(source) if source is not None else "null"))
+        except _json.JSONDecodeError as e:
+            ctx.set(stmt.variable, "")
+            raise CicadaRuntimeError(f"разобрать_json: ошибка разбора: {e}", stmt)
 
     def _exec_http_post(self, stmt: HttpPost, ctx):
+        url = self._resolve_http_url(stmt.url, ctx)
         try:
-            data    = self._resolve_val(stmt.data, ctx)
+            data    = self._resolve_http_data(stmt.data, ctx)
             headers = self._get_http_headers(stmt.headers, ctx)
             if isinstance(data, dict):
-                resp = requests.post(stmt.url, json=data, headers=headers, timeout=30)
+                resp = requests.post(url, json=data, headers=headers, timeout=30)
             else:
-                resp = requests.post(stmt.url, data=str(data) if data is not None else None,
+                resp = requests.post(url, data=str(data) if data is not None else None,
                                      headers=headers, timeout=30)
             ctx.set(stmt.variable, resp.text)
         except Exception as e:
             ctx.set(stmt.variable, "")
-            raise CicadaRuntimeError(f"HTTP POST {stmt.url}: {e}", stmt)
+            raise CicadaRuntimeError(f"HTTP POST {url}: {e}", stmt)
 
     # ── База данных расширения ─────────────────────────────────────────
 

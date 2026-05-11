@@ -69,6 +69,20 @@ async function loadProjectFromCloud(projectId) {
 
 
 const API_URL = import.meta.env.VITE_API_URL ?? "/api";
+const MOBILE_VIEW_BREAKPOINT = 768;
+const MOBILE_TOUCH_LANDSCAPE_MAX_WIDTH = 1024;
+
+function isMobileBuilderViewport() {
+  if (typeof window === 'undefined') return false;
+  const hasTouch = typeof navigator !== 'undefined'
+    ? navigator.maxTouchPoints > 0
+    : false;
+  const hasCoarsePointer = typeof window.matchMedia === 'function'
+    ? window.matchMedia('(pointer: coarse)').matches
+    : false;
+  return window.innerWidth < MOBILE_VIEW_BREAKPOINT
+    || ((hasTouch || hasCoarsePointer) && window.innerWidth < MOBILE_TOUCH_LANDSCAPE_MAX_WIDTH);
+}
 
 function resolveApiAssetUrl(url) {
   if (!url || typeof url !== 'string') return '';
@@ -528,6 +542,15 @@ function getStackBlocksHeight(stack) {
   }, 0);
 }
 
+function getBlockTopInStack(stack, blockIndex) {
+  if (!stack?.blocks?.length || blockIndex <= 0) return 0;
+  return stack.blocks.slice(0, blockIndex).reduce((acc, b, i) => {
+    const def = getBlockDef(b.type);
+    const h = i === 0 ? ROOT_H : BLOCK_H;
+    return acc + h + (def?.canStack && !['stop', 'goto', 'bot', 'version', 'global', 'commands'].includes(b.type) ? 0 : 0);
+  }, 0);
+}
+
 const SNAP_NEW_TO_STACK_DX = 70;
 const SNAP_NEW_TO_STACK_DY = 50;
 
@@ -621,7 +644,7 @@ const BEGINNER_GUIDE = {
   ask: 'Бот задаёт вопрос и ждёт ответа пользователя; дальнейшие блоки идут после ввода.',
   remember: 'Временная переменная в сессии пользователя (до перезапуска диалога).',
   get: 'Читает значение из постоянного хранилища по ключу в переменную.',
-  save: 'Пишет значение в постоянное хранилище по ключу.',
+  save: 'Ключ — имя записи в постоянном хранилище, значение — что именно сохранить.',
   random: 'Случайно выбирает одну строку из списка; обычно дальше — «Ответ».',
   loop: 'Повторяет вложенные блоки. Добавь «Стоп» или «Переход», чтобы не зациклиться.',
   http: 'Запрос к URL; ответ можно сохранить в переменную из поля.',
@@ -815,8 +838,8 @@ const FIELDS = {
               { key:'value',     label:'значение',           tag:'input' }],
   get:       [{ key:'key',       label:'ключ',              tag:'input' },
               { key:'varname',   label:'переменная →',      tag:'input' }],
-  save:      [{ key:'key',       label:'ключ',              tag:'input' },
-              { key:'value',     label:'значение',           tag:'input' }],
+  save:      [{ key:'key',       label:'ключ в хранилище',   tag:'input' },
+              { key:'value',     label:'значение для сохранения', tag:'input' }],
   scenario:  [{ key:'name',      label:'название',          tag:'input' }],
   step:      [{ key:'name',      label:'имя шага',          tag:'input' },
               { key:'text',      label:'текст',              tag:'textarea', rows:2 }],
@@ -901,6 +924,15 @@ function getBlockDef(type, list = BLOCK_TYPES) { return list.find(b => b.type ==
 // ─── SMART PROP INFERENCE ─────────────────────────────────────────────────────
 // Смотрит на блок-родитель (верхний в стеке) и подставляет умные дефолты
 // для нового блока типа newType. Возвращает объект props или {} если ничего не нашёл.
+function suggestStorageKeyForVar(varname) {
+  const clean = String(varname || '').trim();
+  if (!clean) return '';
+  if (/(^|_)(user|profile|пользователь|профиль)|(_пользователя|_user|_profile)$/i.test(clean)) {
+    return clean;
+  }
+  return `${clean}_пользователя`;
+}
+
 function inferPropsFromParent(parentBlock, newType, allBlocksInStack) {
   if (!parentBlock) return {};
   const p = parentBlock.props || {};
@@ -920,7 +952,7 @@ function inferPropsFromParent(parentBlock, newType, allBlocksInStack) {
     case 'save': {
       // После ask — сохраняем то что спросили
       if (parentType === 'ask') {
-        return { key: p.varname || '', value: p.varname || '' };
+        return { key: suggestStorageKeyForVar(p.varname), value: p.varname || '' };
       }
       // После get — сохраняем обратно по тому же ключу
       if (parentType === 'get') {
@@ -928,15 +960,16 @@ function inferPropsFromParent(parentBlock, newType, allBlocksInStack) {
       }
       // После remember — тот же varname
       if (parentType === 'remember') {
-        return { key: p.varname || '', value: p.varname || '' };
+        return { key: suggestStorageKeyForVar(p.varname), value: p.varname || '' };
       }
       // После http — сохраняем результат запроса
       if (parentType === 'http') {
-        return { key: p.varname || 'результат', value: p.varname || 'результат' };
+        const varname = p.varname || 'результат';
+        return { key: suggestStorageKeyForVar(varname), value: varname };
       }
       // Если в стеке есть переменная — предлагаем её
       if (lastVar) {
-        return { key: lastVar, value: lastVar };
+        return { key: suggestStorageKeyForVar(lastVar), value: lastVar };
       }
       return {};
     }
@@ -1161,7 +1194,7 @@ const BLOCK_NOTES = {
   condition:{ icon: '💡', color: '#60a5fa', text: 'После «Если» можно добавить «Иначе» для обработки альтернативной ветки.' },
   http:     { icon: '💡', color: '#60a5fa', text: 'Укажи «переменная →» чтобы сохранить ответ сервера и использовать его в следующих блоках.' },
   remember: { icon: '💡', color: '#60a5fa', text: 'Значение хранится только в рамках текущей сессии пользователя.' },
-  save:     { icon: '💡', color: '#60a5fa', text: 'Данные сохраняются в БД и доступны между сессиями.' },
+  save:     { icon: '💡', color: '#60a5fa', text: 'Ключ — имя записи в БД, например имя_пользователя. Значение — переменная или текст, который нужно сохранить.' },
   bot:      { icon: '⚠️', color: '#f59e0b', text: 'Обязательно укажи токен от @BotFather. Без токена бот не запустится.' },
   version:  { icon: '💡', color: '#60a5fa', text: 'Версия указывается один раз в начале файла.' },
   use:      { icon: '💡', color: '#60a5fa', text: 'Вызывает ранее объявленный блок «Блок» по имени.' },
@@ -1325,7 +1358,7 @@ function BlockShape({ type, props, isFirst, selected, attention, onClick, onDele
 
   const openBlockInfo = React.useContext(BlockInfoContext);
   const addBlockCtx = React.useContext(AddBlockContext);
-  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+  const isMobile = isMobileBuilderViewport();
 
   const color   = def.color;
   const icon    = def.icon;
@@ -1780,16 +1813,8 @@ function resolvePickerInsertForKind(kind, targetBlock) {
         const k = (p.key || '').trim();
         return k || null;
       }
-      if (t === 'remember' || t === 'ask') {
-        const k = (p.varname || '').trim();
-        return k || null;
-      }
       if (t === 'global' || t === 'set_global') {
         const k = (p.varname || '').trim();
-        return k || null;
-      }
-      if (t === 'block') {
-        const k = (p.name || '').trim();
         return k || null;
       }
       return null;
@@ -2313,7 +2338,8 @@ function DSLPane({ stacks, isMobile, isExpanded = false, onToggleExpanded, onClo
     <div style={{
       display: 'flex', flexDirection: 'column',
       borderTop: '1px solid var(--border)',
-      flex: isMobile ? 1 : `0 0 ${isExpanded ? '50%' : '280px'}`,
+      flex: isMobile ? '1 1 auto' : `0 0 ${isExpanded ? '50%' : 'min(280px, 35%)'}`,
+      height: isMobile ? '100%' : undefined,
       minHeight: 0,
       minWidth: 0,
       transition: 'flex-basis 0.2s ease',
@@ -2836,8 +2862,8 @@ export default function App() {
 
   // Mobile state
   const [mobileTab, setMobileTab] = useState('canvas'); // 'canvas' | 'blocks' | 'props' | 'dsl'
-  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
-  const [isMobileView, setIsMobileView] = useState(() => window.innerWidth < 768);
+  const isMobile = isMobileBuilderViewport();
+  const [isMobileView, setIsMobileView] = useState(() => isMobileBuilderViewport());
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [showFilesMenu, setShowFilesMenu] = useState(false);
   const [dslPaneExpanded, setDslPaneExpanded] = useState(false);
@@ -3015,9 +3041,13 @@ export default function App() {
   }, [isMobileView, mobileTab]);
 
   useEffect(() => {
-    const handler = () => setIsMobileView(window.innerWidth < 768);
+    const handler = () => setIsMobileView(isMobileBuilderViewport());
     window.addEventListener('resize', handler);
-    return () => window.removeEventListener('resize', handler);
+    window.addEventListener('orientationchange', handler);
+    return () => {
+      window.removeEventListener('resize', handler);
+      window.removeEventListener('orientationchange', handler);
+    };
   }, []);
 
   useEffect(() => {
@@ -3341,17 +3371,90 @@ export default function App() {
   const zoomOut   = useCallback(() => { const r = canvasRef.current?.getBoundingClientRect(); zoomAt(-SCALE_STEP, r ? r.width/2 : 0, r ? r.height/2 : 0); }, [zoomAt]);
   const zoomReset = useCallback(() => { setCanvasScale(1); setCanvasOffset({ x: 0, y: 0 }); }, []);
 
-  const getCanvasCenterStackPosition = useCallback(() => {
+  const getVisibleCanvasMetrics = useCallback(() => {
     const rect = canvasRef.current?.getBoundingClientRect();
     const width = rect?.width || window.innerWidth || BLOCK_W;
     const fullHeight = rect?.height || Math.max(ROOT_H, (window.innerHeight || 0) - MOBILE_TOP_BAR_H);
     const visibleHeight = Math.max(ROOT_H, fullHeight - (isMobileView ? MOBILE_BOTTOM_NAV_H : 0));
 
+    return { width, visibleHeight };
+  }, [isMobileView]);
+
+  const getCanvasCenterStackPosition = useCallback(() => {
+    const { width, visibleHeight } = getVisibleCanvasMetrics();
+
     return {
       x: (width / 2 - canvasOffset.x) / canvasScale - BLOCK_W / 2,
       y: (visibleHeight / 2 - canvasOffset.y) / canvasScale - ROOT_H / 2,
     };
-  }, [canvasOffset, canvasScale, isMobileView]);
+  }, [canvasOffset, canvasScale, getVisibleCanvasMetrics]);
+
+  const focusMobileAddedBlock = useCallback((blockId, worldX, worldY, blockHeight = ROOT_H) => {
+    if (!isMobileView || !blockId) return;
+    const { width, visibleHeight } = getVisibleCanvasMetrics();
+    setCanvasOffset({
+      x: width / 2 - (worldX + BLOCK_W / 2) * canvasScale,
+      y: visibleHeight / 2 - (worldY + blockHeight / 2) * canvasScale,
+    });
+    setSelectedBlockId(null);
+    setSelectedStackId(null);
+    setMobileAttentionBlockId(blockId);
+    setMobileTab('canvas');
+  }, [canvasScale, getVisibleCanvasMetrics, isMobileView]);
+
+  const makePropsForNewBlock = useCallback((type, baseStacks = stacks) => {
+    const props = { ...(DEFAULT_PROPS[type] || {}) };
+    if (type === 'bot') {
+      const tok = resolveBotTokenForNewBlock(baseStacks, currentUser);
+      if (tok) props.token = tok;
+    }
+    return props;
+  }, [currentUser, stacks]);
+
+  const addBlockFromPaletteTap = useCallback((type) => {
+    const id = uid();
+    const { x, y } = getCanvasCenterStackPosition();
+    setStacks(prev => [...prev, {
+      id: uid(), x, y,
+      blocks: [{ id, type, props: makePropsForNewBlock(type, prev) }],
+    }]);
+    focusMobileAddedBlock(id, x, y, ROOT_H);
+  }, [focusMobileAddedBlock, getCanvasCenterStackPosition, makePropsForNewBlock]);
+
+  const addBlockFromContext = useCallback((type) => {
+    const id = uid();
+    const selStack = stacks.find(s => s.id === selectedStackId) || stacks[stacks.length - 1];
+
+    if (!selStack) {
+      const { x, y } = getCanvasCenterStackPosition();
+      setStacks(prev => [...prev, {
+        id: uid(), x, y,
+        blocks: [{ id, type, props: makePropsForNewBlock(type, prev) }],
+      }]);
+      focusMobileAddedBlock(id, x, y, ROOT_H);
+      setBlockInfo(null);
+      return;
+    }
+
+    const parentBlock = selStack.blocks[selStack.blocks.length - 1] || null;
+    const smartProps = inferPropsFromParent(parentBlock, type, selStack.blocks);
+    const finalProps = { ...makePropsForNewBlock(type), ...smartProps };
+    const blockIndex = selStack.blocks.length;
+    const blockY = selStack.y + getBlockTopInStack(selStack, blockIndex);
+
+    setStacks(prev => prev.map(s => s.id === selStack.id
+      ? { ...s, blocks: [...s.blocks, { id, type, props: finalProps }] }
+      : s
+    ));
+    focusMobileAddedBlock(id, selStack.x, blockY, blockIndex === 0 ? ROOT_H : BLOCK_H);
+    setBlockInfo(null);
+  }, [
+    focusMobileAddedBlock,
+    getCanvasCenterStackPosition,
+    makePropsForNewBlock,
+    selectedStackId,
+    stacks,
+  ]);
 
   const loadExample = useCallback(() => {
     seq = 1;
@@ -5450,23 +5553,7 @@ const EXAMPLE_FULL = `версия "1.0"
 
   return (
     <BuilderUiContext.Provider value={{ lang: uiLang, blockTypes: builderBlockTypes, t: builderUi }}>
-    <AddBlockContext.Provider value={(type) => {
-        setStacks(prev => {
-          const selStack = prev.find(s => s.id === selectedStackId) || prev[prev.length - 1];
-          if (!selStack) {
-            return [...prev, { id: uid(), x: 40, y: 40 + prev.length * 80, blocks: [{ id: uid(), type, props: { ...(DEFAULT_PROPS[type] || {}) } }] }];
-          }
-          // Берём последний блок стека как родителя → выводим умные дефолты
-          const parentBlock = selStack.blocks[selStack.blocks.length - 1] || null;
-          const smartProps = inferPropsFromParent(parentBlock, type, selStack.blocks);
-          const finalProps = { ...(DEFAULT_PROPS[type] || {}), ...smartProps };
-          return prev.map(s => s.id === selStack.id
-            ? { ...s, blocks: [...s.blocks, { id: uid(), type, props: finalProps }] }
-            : s
-          );
-        });
-        setBlockInfo(null);
-      }}>
+    <AddBlockContext.Provider value={addBlockFromContext}>
     <BlockInfoContext.Provider value={setBlockInfo}>
     <style>{`
       :root {
@@ -6529,7 +6616,7 @@ const EXAMPLE_FULL = `версия "1.0"
       {currentUser ? (
         /* Main layout */
         <>
-        <div style={{ display:'grid', gridTemplateColumns: isMobileView ? '1fr' : '180px 1fr minmax(300px, 360px)', overflow:'hidden', flex: 1, position: 'relative' }}>
+        <div style={{ display:'grid', gridTemplateColumns: isMobileView ? '1fr' : '180px 1fr minmax(300px, 360px)', overflow:'hidden', flex: 1, minHeight: 0, height: '100%', position: 'relative' }}>
 
         {/* Sidebar — hidden on mobile unless blocks tab */}
         {(isMobileView && mobileTab !== 'blocks') ? null : (
@@ -6553,25 +6640,7 @@ const EXAMPLE_FULL = `версия "1.0"
           <Sidebar
             onDragStart={setDraggingNewType}
             onDragEnd={endPaletteDrag}
-            onTapAdd={isMobileView ? (type) => {
-            const id = uid();
-            const { x, y } = getCanvasCenterStackPosition();
-            setStacks(prev => {
-              const props = { ...(DEFAULT_PROPS[type] || {}) };
-              if (type === 'bot') {
-                const tok = resolveBotTokenForNewBlock(prev, currentUser);
-                if (tok) props.token = tok;
-              }
-              return [...prev, {
-                id: uid(), x, y,
-                blocks: [{ id, type, props }],
-              }];
-            });
-            setSelectedBlockId(null);
-            setSelectedStackId(null);
-            setMobileAttentionBlockId(id);
-            setMobileTab('canvas');
-          } : null} />
+            onTapAdd={isMobileView ? addBlockFromPaletteTap : null} />
         </div>
         )}
 
@@ -6846,6 +6915,8 @@ const EXAMPLE_FULL = `версия "1.0"
             ? (mobileTab === 'dsl' ? '0 -10px 34px rgba(0,0,0,0.58)' : 'none')
             : '-4px 0 24px rgba(0,0,0,0.4)',
           minWidth: 0,
+          minHeight: 0,
+          height: isMobileView ? undefined : '100%',
           position: 'relative',
           zIndex: 2,
           ...(isMobileView ? {
