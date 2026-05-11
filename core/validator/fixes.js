@@ -10,6 +10,9 @@ const ARROW_FIX_DESC =
 const REPLY_KNOPKI_PIPE_FIX =
   'Reply-кнопки: в поле кнопок и в DSL одна строка — через запятую; символ | здесь не разделитель.';
 
+const MISSING_BUTTONS_FIX =
+  'В обработчике нажатия нет кнопок: добавлена кнопка «🏠 Главная».';
+
 /**
  * Поле блока «Кнопки» (props.rows): запятая = в одном ряду, Enter = новый ряд.
  * Модели часто ошибочно подставляют | как в inline — заменяем на запятую по строкам.
@@ -914,11 +917,58 @@ export function collectDSLFixes(code) {
     }
     return fixed;
   });
+  const withButtons = injectDefaultButtonsForClickHandlers(newLines, fixes, changedLines);
   return {
     fixes,
-    correctedCode: newLines.join('\n'),
+    correctedCode: withButtons.join('\n'),
     changedLines,
   };
+}
+
+function injectDefaultButtonsForClickHandlers(lines, fixes, changedLines) {
+  const out = [...lines];
+  const isClickStart = (t) => /^при\s+нажатии\s+"[^"]+"\s*:\s*$/i.test(t);
+  const isBlockStart = (t) => /^(блок|сценарий|шаг|при\s+)/i.test(t);
+  const indentOf = (s) => s.match(/^\s*/)?.[0]?.length ?? 0;
+
+  for (let i = 0; i < out.length; i += 1) {
+    if (!isClickStart(out[i].trim())) continue;
+    const baseIndent = indentOf(out[i]);
+    let j = i + 1;
+    let hasReply = false;
+    let hasButtons = false;
+    let hasTerminalNav = false;
+    while (j < out.length) {
+      const line = out[j];
+      const trimmed = line.trim();
+      if (!trimmed) {
+        j += 1;
+        continue;
+      }
+      const indent = indentOf(line);
+      if (indent <= baseIndent && isBlockStart(trimmed)) break;
+      if (/^ответ\s+/i.test(trimmed)) hasReply = true;
+      if (/^(?:кнопки(?:\s|:|$)|inline-кнопки:?\s*$)/i.test(trimmed)) hasButtons = true;
+      if (/^(?:перейти|использовать|запустить|стоп)\b/i.test(trimmed)) hasTerminalNav = true;
+      j += 1;
+    }
+
+    if (hasReply && !hasButtons && !hasTerminalNav) {
+      const insertAt = j;
+      const row = `${' '.repeat(baseIndent + 4)}кнопки "🏠 Главная"`;
+      out.splice(insertAt, 0, row);
+      fixes.push({
+        line: insertAt + 1,
+        message: MISSING_BUTTONS_FIX,
+        before: '',
+        after: row,
+      });
+      changedLines.push(insertAt);
+      i = insertAt;
+    }
+  }
+
+  return out;
 }
 
 /**
