@@ -1651,7 +1651,8 @@ class Executor:
         self._send_media(ctx.chat_id, "photo", stmt.url)
 
     def _exec_sticker(self, stmt: Sticker, ctx):
-        self._send_media(ctx.chat_id, "sticker", stmt.file_id)
+        file_id = eval_expr(stmt.file_id, ctx) if not isinstance(stmt.file_id, str) else stmt.file_id
+        self._send_media(ctx.chat_id, "sticker", str(file_id))
 
     def _exec_forward_photo(self, stmt: ForwardPhoto, ctx):
         file_id = ctx.get("файл_id", "")

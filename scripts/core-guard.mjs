@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
-const EXPECTED_VERSION = '0.3.3';
+const EXPECTED_VERSION = '0.3.4';
 const DEFAULT_CANONICAL_CORE = '/usr/local/lib/python3.12/dist-packages/cicada';
 const SYNCED_DIRS = [
   'cicada',

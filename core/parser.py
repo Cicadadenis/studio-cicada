@@ -174,7 +174,7 @@ class PhotoVar:
 
 @dataclass
 class Sticker:
-    file_id: str
+    file_id: Any
 
 
 @dataclass
@@ -1626,6 +1626,12 @@ class Parser:
             return SendDocument(Variable("файл_id"), m.group(1))
         if line == "переслать документ":
             return SendDocument(Variable("файл_id"), "")
+
+        # переслать голосовое/стикер — отправляет полученный file_id обратно в чат
+        if line in ("переслать голосовое", "переслать голос"):
+            return SendVoice(Variable("файл_id"), "")
+        if line == "переслать стикер":
+            return Sticker(Variable("файл_id"))
 
         # запомни файл → переменная
         m = re.match(r'^запомни файл\s*→\s*(\w+)$', line)

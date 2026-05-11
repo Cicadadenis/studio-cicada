@@ -7,7 +7,7 @@ import { lintDSLSchema, formatDSLDiagnostic } from '../core/validator/schema.js'
 import { validateDSL } from '../core/validator/uiDslValidator.js';
 import { collectDSLFixes } from '../core/validator/fixes.js';
 import { RUNTIME_PROPERTY_NAMES } from '../core/runtime/rules.js';
-import { generateDSL, stackToDSL } from '../core/stacksToDsl.js';
+import { canRenderUi, generateDSL, stackToDSL } from '../core/stacksToDsl.js';
 import { getCsrfTokenForRequest, resetCsrfPrefetch } from './csrf.js';
 import confetti from 'canvas-confetti';
 import {
@@ -37,7 +37,7 @@ async function saveProjectToCloud(_userId, projectName, stacks) {
   const data = await apiFetch('/api/projects', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: projectName, stacks }),
+    body: JSON.stringify({ name: projectName, stacks: normalizeStudioStacks(stacks) }),
   });
   return data.project;
 }
@@ -112,7 +112,7 @@ async function apiFetch(url, options = {}, retryCsrf = true) {
   const jwt = getStoredJwt();
   const authHeaders = jwt ? { Authorization: `Bearer ${jwt}` } : {};
   const csrfHeaders = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)
-    ? { 'x-csrf-token': await getCsrfTokenForRequest() }
+    ? { 'x-csrf-token': await getCsrfTokenForRequest(url) }
     : {};
   const mergedHeaders = { ...authHeaders, ...csrfHeaders, ...(options.headers || {}) };
   let res;
@@ -151,10 +151,10 @@ async function apiFetch(url, options = {}, retryCsrf = true) {
   return data;
 }
 
-async function postJsonWithCsrf(url, body) {
-  const token = await getCsrfTokenForRequest();
+async function postJsonWithCsrf(url, body, retryCsrf = true) {
+  const token = await getCsrfTokenForRequest(url);
   const jwt = getStoredJwt();
-  return fetch(url, {
+  const res = await fetch(url, {
     method: 'POST',
     credentials: 'include',
     headers: {
@@ -164,6 +164,14 @@ async function postJsonWithCsrf(url, body) {
     },
     body: JSON.stringify(body ?? {}),
   });
+  if (retryCsrf && res.status === 403) {
+    const data = await res.clone().json().catch(() => ({}));
+    if (typeof data?.error === 'string' && data.error.includes('CSRF')) {
+      resetCsrfPrefetch();
+      return postJsonWithCsrf(url, body, false);
+    }
+  }
+  return res;
 }
 
 async function fetchOauthBootstrapUser() {
@@ -183,12 +191,7 @@ async function fetchOauthBootstrapUser() {
 }
 
 async function completeOauth2FA(totp = '') {
-  const res = await fetch('/api/auth/oauth-2fa/complete', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify({ totp }),
-  });
+  const res = await postJsonWithCsrf('/api/auth/oauth-2fa/complete', { totp });
   const data = await res.json().catch(() => ({}));
   if (data?.twofaRequired) {
     const e = new Error(data.error || 'Неверный код 2FA');
@@ -209,12 +212,7 @@ async function registerUser(name, email, password) {
 }
 
 async function loginUser(email, password, totp = '') {
-  const res = await fetch(`${API_URL}/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify({ email, password, totp }),
-  });
+  const res = await postJsonWithCsrf(`${API_URL}/login`, { email, password, totp });
   const data = await res.json().catch(() => ({}));
   if (data?.twofaRequired) {
     const e = new Error(data.error || 'Требуется код 2FA');
@@ -307,26 +305,6 @@ async function uploadAvatar(userId, dataUrl, currentUser = null) {
     normalized.photo_url = rawUser.photo_url ?? null;
   }
   return normalized;
-}
-
-async function fetch2FASetup(userId) {
-  return apiFetch(`${API_URL}/2fa/setup?userId=${encodeURIComponent(userId)}`);
-}
-
-async function enable2FA(userId, code) {
-  return apiFetch(`${API_URL}/2fa/enable`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ userId, code }),
-  });
-}
-
-async function disable2FA(userId, code) {
-  return apiFetch(`${API_URL}/2fa/disable`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ userId, code }),
-  });
 }
 
 // session utils — без изменений
@@ -531,7 +509,139 @@ const CAN_STACK_BELOW = {
   call_block:  ['message','remember','save','condition','log','stop','goto','use'],
 };
 
+const UI_ATTACHMENT_LEGACY_BLOCK_TYPES = new Set(['buttons', 'inline', 'inline_db']);
+const BLOCK_FOOTER_ACTION_TYPES = Object.freeze({
+  buttons: { label: 'Кнопки', icon: '⊞', color: '#a78bfa' },
+  inline: { label: 'Inline', icon: '▦', color: '#7c3aed' },
+  media: { label: 'Медиа', icon: '▣', color: '#34d399' },
+});
+const DEFAULT_BLOCK_FOOTER_ACTIONS = Object.freeze([]);
+const BLOCK_FOOTER_ACTION_CAPABILITY_MATRIX = Object.freeze({
+  reply: ['buttons', 'inline', 'media'],
+  message: ['buttons', 'inline', 'media'],
+  caption: ['buttons', 'inline', 'media'],
+  media: ['buttons', 'inline'],
+  photo: ['buttons', 'inline'],
+  video: ['buttons', 'inline'],
+  audio: ['buttons', 'inline'],
+  document: ['buttons', 'inline'],
+  send_file: ['buttons', 'inline'],
+  sticker: ['buttons', 'inline'],
+});
+
+function getBlockFooterAddableActions(type) {
+  if (!canRenderUi(type)) return [];
+  if (Object.prototype.hasOwnProperty.call(BLOCK_FOOTER_ACTION_CAPABILITY_MATRIX, type)) {
+    return [...BLOCK_FOOTER_ACTION_CAPABILITY_MATRIX[type]];
+  }
+  return [...DEFAULT_BLOCK_FOOTER_ACTIONS];
+}
+
+function normalizeBlockUi(block) {
+  const ui = block?.ui && typeof block.ui === 'object' ? block.ui : {};
+  if (!canRenderUi(block?.type)) {
+    return { ...ui, addableActions: [] };
+  }
+  const configured = Array.isArray(ui.addableActions)
+    ? ui.addableActions
+    : (Array.isArray(ui.addable) ? ui.addable : getBlockFooterAddableActions(block?.type));
+  return {
+    ...ui,
+    addableActions: configured.filter((kind) => Boolean(BLOCK_FOOTER_ACTION_TYPES[kind])),
+  };
+}
+
+function normalizeUiAttachments(value) {
+  const src = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  return {
+    replies: Array.isArray(src.replies) ? src.replies : [],
+    buttons: Array.isArray(src.buttons) ? src.buttons : [],
+    inline: Array.isArray(src.inline) ? src.inline : [],
+    media: Array.isArray(src.media) ? src.media : [],
+    transitions: Array.isArray(src.transitions) ? src.transitions : [],
+  };
+}
+
+function normalizeUiAttachmentsForOwner(value, ownerType) {
+  const normalized = normalizeUiAttachments(value);
+  if (!canRenderUi(ownerType)) return normalizeUiAttachments(null);
+  const allowed = new Set(getBlockFooterAddableActions(ownerType));
+  return {
+    ...normalizeUiAttachments(null),
+    buttons: allowed.has('buttons') ? normalized.buttons : [],
+    inline: allowed.has('inline') ? normalized.inline : [],
+    media: allowed.has('media') ? normalized.media : [],
+  };
+}
+
+function normalizeStudioBlockNode(block) {
+  if (!block) return block;
+  return {
+    ...block,
+    ui: normalizeBlockUi(block),
+    uiAttachments: normalizeUiAttachmentsForOwner(block.uiAttachments, block.type),
+  };
+}
+
+function normalizeStudioStacks(stacks) {
+  return (stacks || []).map((stack) => ({
+    ...stack,
+    blocks: (stack.blocks || []).map(normalizeStudioBlockNode),
+  }));
+}
+
+function createStudioBlockNode(type, props = {}, id = uid()) {
+  return normalizeStudioBlockNode({ id, type, props });
+}
+
+function countUiAttachments(block) {
+  const attachments = normalizeUiAttachmentsForOwner(block?.uiAttachments, block?.type);
+  return Object.values(attachments).reduce((sum, list) => sum + list.length, 0);
+}
+
+function defaultUiAttachment(kind, source = {}) {
+  const id = uid();
+  if (kind === 'reply') return { id, text: source.text || 'Ответ' };
+  if (kind === 'buttons') return { id, text: source.text || 'Кнопка', action: source.action || 'goto:main' };
+  if (kind === 'inline') return { id, text: source.text || 'Кнопка', callback: source.callback || 'callback', action: source.action || '' };
+  if (kind === 'media') return { id, kind: source.kind || 'photo', url: source.url || '', caption: source.caption || '' };
+  if (kind === 'transition') return { id, action: source.action || 'goto', target: source.target || 'main' };
+  return { id };
+}
+
+function legacyBlockToUiAttachment(type, props = {}) {
+  if (type === 'buttons') return { kind: 'buttons', attachment: defaultUiAttachment('buttons', { text: firstReplyButtonLabelFromRows(props.rows) || 'Кнопка' }) };
+  if (type === 'inline') {
+    const [first = 'Кнопка', callback = 'callback'] = String(props.buttons || '').split(/[,\n]/)[0]?.split('|').map((x) => x.trim()) || [];
+    return { kind: 'inline', attachment: defaultUiAttachment('inline', { text: first || 'Кнопка', callback: callback || 'callback' }) };
+  }
+  if (type === 'inline_db') {
+    return {
+      kind: 'inline',
+      attachment: {
+        ...defaultUiAttachment('inline', { text: props.backText || 'Назад', callback: props.backCallback || 'назад' }),
+        inlineDb: { ...props },
+      },
+    };
+  }
+  return null;
+}
+
+function addUiAttachment(block, kind, attachment = defaultUiAttachment(kind)) {
+  if (!canRenderUi(block?.type) || !BLOCK_FOOTER_ACTION_TYPES[kind]) return normalizeStudioBlockNode(block);
+  const next = normalizeStudioBlockNode(block);
+  const key = kind === 'reply' ? 'replies' : (kind === 'transition' ? 'transitions' : kind);
+  return {
+    ...next,
+    uiAttachments: {
+      ...next.uiAttachments,
+      [key]: [...(next.uiAttachments[key] || []), attachment],
+    },
+  };
+}
+
 function canStackBelow(parentType, childType) {
+  if (UI_ATTACHMENT_LEGACY_BLOCK_TYPES.has(childType)) return false;
   return (CAN_STACK_BELOW[parentType] || []).includes(childType);
 }
 
@@ -584,7 +694,7 @@ function findNewBlockSnapTarget(stacks, worldGhostLeft, worldGhostTop, newType) 
 
 function snapAttachRejectHint(parentType, childType, ui) {
   const t = ui || getConstructorStrings('ru');
-  if ((childType === 'buttons' || childType === 'inline') && parentType !== 'message') {
+  if (UI_ATTACHMENT_LEGACY_BLOCK_TYPES.has(childType) && !canRenderUi(parentType)) {
     return t.snapButtonsNeedMessage;
   }
   if (childType === 'inline' && parentType === 'inline') {
@@ -603,7 +713,7 @@ const NEXT_BLOCK_PRIORITY = [
 ];
 
 function getSuggestedNextBlockLabels(parentType, max = 14, blockTypes = BLOCK_TYPES) {
-  const allowed = CAN_STACK_BELOW[parentType];
+  const allowed = (CAN_STACK_BELOW[parentType] || []).filter((type) => !UI_ATTACHMENT_LEGACY_BLOCK_TYPES.has(type));
   if (!allowed?.length) return [];
   const set = new Set(allowed);
   const out = [];
@@ -842,7 +952,13 @@ function normalizeAiPartialResponse(data) {
   const reasonCodes = Array.isArray(data?.reasonCodes)
     ? data.reasonCodes.filter(Boolean).map(String)
     : (data?.reason ? [String(data.reason)] : []);
-  const skeletonFallback = reasonCodes.includes('IR_FALLBACK_SKELETON_USED') || data?.irState === 'SKELETON_IR';
+  const executionMode = data?.executionMode || data?.meta?.executionMode || null;
+  const skeletonFallback = (
+    executionMode === 'FALLBACK_SKELETON' ||
+    reasonCodes.includes('IR_FALLBACK_SKELETON_USED') ||
+    data?.irState === 'SKELETON_IR'
+  );
+  const recoveryMode = executionMode === 'AI_RECOVERY';
   const fallbackFailed = normalizedFailed.length ? normalizedFailed : diagnostics;
   const whatFailed = fallbackFailed.filter((item) => (
     item?.severity !== 'info' &&
@@ -864,7 +980,14 @@ function normalizeAiPartialResponse(data) {
     status: data?.status || 'partial_success',
     reason: data?.reason || null,
     reasonCodes,
+    executionMode,
+    rootCause: data?.rootCause || data?.meta?.rootCause || null,
+    aiConfidenceLabel: data?.aiConfidenceLabel || data?.meta?.aiConfidenceLabel || 'LOW',
+    executionDecisionScore: data?.executionDecisionScore || data?.meta?.executionDecisionScore || null,
+    isDegraded: Boolean(data?.isDegraded ?? skeletonFallback),
+    isAIGenerated: Boolean(data?.isAIGenerated ?? !skeletonFallback),
     skeletonFallback,
+    recoveryMode,
     safeToRun,
     userActions,
     sections: {
@@ -1389,7 +1512,7 @@ function CompatibleBlocksHint({ type, color, mode = 'tooltip', onAdd }) {
   const blockTypes = ctx?.blockTypes || localizeBlockTypes(BLOCK_TYPES, 'ru');
   const ui = ctx?.t || getConstructorStrings('ru');
 
-  const allowed = CAN_STACK_BELOW[type] || [];
+  const allowed = (CAN_STACK_BELOW[type] || []).filter((childType) => !UI_ATTACHMENT_LEGACY_BLOCK_TYPES.has(childType));
   const isModal = mode === 'modal';
   const grouped = {};
   allowed.forEach((ct) => {
@@ -1477,7 +1600,7 @@ function BlockTooltip({ type, color }) {
   const ctx = React.useContext(BuilderUiContext);
   const lang = ctx?.lang || 'ru';
   const ui = ctx?.t || getConstructorStrings('ru');
-  const allowed = CAN_STACK_BELOW[type] || [];
+  const allowed = (CAN_STACK_BELOW[type] || []).filter((childType) => !UI_ATTACHMENT_LEGACY_BLOCK_TYPES.has(childType));
   const rawNote = BLOCK_NOTES[type];
   const note = blockNoteForLang(lang, type, rawNote);
 
@@ -1498,11 +1621,77 @@ function BlockTooltip({ type, color }) {
   );
 }
 
-function BlockShape({ type, props, isFirst, selected, attention, onClick, onDelete }) {
+function BlockFooterActions({ block, selected, onAdd }) {
+  if (!selected || !block || !onAdd) return null;
+  if (!canRenderUi(block.type)) return null;
+  const allowed = normalizeBlockUi(block).addableActions;
+  if (!allowed.length) return null;
+  const attachmentCount = countUiAttachments(block);
+  return (
+    <div
+      onClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      style={{
+        position: 'absolute',
+        left: 0,
+        top: 'calc(100% + 2px)',
+        width: BLOCK_W,
+        display: 'flex',
+        gap: 4,
+        flexWrap: 'wrap',
+        padding: '5px 6px',
+        borderRadius: 9,
+        background: 'rgba(8, 12, 24, 0.92)',
+        border: '1px solid rgba(255,255,255,0.12)',
+        boxShadow: '0 8px 22px rgba(0,0,0,0.36)',
+        zIndex: 20,
+      }}
+    >
+      {allowed.map((kind) => {
+        const cfg = BLOCK_FOOTER_ACTION_TYPES[kind];
+        return (
+          <button
+            key={kind}
+            type="button"
+            title={`Добавить ${cfg.label} как UI attachment`}
+            onClick={() => onAdd(block.id, kind)}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 3,
+              padding: '4px 6px',
+              borderRadius: 7,
+              border: `1px solid ${cfg.color}55`,
+              background: `${cfg.color}18`,
+              color: '#fff',
+              fontSize: 9,
+              fontWeight: 700,
+              cursor: 'pointer',
+              fontFamily: 'Syne, system-ui',
+            }}
+          >
+            <span>{cfg.icon}</span>
+            <span>{cfg.label}</span>
+          </button>
+        );
+      })}
+      {attachmentCount > 0 && (
+        <span style={{ marginLeft: 'auto', alignSelf: 'center', color: 'rgba(255,255,255,0.48)', fontSize: 9 }}>
+          UI: {attachmentCount}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function BlockShape({ block, type, props, isFirst, selected, attention, onClick, onDelete, onAddFooterAction }) {
   const ctx = React.useContext(BuilderUiContext);
   const blockTypes = ctx?.blockTypes || BLOCK_TYPES;
   const ui = ctx?.t || getConstructorStrings('ru');
-  const def = getBlockDef(type, blockTypes);
+  const actualBlock = normalizeStudioBlockNode(block || { type, props });
+  const actualType = actualBlock.type;
+  const actualProps = actualBlock.props || {};
+  const def = getBlockDef(actualType, blockTypes);
   if (!def) return null;
 
   const openBlockInfo = React.useContext(BlockInfoContext);
@@ -1512,7 +1701,7 @@ function BlockShape({ type, props, isFirst, selected, attention, onClick, onDele
   const color   = def.color;
   const icon    = def.icon;
   const label   = def.label;
-  const preview = getPreview(type, props);
+  const preview = getPreview(actualType, actualProps);
 
   // Puzzle notch logic
   const hasTopSocket  = !isFirst;
@@ -1549,8 +1738,8 @@ function BlockShape({ type, props, isFirst, selected, attention, onClick, onDele
       >
         <path d={path} fill="rgba(0,0,0,0.35)" transform="translate(0,3)" />
         <path d={path} fill={color} />
-        <clipPath id={`hc-${type}-${isFirst}`}><rect x="0" y="0" width={BLOCK_W} height={h} /></clipPath>
-        <path d={path} fill={dark} clipPath={`url(#hc-${type}-${isFirst})`} opacity="0.45" />
+        <clipPath id={`hc-${actualType}-${isFirst}`}><rect x="0" y="0" width={BLOCK_W} height={h} /></clipPath>
+        <path d={path} fill={dark} clipPath={`url(#hc-${actualType}-${isFirst})`} opacity="0.45" />
         <path d={path} fill="rgba(255,255,255,0.12)" />
         <path d={path} fill="none" stroke="rgba(255,255,255,0.22)" strokeWidth="1.2" />
         <path d={path} fill="none" stroke="rgba(0,0,0,0.28)" strokeWidth="1" transform="translate(0,1)" />
@@ -1594,7 +1783,7 @@ function BlockShape({ type, props, isFirst, selected, attention, onClick, onDele
           aria-label={ui.blockHelpAria}
           onClick={e => {
             e.stopPropagation();
-            if (openBlockInfo) openBlockInfo({ type, props: props || {} });
+            if (openBlockInfo) openBlockInfo({ type: actualType, props: actualProps });
           }}
           style={{
             width: 26, height: 26, minWidth: 26, minHeight: 26, borderRadius: '50%',
@@ -1623,6 +1812,7 @@ function BlockShape({ type, props, isFirst, selected, attention, onClick, onDele
             }}>×</button>
         )}
       </div>
+      <BlockFooterActions block={actualBlock} selected={selected} onAdd={onAddFooterAction} />
     </div>
   );
 }
@@ -1740,7 +1930,7 @@ function BlockInfoModal({ block, onClose }) {
 
 // ─── BLOCK STACK ──────────────────────────────────────────────────────────
 /** newBlockDrop: 'valid' | 'invalid' | null — подсветка при перетаскивании блока с палитры */
-function BlockStack({ stack, selectedId, attentionBlockId, onSelectBlock, onDeleteBlock, onDragStack, isDragTarget, newBlockDrop, newBlockDropHint }) {
+function BlockStack({ stack, selectedId, attentionBlockId, onSelectBlock, onDeleteBlock, onDragStack, onAddFooterAction, isDragTarget, newBlockDrop, newBlockDropHint }) {
   const ui = React.useContext(BuilderUiContext)?.t || getConstructorStrings('ru');
   return (
     <div
@@ -1773,6 +1963,7 @@ function BlockStack({ stack, selectedId, attentionBlockId, onSelectBlock, onDele
       {stack.blocks.map((block, i) => (
         <BlockShape
           key={block.id}
+          block={block}
           type={block.type}
           props={block.props}
           isFirst={i === 0}
@@ -1780,6 +1971,7 @@ function BlockStack({ stack, selectedId, attentionBlockId, onSelectBlock, onDele
           attention={attentionBlockId === block.id}
           onClick={e => { e.stopPropagation(); onSelectBlock(block.id, stack.id); }}
           onDelete={() => onDeleteBlock(stack.id, block.id)}
+          onAddFooterAction={onAddFooterAction}
         />
       ))}
 
@@ -2119,12 +2311,65 @@ function collectReplyButtonOptions(stacks) {
             else if (title) addOption(`${blockName} (inline)`, title);
           });
       }
+      const attachments = normalizeUiAttachmentsForOwner(b?.uiAttachments, b?.type);
+      attachments.buttons.forEach((item) => addOption(`${blockName} (ui buttons)`, item.text));
+      attachments.inline.forEach((item) => addOption(`${blockName} (ui inline)`, item.callback || item.text));
     });
   });
   return options;
 }
 
-function PropsPanel({ block, onChange, stacks }) {
+function UiAttachmentsPanel({ block, onAttachmentChange, onAttachmentDelete }) {
+  const attachments = normalizeUiAttachmentsForOwner(block?.uiAttachments, block?.type);
+  const groups = [
+    { key: 'buttons', title: 'UI buttons', fields: [{ key: 'text', label: 'текст' }, { key: 'action', label: 'action' }] },
+    { key: 'inline', title: 'UI inline', fields: [{ key: 'text', label: 'текст' }, { key: 'callback', label: 'callback' }, { key: 'action', label: 'action' }] },
+    { key: 'media', title: 'UI media', fields: [{ key: 'kind', label: 'тип' }, { key: 'url', label: 'url' }, { key: 'caption', label: 'caption' }] },
+  ];
+  const total = Object.values(attachments).reduce((sum, list) => sum + list.length, 0);
+  if (!total) return null;
+  return (
+    <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+      <div style={{ fontSize: 9, color: '#a78bfa', textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 8, fontWeight: 700 }}>
+        UI attachments
+      </div>
+      <div style={{ fontSize: 10, color: 'var(--text3)', lineHeight: 1.45, marginBottom: 10 }}>
+        Эти элементы принадлежат только render action и компилируются рядом с ним.
+      </div>
+      {groups.map((group) => {
+        const list = attachments[group.key] || [];
+        if (!list.length) return null;
+        return (
+          <div key={group.key} style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 10, color: 'var(--text2)', fontWeight: 700, marginBottom: 6 }}>{group.title}</div>
+            {list.map((item) => (
+              <div key={item.id} style={{ padding: 8, border: '1px solid rgba(255,255,255,0.08)', borderRadius: 9, marginBottom: 6, background: 'rgba(255,255,255,0.025)' }}>
+                {group.fields.map((field) => (
+                  <label key={field.key} style={{ display: 'block', marginBottom: 6 }}>
+                    <span style={{ display: 'block', fontSize: 8, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 3 }}>{field.label}</span>
+                    <input
+                      value={item[field.key] || ''}
+                      onChange={(e) => onAttachmentChange(group.key, item.id, { [field.key]: e.target.value })}
+                    />
+                  </label>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => onAttachmentDelete(group.key, item.id)}
+                  style={{ marginTop: 2, padding: '6px 8px', borderRadius: 8, border: '1px solid rgba(248,113,113,0.25)', background: 'rgba(248,113,113,0.08)', color: '#f87171', fontSize: 10, cursor: 'pointer' }}
+                >
+                  Удалить attachment
+                </button>
+              </div>
+            ))}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function PropsPanel({ block, onChange, onAttachmentChange, onAttachmentDelete, stacks }) {
   const ctx = React.useContext(BuilderUiContext);
   const lang = ctx?.lang || 'ru';
   const blockTypes = ctx?.blockTypes || BLOCK_TYPES;
@@ -2240,6 +2485,11 @@ function PropsPanel({ block, onChange, stacks }) {
       {fields.length === 0 && (
         <div style={{ color: 'var(--text3)', fontSize: 10 }}>{ui.noSettings}</div>
       )}
+      <UiAttachmentsPanel
+        block={block}
+        onAttachmentChange={onAttachmentChange}
+        onAttachmentDelete={onAttachmentDelete}
+      />
     </div>
   );
 }
@@ -2828,7 +3078,7 @@ function loadCanvasForKey(key) {
 
 function saveCanvasForKey(key, stacks, offset, scale) {
   try {
-    localStorage.setItem(key, JSON.stringify({ stacks, offset, scale }));
+    localStorage.setItem(key, JSON.stringify({ stacks: normalizeStudioStacks(stacks), offset, scale }));
   } catch {/* ignore */}
 }
 
@@ -3027,9 +3277,11 @@ function OnboardingTour({ steps, stepIndex, onNext, onPrev, onSkip, labels }) {
 const AI_GEN_LOADING_STEPS = [
   'Анализирую',
   'Исправляю структуру',
+  'Оптимизирую сценарий для стабильного выполнения...',
   'Проверяю сценарии',
   'Готово',
 ];
+const AI_PROMPT_MAX_CHARS = 50;
 
 // ─── MAIN APP ─────────────────────────────────────────────────────────────
 export default function App() {
@@ -3098,6 +3350,10 @@ export default function App() {
   );
   const canSeeCode = isAdmin || hasActiveProSubscription;
   const canUseAiGenerator = hasActiveProSubscription;
+  const aiPromptText = aiPrompt.trim();
+  const aiPromptTooShort = aiPromptText.length < 5;
+  const aiPromptTooLong = aiPromptText.length > AI_PROMPT_MAX_CHARS;
+  const canSubmitAiPrompt = !aiLoading && !aiPromptTooShort && !aiPromptTooLong && !aiPartialResult?.skeletonFallback;
 
   // Mobile state
   const [mobileTab, setMobileTab] = useState('canvas'); // 'canvas' | 'blocks' | 'props' | 'dsl'
@@ -3318,7 +3574,7 @@ export default function App() {
     setSelectedBlockId(null);
     setSelectedStackId(null);
     if (data?.stacks && Array.isArray(data.stacks)) {
-      setStacks(data.stacks);
+      setStacks(normalizeStudioStacks(data.stacks));
       setCanvasOffset(data.offset ?? { x: 0, y: 0 });
       const sc = data.scale;
       setCanvasScale(typeof sc === 'number' && !Number.isNaN(sc) ? sc : 1);
@@ -3407,7 +3663,7 @@ export default function App() {
       x: (s.x || 40) + offsetX,
       y: s.y || 40,
       blocks: (s.blocks || []).map((b, bi) => ({
-        ...b,
+        ...normalizeStudioBlockNode(b),
         id: `ai_b_${timestamp}_${i}_${bi}`,
         props: b.type === 'bot' && resolvedTok
           ? { ...b.props, token: resolvedTok }
@@ -3421,20 +3677,30 @@ export default function App() {
     showToast(
       options.skeletonFallback
         ? 'Запущена базовая версия сценария (без сложной логики).'
+        : options.recoveryMode
+        ? 'Сценарий оптимизирован для стабильного выполнения.'
         : options.partial
         ? 'Частичный сценарий добавлен на холст. Проверьте диагностику перед запуском.'
-        : '✨ AI сгенерировал схему бота!',
-      options.partial || options.skeletonFallback ? 'info' : 'success',
+        : `✨ AI сгенерировал схему бота!${options.aiConfidenceLabel ? ` AI confidence: ${options.aiConfidenceLabel}` : ''}`,
+      options.partial || options.skeletonFallback || options.recoveryMode ? 'info' : 'success',
     );
   }, [currentUser, showToast, stacks]);
 
   const runAiGeneration = useCallback(async () => {
+    if (aiPromptTooShort) {
+      setAiError('Опиши бота минимум 5 символами');
+      return;
+    }
+    if (aiPromptTooLong) {
+      setAiError(`Запрос должен быть не длиннее ${AI_PROMPT_MAX_CHARS} символов`);
+      return;
+    }
     setAiLoading(true);
     setAiError('');
     setAiPartialResult(null);
     setAiDiagnosticsOpen(false);
     try {
-      const token = await getCsrfTokenForRequest();
+      const token = await getCsrfTokenForRequest(`${API_URL}/ai-generate`);
       const jwt = getStoredJwt();
       const res = await fetch(`${API_URL}/ai-generate`, {
         method: 'POST',
@@ -3444,7 +3710,7 @@ export default function App() {
           'x-csrf-token': token,
           ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
         },
-        body: JSON.stringify({ prompt: aiPrompt.trim() }),
+        body: JSON.stringify({ prompt: aiPromptText }),
       });
       if (!res.ok) {
         const text = await res.text();
@@ -3453,7 +3719,7 @@ export default function App() {
         throw new Error(msg);
       }
       const data = await res.json();
-      if (data.status === 'partial_success' || data.partial) {
+      if (data.status === 'partial_success' || data.status === 'fallback_skeleton' || data.partial) {
         const partial = normalizeAiPartialResponse(data);
         setAiPartialResult(partial);
         if (!partial.hasContext) {
@@ -3470,13 +3736,13 @@ export default function App() {
         throw new Error(data.error || `AI generation failed: ${data.reason || 'NO_DIAGNOSTIC_CONTEXT'}`);
       }
       if (data.error) throw new Error(data.error);
-      applyAiGeneratedStacks(data.stacks);
+      applyAiGeneratedStacks(data.stacks, { aiConfidenceLabel: data.aiConfidenceLabel });
     } catch (e) {
       setAiError(e.message || 'Что-то пошло не так');
     } finally {
       setAiLoading(false);
     }
-  }, [aiPrompt, applyAiGeneratedStacks]);
+  }, [aiPromptText, aiPromptTooLong, aiPromptTooShort, applyAiGeneratedStacks]);
 
   const selectedBlock = React.useMemo(() => {
     if (!selectedBlockId) return null;
@@ -3513,6 +3779,54 @@ export default function App() {
       blocks: s.blocks.map(b =>
         b.id === selectedBlockId ? { ...b, props: { ...b.props, [key]: val } } : b
       ),
+    })));
+  }, [selectedBlockId]);
+
+  const handleAddFooterAction = useCallback((blockId, kind) => {
+    if (!blockId || !BLOCK_FOOTER_ACTION_TYPES[kind]) return;
+    setStacks(prev => prev.map(s => ({
+      ...s,
+      blocks: s.blocks.map(b => (b.id === blockId ? addUiAttachment(b, kind) : b)),
+    })));
+    setSelectedBlockId(blockId);
+  }, []);
+
+  const handleAttachmentChange = useCallback((group, attachmentId, updates) => {
+    if (!selectedBlockId || !group || !attachmentId) return;
+    setStacks(prev => prev.map(s => ({
+      ...s,
+      blocks: s.blocks.map((b) => {
+        if (b.id !== selectedBlockId) return b;
+        if (!canRenderUi(b.type)) return normalizeStudioBlockNode(b);
+        const next = normalizeStudioBlockNode(b);
+        const list = next.uiAttachments[group] || [];
+        return {
+          ...next,
+          uiAttachments: {
+            ...next.uiAttachments,
+            [group]: list.map((item) => (item.id === attachmentId ? { ...item, ...updates } : item)),
+          },
+        };
+      }),
+    })));
+  }, [selectedBlockId]);
+
+  const handleAttachmentDelete = useCallback((group, attachmentId) => {
+    if (!selectedBlockId || !group || !attachmentId) return;
+    setStacks(prev => prev.map(s => ({
+      ...s,
+      blocks: s.blocks.map((b) => {
+        if (b.id !== selectedBlockId) return b;
+        if (!canRenderUi(b.type)) return normalizeStudioBlockNode(b);
+        const next = normalizeStudioBlockNode(b);
+        return {
+          ...next,
+          uiAttachments: {
+            ...next.uiAttachments,
+            [group]: (next.uiAttachments[group] || []).filter((item) => item.id !== attachmentId),
+          },
+        };
+      }),
     })));
   }, [selectedBlockId]);
 
@@ -3629,20 +3943,45 @@ export default function App() {
       return base;
     };
 
+    if (UI_ATTACHMENT_LEGACY_BLOCK_TYPES.has(type) && snap?.stackId) {
+      const legacy = legacyBlockToUiAttachment(type, makeProps(type));
+      if (legacy) {
+        setStacks(prev => prev.map((s) => {
+          if (s.id !== snap.stackId) return s;
+          const last = s.blocks[s.blocks.length - 1];
+          if (!last || !canRenderUi(last.type)) return s;
+          return {
+            ...s,
+            blocks: s.blocks.map((b) => (
+              b.id === last.id ? addUiAttachment(b, legacy.kind, legacy.attachment) : b
+            )),
+          };
+        }));
+        setSelectedStackId(snap.stackId);
+        setSelectedBlockId(stacks.find((s) => s.id === snap.stackId)?.blocks?.at(-1)?.id || null);
+      }
+      endPaletteDrag();
+      return;
+    }
+    if (UI_ATTACHMENT_LEGACY_BLOCK_TYPES.has(type)) {
+      endPaletteDrag();
+      return;
+    }
+
     if (snap && snap.valid) {
       const id = uid();
       setStacks(prev => prev.map(s => {
         if (s.id !== snap.stackId) return s;
         return {
           ...s,
-          blocks: [...s.blocks, { id, type, props: makeProps(type) }],
+          blocks: [...s.blocks, createStudioBlockNode(type, makeProps(type), id)],
         };
       }));
     } else {
       const id = uid();
       setStacks(prev => [...prev, {
         id: uid(), x: worldLX, y: worldTY,
-        blocks: [{ id, type, props: makeProps(type) }],
+        blocks: [createStudioBlockNode(type, makeProps(type), id)],
       }]);
     }
     endPaletteDrag();
@@ -3732,14 +4071,26 @@ export default function App() {
   }, [currentUser, stacks]);
 
   const addBlockFromPaletteTap = useCallback((type) => {
+    if (UI_ATTACHMENT_LEGACY_BLOCK_TYPES.has(type)) {
+      if (selectedBlockId) {
+        const selectedBlock = stacks
+          .flatMap((s) => s.blocks || [])
+          .find((b) => b.id === selectedBlockId);
+        const legacy = canRenderUi(selectedBlock?.type)
+          ? legacyBlockToUiAttachment(type, makePropsForNewBlock(type))
+          : null;
+        if (legacy) handleAddFooterAction(selectedBlockId, legacy.kind);
+      }
+      return;
+    }
     const id = uid();
     const { x, y } = getCanvasCenterStackPosition();
     setStacks(prev => [...prev, {
       id: uid(), x, y,
-      blocks: [{ id, type, props: makePropsForNewBlock(type, prev) }],
+      blocks: [createStudioBlockNode(type, makePropsForNewBlock(type, prev), id)],
     }]);
     focusMobileAddedBlock(id, x, y, ROOT_H);
-  }, [focusMobileAddedBlock, getCanvasCenterStackPosition, makePropsForNewBlock]);
+  }, [focusMobileAddedBlock, getCanvasCenterStackPosition, handleAddFooterAction, makePropsForNewBlock, selectedBlockId, stacks]);
 
   const addBlockFromContext = useCallback((type) => {
     const id = uid();
@@ -3749,7 +4100,7 @@ export default function App() {
       const { x, y } = getCanvasCenterStackPosition();
       setStacks(prev => [...prev, {
         id: uid(), x, y,
-        blocks: [{ id, type, props: makePropsForNewBlock(type, prev) }],
+        blocks: [createStudioBlockNode(type, makePropsForNewBlock(type, prev), id)],
       }]);
       focusMobileAddedBlock(id, x, y, ROOT_H);
       setBlockInfo(null);
@@ -3763,7 +4114,7 @@ export default function App() {
     const blockY = selStack.y + getBlockTopInStack(selStack, blockIndex);
 
     setStacks(prev => prev.map(s => s.id === selStack.id
-      ? { ...s, blocks: [...s.blocks, { id, type, props: finalProps }] }
+      ? { ...s, blocks: [...s.blocks, createStudioBlockNode(type, finalProps, id)] }
       : s
     ));
     focusMobileAddedBlock(id, selStack.x, blockY, blockIndex === 0 ? ROOT_H : BLOCK_H);
@@ -3795,8 +4146,13 @@ export default function App() {
         id: uid(), x: 40, y: 100,
         blocks: [
           { id:uid(), type:'start',    props:{} },
-          { id:uid(), type:'message',  props:{ text:'👋 Привет, {пользователь.имя}!\nЯ Echo Bot — напиши мне что-нибудь' } },
-          { id:uid(), type:'buttons',  props:{ rows:'Привет, Пока, Инфо' } },
+          { id:uid(), type:'message',  props:{ text:'👋 Привет, {пользователь.имя}!\nЯ Echo Bot — напиши мне что-нибудь' }, uiAttachments:{
+            buttons: [
+              { id:uid(), text:'Привет', action:'' },
+              { id:uid(), text:'Пока', action:'' },
+              { id:uid(), text:'Инфо', action:'' },
+            ],
+          } },
         ],
       },
       {
@@ -4226,7 +4582,7 @@ export default function App() {
       showToast('Не удалось применить исправления к холсту', 'error');
       return false;
     }
-    setStacks(parsedStacks);
+    setStacks(normalizeStudioStacks(parsedStacks));
     setSelectedBlockId(null);
     setSelectedStackId(null);
     showToast('Исправления применены и сохранены в холст', 'success');
@@ -4886,7 +5242,7 @@ const EXAMPLE_FULL = `версия "1.0"
         }))
       : parsedStacks;
     seq = 1;
-    setStacks(normalizedStacks);
+    setStacks(normalizeStudioStacks(normalizedStacks));
     setSelectedBlockId(null);
     setSelectedStackId(null);
     setProjectName(exampleName === 'echo' ? 'Эхо Бот' : exampleName === 'weather' ? 'Бот погода' : exampleName === 'shop' ? 'Магазин Бот' : exampleName === 'fullTest' ? 'Full Test' : 'Все Функции');
@@ -4900,7 +5256,7 @@ const EXAMPLE_FULL = `версия "1.0"
   }, [loadExampleFromFile, showToast]);
 
   const saveProject = useCallback(() => {
-    const data = JSON.stringify(stacks, null, 2);
+    const data = JSON.stringify(normalizeStudioStacks(stacks), null, 2);
     const blob = new Blob([data], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -4922,7 +5278,7 @@ const EXAMPLE_FULL = `версия "1.0"
         try {
           const data = JSON.parse(event.target.result);
           if (Array.isArray(data)) {
-            setStacks(data);
+            setStacks(normalizeStudioStacks(data));
             setSelectedBlockId(null);
             setSelectedStackId(null);
             showToast('Проект загружен!', 'success');
@@ -4949,7 +5305,7 @@ const EXAMPLE_FULL = `версия "1.0"
           const code = event.target.result;
           const parsedStacks = parseDSL(code);
           if (parsedStacks && parsedStacks.length > 0) {
-            setStacks(parsedStacks);
+            setStacks(normalizeStudioStacks(parsedStacks));
             setSelectedBlockId(null);
             setSelectedStackId(null);
             const name = file.name.replace(/\.ccd$/i, '');
@@ -5200,7 +5556,7 @@ const EXAMPLE_FULL = `версия "1.0"
       try {
         const code = generateBotDSL();
         const sessionId = getOrCreatePreviewSessionId();
-        const token = await getCsrfTokenForRequest();
+        const token = await getCsrfTokenForRequest('/api/bot/preview');
         const body = {
           sessionId,
           code,
@@ -6491,13 +6847,12 @@ const EXAMPLE_FULL = `версия "1.0"
                   { label: 'Заказ: имя и телефон', text: 'Бот принимает заказы, спрашивает имя и телефон' },
                   { label: 'Бот калькулятор', text: 'Бот калькулятор' },
                   { label: 'Бот с оплатой подписки', text: 'Бот с оплатой подписки' },
-                  { label: 'Каталог inline из БД', text: 'Создай магазин с каталогом на inline-кнопках из БД: при старте показать меню с кнопкой «📦 Каталог» и «➕ Добавить товар». Категории хранятся в глобальном списке «категории» и показываются через inline из БД с callbackPrefix "cat:" и 2 колонками. При выборе категории показать товары этой категории через inline из БД с callbackPrefix "prod:". Нужен общий обработчик inline callback «при нажатии:»: если кнопка начинается с "cat:" — открыть товары категории, если начинается с "prod:" — показать карточку товара с названием, ценой, описанием и кнопкой назад. Добавь сценарий для админа: создать категорию, затем создать товар внутри выбранной категории, сохранить товар в БД и вернуться в каталог. Не добавляй fallback-кнопки, если обработчик делегирует в блок или сценарий.' },
                 ].map((ex) => (
                   <button
                     key={ex.label}
                     type="button"
                     title={ex.text.length > 80 ? 'Вставить подробное техническое описание сценария' : undefined}
-                    onClick={() => setAiPrompt(ex.text)}
+                    onClick={() => setAiPrompt(ex.text.slice(0, AI_PROMPT_MAX_CHARS))}
                     disabled={aiLoading}
                     style={{
                       padding: '5px 10px', borderRadius: 20, fontSize: 11,
@@ -6514,9 +6869,16 @@ const EXAMPLE_FULL = `версия "1.0"
               {/* Textarea */}
               <textarea
                 value={aiPrompt}
-                onChange={e => setAiPrompt(e.target.value)}
+                onChange={(e) => {
+                  setAiPrompt(e.target.value.slice(0, AI_PROMPT_MAX_CHARS));
+                  if (aiPartialResult?.skeletonFallback) {
+                    setAiPartialResult(null);
+                    setAiDiagnosticsOpen(false);
+                  }
+                }}
                 disabled={aiLoading}
-                placeholder="Укажи триггеры (/start, кнопки), тексты сообщений, варианты кнопок, что происходит при каждом нажатии, переменные, финальный экран. Либо нажми «Бот калькулятор» или другой пример ниже."
+                maxLength={AI_PROMPT_MAX_CHARS}
+                placeholder="Опиши идею бота до 50 символов"
                 rows={10}
                 style={{
                   width: '100%', boxSizing: 'border-box',
@@ -6529,6 +6891,9 @@ const EXAMPLE_FULL = `версия "1.0"
                 onFocus={e => e.target.style.borderColor = 'rgba(251,191,36,0.5)'}
                 onBlur={e => e.target.style.borderColor = 'rgba(255,255,255,0.12)'}
               />
+              <div style={{ marginTop: 6, textAlign: 'right', fontSize: 11, color: aiPromptTooLong ? '#f87171' : 'var(--text3)' }}>
+                {aiPrompt.length}/{AI_PROMPT_MAX_CHARS}
+              </div>
 
               {/* Error */}
               {aiError && (
@@ -6550,14 +6915,54 @@ const EXAMPLE_FULL = `версия "1.0"
                     gap: 10,
                   }}
                 >
+                  {aiPartialResult.executionMode === 'FALLBACK_SKELETON' && (
+                    <div
+                      role="alert"
+                      style={{
+                        padding: '10px 12px',
+                        borderRadius: 10,
+                        background: 'rgba(245,158,11,0.14)',
+                        border: '1px solid rgba(245,158,11,0.32)',
+                        color: '#fbbf24',
+                        fontSize: 12,
+                        fontWeight: 800,
+                        lineHeight: 1.45,
+                      }}
+                    >
+                      Запущен аварийный режим (без AI логики)
+                    </div>
+                  )}
+                  {aiPartialResult.recoveryMode && (
+                    <div
+                      role="status"
+                      style={{
+                        padding: '10px 12px',
+                        borderRadius: 10,
+                        background: 'rgba(59,130,246,0.12)',
+                        border: '1px solid rgba(59,130,246,0.28)',
+                        color: '#93c5fd',
+                        fontSize: 12,
+                        fontWeight: 800,
+                        lineHeight: 1.45,
+                      }}
+                    >
+                      Оптимизирую сценарий для стабильного выполнения...
+                    </div>
+                  )}
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start' }}>
                     <div>
                       <div style={{ fontSize: 13, color: '#fbbf24', fontWeight: 800 }}>
-                        {aiPartialResult.skeletonFallback ? 'Запущена базовая версия сценария' : 'Сценарий сгенерирован частично'}
+                        {aiPartialResult.skeletonFallback
+                          ? 'Аварийный сценарий готов'
+                          : aiPartialResult.recoveryMode
+                            ? 'Сценарий оптимизирован для стабильного выполнения'
+                            : 'Сценарий сгенерирован частично'}
                       </div>
                       <div style={{ marginTop: 3, fontSize: 11, color: 'var(--text3)', lineHeight: 1.45 }}>
                         {aiPartialResult.skeletonFallback
-                          ? 'Запущена базовая версия сценария (без сложной логики). Её можно применить и запустить безопасно.'
+                          ? 'Это fallback-only execution layer: сценарий можно запустить, но он не считается успешной AI-генерацией.'
+                          : aiPartialResult.recoveryMode
+                            ? 'AI_RECOVERY упростил IR после неудачной primary-попытки, чтобы снизить риск аварийного fallback.'
                           : 'Degraded compiler output: рабочие части можно применить только если `safeToRun` true.'}
                       </div>
                     </div>
@@ -6576,6 +6981,40 @@ const EXAMPLE_FULL = `версия "1.0"
                       safeToRun: {aiPartialResult.safeToRun ? 'true' : 'false'}
                     </span>
                   </div>
+
+                  {(aiPartialResult.executionMode || aiPartialResult.rootCause) && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      <span style={{
+                        padding: '3px 7px',
+                        borderRadius: 999,
+                        background: aiPartialResult.aiConfidenceLabel === 'HIGH'
+                          ? 'rgba(34,197,94,0.1)'
+                          : aiPartialResult.aiConfidenceLabel === 'MEDIUM'
+                            ? 'rgba(245,158,11,0.1)'
+                            : 'rgba(248,113,113,0.1)',
+                        color: aiPartialResult.aiConfidenceLabel === 'HIGH'
+                          ? '#86efac'
+                          : aiPartialResult.aiConfidenceLabel === 'MEDIUM'
+                            ? '#fbbf24'
+                            : '#fca5a5',
+                        border: '1px solid rgba(255,255,255,0.14)',
+                        fontFamily: 'var(--mono, ui-monospace, monospace)',
+                        fontSize: 10,
+                      }}>
+                        AI confidence: {aiPartialResult.aiConfidenceLabel}
+                      </span>
+                      {aiPartialResult.executionMode && (
+                        <span style={{ padding: '3px 7px', borderRadius: 999, background: 'rgba(245,158,11,0.1)', color: '#fbbf24', border: '1px solid rgba(245,158,11,0.18)', fontFamily: 'var(--mono, ui-monospace, monospace)', fontSize: 10 }}>
+                          executionMode: {aiPartialResult.executionMode}
+                        </span>
+                      )}
+                      {aiPartialResult.rootCause && (
+                        <span style={{ padding: '3px 7px', borderRadius: 999, background: 'rgba(248,113,113,0.1)', color: '#fca5a5', border: '1px solid rgba(248,113,113,0.18)', fontFamily: 'var(--mono, ui-monospace, monospace)', fontSize: 10 }}>
+                          rootCause: {aiPartialResult.rootCause}
+                        </span>
+                      )}
+                    </div>
+                  )}
 
                   {aiPartialResult.reasonCodes.length > 0 && (
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
@@ -6621,6 +7060,7 @@ const EXAMPLE_FULL = `версия "1.0"
                       onClick={() => applyAiGeneratedStacks(aiPartialResult.raw.stacks, {
                         partial: true,
                         skeletonFallback: aiPartialResult.skeletonFallback,
+                        recoveryMode: aiPartialResult.recoveryMode,
                       })}
                       style={{
                         padding: '8px 10px',
@@ -6633,25 +7073,31 @@ const EXAMPLE_FULL = `версия "1.0"
                         fontWeight: 700,
                       }}
                     >
-                      run partial scenario
+                      {aiPartialResult.skeletonFallback
+                        ? 'run emergency scenario'
+                        : aiPartialResult.recoveryMode
+                          ? 'run optimized scenario'
+                          : 'run partial scenario'}
                     </button>
-                    <button
-                      type="button"
-                      disabled={aiLoading || aiPrompt.trim().length < 5}
-                      onClick={runAiGeneration}
-                      style={{
-                        padding: '8px 10px',
-                        borderRadius: 9,
-                        border: '1px solid rgba(251,191,36,0.25)',
-                        background: 'rgba(251,191,36,0.1)',
-                        color: '#fbbf24',
-                        cursor: aiLoading || aiPrompt.trim().length < 5 ? 'not-allowed' : 'pointer',
-                        fontSize: 12,
-                        fontWeight: 700,
-                      }}
-                    >
-                      regenerate
-                    </button>
+                    {!aiPartialResult.skeletonFallback && (
+                      <button
+                        type="button"
+                        disabled={aiLoading || aiPromptTooShort || aiPromptTooLong}
+                        onClick={runAiGeneration}
+                        style={{
+                          padding: '8px 10px',
+                          borderRadius: 9,
+                          border: '1px solid rgba(251,191,36,0.25)',
+                          background: 'rgba(251,191,36,0.1)',
+                          color: '#fbbf24',
+                          cursor: aiLoading || aiPromptTooShort || aiPromptTooLong ? 'not-allowed' : 'pointer',
+                          fontSize: 12,
+                          fontWeight: 700,
+                        }}
+                      >
+                        regenerate
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => setAiDiagnosticsOpen((open) => !open)}
@@ -6689,6 +7135,12 @@ const EXAMPLE_FULL = `версия "1.0"
                         status: aiPartialResult.status,
                         reason: aiPartialResult.reason,
                         reasonCodes: aiPartialResult.reasonCodes,
+                        executionMode: aiPartialResult.executionMode,
+                        rootCause: aiPartialResult.rootCause,
+                        aiConfidenceLabel: aiPartialResult.aiConfidenceLabel,
+                        executionDecisionScore: aiPartialResult.executionDecisionScore,
+                        isDegraded: aiPartialResult.isDegraded,
+                        isAIGenerated: aiPartialResult.isAIGenerated,
                         diagnostics: aiPartialResult.raw.diagnostics || [],
                         repairActions: aiPartialResult.raw.repairActions || [],
                         userActions: aiPartialResult.userActions,
@@ -6711,15 +7163,15 @@ const EXAMPLE_FULL = `версия "1.0"
                 }}
               >Отмена</button>
               <button
-                disabled={aiLoading || aiPrompt.trim().length < 5}
+                disabled={!canSubmitAiPrompt}
                 onClick={runAiGeneration}
                 style={{
                   flex: 2, padding: '11px', borderRadius: 10, fontSize: 13, fontWeight: 600,
-                  background: aiLoading || aiPrompt.trim().length < 5
+                  background: !canSubmitAiPrompt
                     ? 'rgba(251,191,36,0.15)'
                     : 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)',
-                  color: aiLoading || aiPrompt.trim().length < 5 ? 'rgba(251,191,36,0.4)' : '#000',
-                  border: 'none', cursor: aiLoading || aiPrompt.trim().length < 5 ? 'not-allowed' : 'pointer',
+                  color: !canSubmitAiPrompt ? 'rgba(251,191,36,0.4)' : '#000',
+                  border: 'none', cursor: !canSubmitAiPrompt ? 'not-allowed' : 'pointer',
                   fontFamily: 'Syne, system-ui', transition: 'all 0.2s',
                   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
                 }}
@@ -6729,7 +7181,7 @@ const EXAMPLE_FULL = `версия "1.0"
                     <span style={{ display: 'inline-block', width: 14, height: 14, border: '2px solid rgba(251,191,36,0.3)', borderTopColor: '#fbbf24', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
                     {AI_GEN_LOADING_STEPS[aiLoadingStep]}
                   </>
-                ) : '✨ Сгенерировать'}
+                ) : aiPartialResult?.skeletonFallback ? 'Измените описание для новой попытки' : '✨ Сгенерировать'}
               </button>
             </div>
           </div>
@@ -7220,6 +7672,7 @@ const EXAMPLE_FULL = `версия "1.0"
                   onSelectBlock={handleSelectBlock}
                   onDeleteBlock={handleDeleteBlock}
                   onDragStack={handleDragStack}
+                  onAddFooterAction={handleAddFooterAction}
                   isDragTarget={dropTarget === stack.id}
                   newBlockDrop={nbDrop}
                   newBlockDropHint={nbHint}
@@ -7419,7 +7872,13 @@ const EXAMPLE_FULL = `версия "1.0"
                 display:'flex', alignItems:'center', gap:6,
               }}><span style={{ color:'#06b6d4', fontSize:11 }}>✏</span> {builderUi.propsHeader}</div>
               <div style={{ flex: isMobileView ? 1 : '1', minHeight:0, display:'flex', flexDirection:'column', overflow:'hidden' }}>
-                <PropsPanel block={selectedBlock} onChange={handlePropChange} stacks={stacks} />
+                <PropsPanel
+                  block={selectedBlock}
+                  onChange={handlePropChange}
+                  onAttachmentChange={handleAttachmentChange}
+                  onAttachmentDelete={handleAttachmentDelete}
+                  stacks={stacks}
+                />
               </div>
             </>
           )}
@@ -7574,7 +8033,7 @@ const EXAMPLE_FULL = `версия "1.0"
           onLoadProject={async (projectId) => {
             const project = await loadProjectFromCloud(projectId);
             if (project) {
-              setStacks(project.stacks);
+              setStacks(normalizeStudioStacks(project.stacks));
               setProjectName(project.name);
               setShowProfileModal(false);
             }
@@ -8863,40 +9322,6 @@ function LandingInfoModal({ page, onClose, isMobile }) {
       </div>
     </div>
   );
-}
-
-function TwoFASettingsCard({ user, onUpdateUser, showToast }) {
-  const [setup, setSetup] = useState(null);
-  const [code, setCode] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  const loadSetup = async () => {
-    try { setBusy(true); const data = await fetch2FASetup(user.id); setSetup(data); }
-    catch (e) { showToast('Ошибка 2FA: ' + (e.message || 'unknown'), 'error'); }
-    finally { setBusy(false); }
-  };
-
-  const handleEnable = async () => {
-    try { setBusy(true); const r = await enable2FA(user.id, code); await onUpdateUser({ _silent: true, ...r.user }); showToast('2FA включена', 'success'); }
-    catch (e) { showToast(e.message || 'Ошибка включения 2FA', 'error'); }
-    finally { setBusy(false); }
-  };
-  const handleDisable = async () => {
-    try { setBusy(true); const r = await disable2FA(user.id, code); await onUpdateUser({ _silent: true, ...r.user }); showToast('2FA выключена', 'success'); }
-    catch (e) { showToast(e.message || 'Ошибка отключения 2FA', 'error'); }
-    finally { setBusy(false); }
-  };
-
-  return (<div style={{ background:'rgba(255,255,255,0.025)', border:'1px solid rgba(255,255,255,0.09)', borderRadius:14, padding:16 }}>
-    <div style={{ fontSize:12, fontWeight:700, color:'#fff', marginBottom:8 }}>Двухфакторная аутентификация (Google Authenticator)</div>
-    <div style={{ fontSize:11, color:'rgba(255,255,255,0.5)', lineHeight:1.6, marginBottom:10 }}>Нажмите «Получить QR», отсканируйте код в Google Authenticator и введите 6-значный код для подтверждения.</div>
-    <div style={{ display:'flex', gap:8, alignItems:'center', marginBottom:10 }}>
-      <button onClick={loadSetup} disabled={busy} style={{ padding:'9px 12px', borderRadius:10, border:'1px solid rgba(99,102,241,0.4)', background:'rgba(99,102,241,0.14)', color:'#a5b4fc', cursor:'pointer' }}>{busy ? '...' : 'Получить QR'}</button>
-      <input value={code} onChange={e=>setCode(e.target.value.replace(/\D/g,'').slice(0,6))} placeholder='000000' style={{ padding:'9px 12px', borderRadius:10, border:'1px solid rgba(255,255,255,0.15)', background:'rgba(255,255,255,0.03)', color:'#fff', width:120 }} />
-      {!user.twofaEnabled ? <button onClick={handleEnable} disabled={busy || code.length<6} style={{ padding:'9px 12px', borderRadius:10, border:'none', background:'linear-gradient(135deg,#3ecf8e,#0ea5e9)', color:'#111', cursor:'pointer' }}>Включить 2FA</button> : <button onClick={handleDisable} disabled={busy || code.length<6} style={{ padding:'9px 12px', borderRadius:10, border:'1px solid rgba(248,113,113,0.3)', background:'rgba(248,113,113,0.09)', color:'#f87171', cursor:'pointer' }}>Выключить 2FA</button>}
-    </div>
-    {setup?.qrUrl && <img src={setup.qrUrl} alt='2FA QR' style={{ width:180, height:180, borderRadius:12, border:'1px solid rgba(255,255,255,0.12)' }} />}
-  </div>);
 }
 
 function AuthModal({ tab, setTab, onClose, onLogin, onRegister, canClose = true, oauth2faPending = false }) {
@@ -10643,11 +11068,6 @@ function ProfileModal({ user, projects, onClose, onLogout, onUpdateUser, onUploa
                     <button onClick={handleChangePassword} style={{ padding: '12px 20px', fontSize: 13, fontWeight: 700, fontFamily: 'Syne, system-ui', background: 'rgba(96,165,250,0.12)', color: '#60a5fa', border: '1px solid rgba(96,165,250,0.3)', borderRadius: 12, cursor: 'pointer', transition: 'all 0.2s' }} onMouseEnter={e => { e.currentTarget.style.background = 'rgba(96,165,250,0.2)'; }} onMouseLeave={e => { e.currentTarget.style.background = 'rgba(96,165,250,0.12)'; }}>🔐 {t.changePassword}</button>
                   </div>
                 </div>
-
-
-                {/* 2FA */}
-                <TwoFASettingsCard user={user} onUpdateUser={onUpdateUser} showToast={showToast} />
-
                 {/* Danger zone */}
                 <div style={{ background: 'rgba(248,113,113,0.02)', border: '1px solid rgba(248,113,113,0.16)', borderRadius: 14, padding: 16 }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(248,113,113,0.5)', textTransform: 'uppercase', letterSpacing: '0.1em', fontFamily: 'Syne, system-ui', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>

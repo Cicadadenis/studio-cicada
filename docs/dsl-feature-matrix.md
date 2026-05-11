@@ -1,6 +1,6 @@
 # DSL Feature Matrix
 
-Compatibility target: `cicada-tg==0.3.3`.
+Compatibility target: `cicada-tg==0.3.4`.
 
 | Feature | Studio block/API | Canonical parser/runtime | Compatibility gate |
 | --- | --- | --- | --- |
@@ -20,5 +20,5 @@ Compatibility target: `cicada-tg==0.3.3`.
 
 Legacy/obsolete:
 
-- `@obsolete db_template_key`: quoted DB keys are literal in `cicada-tg==0.3.3`.
+- `@obsolete db_template_key`: quoted DB keys are literal in `cicada-tg==0.3.4`.
 - `@obsolete scenario_ask_resume_after_media`: old Studio smoke expectation is not canonical.

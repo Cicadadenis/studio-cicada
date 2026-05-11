@@ -292,7 +292,7 @@ else
 fi
 
 # ─── cicada-tg ─────────────────────────────────────────────────
-CICADA_TG_PIN="${CICADA_TG_PIN:-0.3.3}"
+CICADA_TG_PIN="${CICADA_TG_PIN:-0.3.4}"
 info "Устанавливаем cicada-tg==${CICADA_TG_PIN}..."
 if [ "$PLATFORM" = "termux" ]; then
   # В Termux Python не системный, --break-system-packages не нужен

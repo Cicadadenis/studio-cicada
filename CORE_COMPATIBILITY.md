@@ -1,10 +1,10 @@
 # Core Compatibility Policy
 
-`cicada-tg==0.3.3` is the canonical core for this project. The installed package in `/usr/local/lib/python3.12/dist-packages/cicada` is the source of truth for runtime behavior.
+`cicada-tg==0.3.4` is the canonical core for this project. The installed package in `/usr/local/lib/python3.12/dist-packages/cicada` is the source of truth for runtime behavior.
 
 ## Architecture Boundaries
 
-- **CORE**: immutable runtime copied from `cicada-tg==0.3.3`. No Studio-specific behavior is allowed here.
+- **CORE**: immutable runtime copied from `cicada-tg==0.3.4`. No Studio-specific behavior is allowed here.
 - **STUDIO**: UI/editor, DSL drafting, visual blocks, hints, user flows, and presentation.
 - **ADAPTERS**: integration layer between Studio and the canonical core/runtime.
 - **LEGACY**: isolated obsolete compatibility notes or code. It must not be imported by CORE.

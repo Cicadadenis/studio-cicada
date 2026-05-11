@@ -15,6 +15,7 @@ export {
   nodeDSL,
   validateFlow,
   renderIr,
+  canRenderUi,
   SCHEMA_VERSIONS_FOR_UI,
   inferRequiredFeaturesFromFlow,
   inferRequiredFeaturesFromStacks,

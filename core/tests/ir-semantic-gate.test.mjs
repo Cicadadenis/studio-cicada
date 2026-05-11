@@ -7,8 +7,8 @@ import { IR_ERROR_CODES, validateIrSemanticGate } from '../ai/irSemanticGate.mjs
 test('IR semantic gate rejects empty branches and deterministic repair removes empty else', () => {
   const ir = {
     irVersion: 1,
-    targetCore: '0.3.3',
-    compatibilityMode: '0.3.3 exact',
+    targetCore: '0.3.4',
+    compatibilityMode: '0.3.4 exact',
     intent: { primary: 'empty_else' },
     state: { globals: [] },
     uiStates: [],
@@ -45,8 +45,8 @@ test('IR semantic gate rejects empty branches and deterministic repair removes e
 test('IR semantic gate rejects invented symbols before DSL serialization', () => {
   const ir = {
     irVersion: 1,
-    targetCore: '0.3.3',
-    compatibilityMode: '0.3.3 exact',
+    targetCore: '0.3.4',
+    compatibilityMode: '0.3.4 exact',
     intent: { primary: 'invented_symbol' },
     state: { globals: [] },
     uiStates: [],
@@ -71,8 +71,8 @@ test('IR semantic gate rejects invented symbols before DSL serialization', () =>
 test('deterministic repair normalizes invented variable aliases', () => {
   const ir = {
     irVersion: 1,
-    targetCore: '0.3.3',
-    compatibilityMode: '0.3.3 exact',
+    targetCore: '0.3.4',
+    compatibilityMode: '0.3.4 exact',
     intent: { primary: 'invented_symbol_repair' },
     state: { globals: [] },
     uiStates: [],
@@ -100,8 +100,8 @@ test('deterministic repair normalizes invented variable aliases', () => {
 test('deterministic repair adds missing callback handlers for buttons', () => {
   const ir = {
     irVersion: 1,
-    targetCore: '0.3.3',
-    compatibilityMode: '0.3.3 exact',
+    targetCore: '0.3.4',
+    compatibilityMode: '0.3.4 exact',
     intent: { primary: 'button_callback_repair' },
     state: { globals: [] },
     uiStates: [],
@@ -132,8 +132,8 @@ test('deterministic repair adds missing callback handlers for buttons', () => {
 test('deterministic repair appends terminal UI for dead handler bodies', () => {
   const ir = {
     irVersion: 1,
-    targetCore: '0.3.3',
-    compatibilityMode: '0.3.3 exact',
+    targetCore: '0.3.4',
+    compatibilityMode: '0.3.4 exact',
     intent: { primary: 'terminal_ui_repair' },
     state: { globals: [] },
     uiStates: [],

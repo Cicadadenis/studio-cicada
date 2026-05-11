@@ -37,10 +37,11 @@ async function libFetch(path, opts = {}) {
   const jwt = localStorage.getItem(JWT_KEY);
   const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
   if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
+  const requestUrl = API_URL + path;
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
-    headers['x-csrf-token'] = await getCsrfTokenForRequest();
+    headers['x-csrf-token'] = await getCsrfTokenForRequest(requestUrl);
   }
-  return fetch(API_URL + path, { credentials: 'include', ...opts, headers });
+  return fetch(requestUrl, { credentials: 'include', ...opts, headers });
 }
 
 const MODULES = [

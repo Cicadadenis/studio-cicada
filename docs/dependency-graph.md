@@ -1,6 +1,6 @@
 # Dependency Graph
 
-Generated for the `cicada-tg==0.3.3` compatibility boundary.
+Generated for the `cicada-tg==0.3.4` compatibility boundary.
 
 ```mermaid
 flowchart TD
@@ -18,7 +18,7 @@ flowchart TD
   Executor --> DB[cicada.database]
   Executor --> MockAdapter[cicada.adapters.mock_telegram]
   Executor --> TelegramAdapter[cicada.adapters.telegram]
-  CoreGuard[scripts/core-guard.mjs] --> InstalledCore[/installed cicada-tg 0.3.3/]
+  CoreGuard[scripts/core-guard.mjs] --> InstalledCore[/installed cicada-tg 0.3.4/]
   CoreGuard --> LocalCore[cicada/ + core/ + vendor/]
 ```
 

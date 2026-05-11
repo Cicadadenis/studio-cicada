@@ -17,6 +17,9 @@ export function buildIrSkeletonFallback(options = {}) {
     intent: {
       primary: 'skeleton_fallback',
       reason: options.reason || IR_FALLBACK_REASON,
+      executionMode: 'FALLBACK_SKELETON',
+      isDegraded: true,
+      isAIGenerated: false,
     },
     state: {},
     uiStates: [],

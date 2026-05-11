@@ -36,9 +36,29 @@ import {
   normalizeAiCanonicalIr,
   validateAiCanonicalIr,
 } from './core/ai/aiCanonicalIr.mjs';
+import { resolveFeatureDependencies } from './core/ai/featureDependencyResolver.mjs';
+import { reconcileIrGraph } from './core/ai/graphReconciler.mjs';
 import { buildIrSymbolRegistryPromptContext } from './core/ai/irSymbolRegistry.mjs';
 import { formatIrDiagnostic, validateIrSemanticGate } from './core/ai/irSemanticGate.mjs';
 import { repairIrDeterministic } from './core/ai/irRepairEngine.mjs';
+import {
+  hasExecutableIrHandlers,
+  runDeterministicRecoveryPipeline,
+} from './core/ai/irRecoveryTransforms.mjs';
+import {
+  applyIntentBudgetToIr,
+  SEMANTIC_TEMPLATE_IDS,
+  buildSemanticTemplateIr,
+  buildIntentPlanPromptContext,
+  intentPlanner,
+} from './core/ai/intentPlanner.mjs';
+import { repairIntentSatisfaction } from './core/ai/intentSatisfactionValidator.mjs';
+import {
+  AI_RECOVERY_INVALID_INPUT,
+  IR_PRUNER_DEFAULTS,
+  assertPrunedRecoveryIr,
+  pruneIrForRecovery,
+} from './core/ai/irPruner.mjs';
 import {
   IR_FALLBACK_REASON,
   IR_FALLBACK_SKELETON_REASON_CODE,
@@ -3461,6 +3481,64 @@ function parseLlmErrorBody(bodyText) {
   }
 }
 
+async function readSseTextStream(res, { extractTextDelta, onTextDelta } = {}) {
+  if (!res.body?.getReader) {
+    const e = new Error('LLM streaming response body is not readable.');
+    e.llmKind = 'BAD_RESPONSE';
+    throw e;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let content = '';
+
+  const handleEvent = (eventText) => {
+    const dataLines = String(eventText || '')
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith('data:'))
+      .map((line) => line.slice(5).trim());
+    for (const dataLine of dataLines) {
+      if (!dataLine || dataLine === '[DONE]') continue;
+      let payload = null;
+      try {
+        payload = JSON.parse(dataLine);
+      } catch {
+        continue;
+      }
+      const delta = extractTextDelta?.(payload) || '';
+      if (!delta) continue;
+      content += delta;
+      onTextDelta?.(delta, content, payload);
+    }
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split(/\r?\n\r?\n/);
+    buffer = events.pop() || '';
+    for (const eventText of events) handleEvent(eventText);
+  }
+  buffer += decoder.decode();
+  if (buffer.trim()) handleEvent(buffer);
+  return { choices: [{ message: { content } }] };
+}
+
+function openAiStreamTextDelta(payload) {
+  return payload?.choices?.[0]?.delta?.content || payload?.choices?.[0]?.message?.content || '';
+}
+
+function anthropicStreamTextDelta(payload) {
+  if (payload?.type === 'content_block_delta' && payload?.delta?.type === 'text_delta') {
+    return payload.delta.text || '';
+  }
+  if (payload?.type === 'content_block_start' && payload?.content_block?.type === 'text') {
+    return payload.content_block.text || '';
+  }
+  return '';
+}
+
 function openAiMessagesToAnthropicPayload(messages) {
   const systemParts = [];
   const tail = [];
@@ -3535,6 +3613,7 @@ async function callAnthropicMessages(messages, options = {}) {
     messages: payload.messages,
   };
   if (payload.system) body.system = payload.system;
+  if (options.stream) body.stream = true;
 
   let res;
   try {
@@ -3546,8 +3625,10 @@ async function callAnthropicMessages(messages, options = {}) {
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify(body),
+      signal: options.signal,
     });
   } catch (err) {
+    if (err?.name === 'AbortError') throw err;
     const cause = err?.cause || err;
     const code = cause?.code;
     const e = new Error(
@@ -3557,6 +3638,13 @@ async function callAnthropicMessages(messages, options = {}) {
     );
     e.llmKind = 'NETWORK';
     throw e;
+  }
+
+  if (options.stream && res.ok) {
+    return readSseTextStream(res, {
+      extractTextDelta: anthropicStreamTextDelta,
+      onTextDelta: options.onTextDelta,
+    });
   }
 
   const bodyText = await res.text();
@@ -3651,9 +3739,12 @@ async function callGroq(messages, options = {}) {
           max_tokens: maxTokens,
           temperature,
           messages,
+          ...(options.stream ? { stream: true } : {}),
         }),
+        signal: options.signal,
       });
     } catch (err) {
+      if (err?.name === 'AbortError') throw err;
       if (cfg.requireAuth && tokenList.length > 1 && ti < tokenList.length - 1) {
         console.warn(
           `[AI] Ошибка сети для ключа ${ti + 1}/${tokenList.length}: ${err.message} — пробуем следующий.`,
@@ -3669,6 +3760,13 @@ async function callGroq(messages, options = {}) {
       );
       e.llmKind = 'NETWORK';
       throw e;
+    }
+
+    if (options.stream && res.ok) {
+      return readSseTextStream(res, {
+        extractTextDelta: openAiStreamTextDelta,
+        onTextDelta: options.onTextDelta,
+      });
     }
 
     const bodyText = await res.text();
@@ -3779,8 +3877,8 @@ const AI_SYSTEM_PROMPT = `Ты — проектировщик runtime graph дл
 ИИ НЕ пишет DSL и НЕ пишет editor stacks. ИИ строит runtime graph:
 {
   "irVersion": 1,
-  "targetCore": "0.3.3",
-  "compatibilityMode": "0.3.3 exact",
+  "targetCore": "0.3.4",
+  "compatibilityMode": "0.3.4 exact",
   "intent": {"primary": "..."},
   "state": {"globals": []},
   "handlers": [],
@@ -3807,7 +3905,8 @@ const AI_SYSTEM_PROMPT = `Ты — проектировщик runtime graph дл
 
 ═══ АЛГОРИТМ ПОСТРОЕНИЯ ГРАФА (выполни мысленно, затем выведи только JSON) ═══
 
-Даже если пользователь написал коротко или расплывчато, всё равно построй полную схему стеков и переходов.
+Даже если пользователь написал коротко или расплывчато, НЕ расширяй граф сверх IntentPlan и complexity budget.
+Строй минимальный viable flow из IntentPlan: меньше handlers/scenarios лучше, чем сырой сложный IR.
 
 1) ИНТЕНТ — что делает бот, цель и точка входа: /start или первая reply-кнопка.
 2) СОСТОЯНИЯ — uiStates для экранов: text/message, buttons или inlineDb.
@@ -3816,7 +3915,7 @@ const AI_SYSTEM_PROMPT = `Ты — проектировщик runtime graph дл
 5) УСЛОВИЯ — action condition с then/else.
 6) ДАННЫЕ — любая {переменная} в message/condition объявлена выше ask/get/remember или это системная переменная из registry. get допустим только если сервер в режиме advanced и ключ get.key входит в разрешённый список. В safe-режиме get не используй — только remember/ask/save известных значений.
 
-Промежуточный план не печатай — только JSON.
+Промежуточный план уже будет передан сервером. Не печатай его — только JSON Canonical IR.
 
 ═══ IR SHAPES ═══
 
@@ -3909,10 +4008,10 @@ const FEW_SHOT_USER_6 = `бот по кнопке «Город» спрашив�
 const FEW_SHOT_ASSISTANT_6 = `[{"id":"s0","x":40,"y":40,"blocks":[{"id":"b0","type":"bot","props":{"token":"YOUR_BOT_TOKEN"}}]},{"id":"s1","x":400,"y":40,"blocks":[{"id":"b1","type":"start","props":{}},{"id":"b2","type":"message","props":{"text":"Выберите действие"}},{"id":"b3","type":"buttons","props":{"rows":"🌍 Указать город"}},{"id":"b4","type":"stop","props":{}}]},{"id":"s2","x":760,"y":40,"blocks":[{"id":"b5","type":"callback","props":{"label":"🌍 Указать город"}},{"id":"b6","type":"run","props":{"name":"город_fsm"}}]},{"id":"s3","x":1120,"y":40,"blocks":[{"id":"b7","type":"scenario","props":{"name":"город_fsm"}},{"id":"b8","type":"step","props":{"name":"ввод"}},{"id":"b9","type":"ask","props":{"question":"В каком вы городе?","varname":"город"}},{"id":"b10","type":"remember","props":{"varname":"город_label","value":"Город: {город}"}},{"id":"b11","type":"message","props":{"text":"Запомнил: {город_label}"}},{"id":"b12","type":"stop","props":{}}]}]`;
 
 const IR_FEW_SHOT_USER = `бот принимает заказы: главное меню с кнопкой "Оформить заказ", сценарий спрашивает имя и телефон`;
-const IR_FEW_SHOT_ASSISTANT = `{"irVersion":1,"targetCore":"0.3.3","compatibilityMode":"0.3.3 exact","intent":{"primary":"order_form"},"state":{"globals":[]},"uiStates":[{"id":"ui_start","message":"Добро пожаловать! Выберите действие:","buttons":"Оформить заказ, ℹ️ О нас"}],"handlers":[{"id":"h_start","type":"start","trigger":"","actions":[{"type":"ui_state","uiStateId":"ui_start"},{"type":"stop"}]},{"id":"h_order","type":"callback","trigger":"Оформить заказ","actions":[{"type":"message","text":"Отлично! Заполним данные для заказа."},{"type":"run_scenario","target":"оформление"}]},{"id":"h_about","type":"callback","trigger":"ℹ️ О нас","actions":[{"type":"message","text":"Мы — магазин на Cicada Studio."},{"type":"stop"}]}],"blocks":[],"scenarios":[{"id":"sc_order","name":"оформление","steps":[{"id":"step_name","name":"имя","actions":[{"type":"ask","question":"Введите ваше имя:","varname":"имя"}]},{"id":"step_phone","name":"телефон","actions":[{"type":"ask","question":"Введите ваш телефон:","varname":"телефон"},{"type":"message","text":"✅ Заказ принят! Имя: {имя}, телефон: {телефон}"},{"type":"stop"}]}]}],"transitions":[{"from":"h_order","to":"sc_order","type":"run_scenario"}]}`;
+const IR_FEW_SHOT_ASSISTANT = `{"irVersion":1,"targetCore":"0.3.4","compatibilityMode":"0.3.4 exact","intent":{"primary":"order_form"},"state":{"globals":[]},"uiStates":[{"id":"ui_start","message":"Добро пожаловать! Выберите действие:","buttons":"Оформить заказ, ℹ️ О нас"}],"handlers":[{"id":"h_start","type":"start","trigger":"","actions":[{"type":"ui_state","uiStateId":"ui_start"},{"type":"stop"}]},{"id":"h_order","type":"callback","trigger":"Оформить заказ","actions":[{"type":"message","text":"Отлично! Заполним данные для заказа."},{"type":"run_scenario","target":"оформление"}]},{"id":"h_about","type":"callback","trigger":"ℹ️ О нас","actions":[{"type":"message","text":"Мы — магазин на Cicada Studio."},{"type":"stop"}]}],"blocks":[],"scenarios":[{"id":"sc_order","name":"оформление","steps":[{"id":"step_name","name":"имя","actions":[{"type":"ask","question":"Введите ваше имя:","varname":"имя"}]},{"id":"step_phone","name":"телефон","actions":[{"type":"ask","question":"Введите ваш телефон:","varname":"телефон"},{"type":"message","text":"✅ Заказ принят! Имя: {имя}, телефон: {телефон}"},{"type":"stop"}]}]}],"transitions":[{"from":"h_order","to":"sc_order","type":"run_scenario"}]}`;
 
 const IR_FEW_SHOT_USER_2 = `магазин: категории и товары через inline-кнопки из БД`;
-const IR_FEW_SHOT_ASSISTANT_2 = `{"irVersion":1,"targetCore":"0.3.3","compatibilityMode":"0.3.3 exact","intent":{"primary":"db_inline_catalog"},"state":{"globals":[{"name":"категории","value":"[\\"Пицца\\", \\"Напитки\\"]"}]},"uiStates":[{"id":"ui_menu","message":"🏠 Главное меню","buttons":"📦 Каталог"},{"id":"ui_categories","message":"📦 Выберите категорию:","inlineDb":{"key":"категории","callbackPrefix":"cat:","backText":"⬅️ Назад","backCallback":"back","columns":"2"}}],"handlers":[{"id":"h_start","type":"start","trigger":"","actions":[{"type":"ui_state","uiStateId":"ui_menu"},{"type":"stop"}]},{"id":"h_catalog","type":"callback","trigger":"📦 Каталог","actions":[{"type":"ui_state","uiStateId":"ui_categories"},{"type":"stop"}]},{"id":"h_inline","type":"callback","trigger":"","actions":[{"type":"condition","cond":"начинается_с(callback_data, \\"cat:\\")","then":[{"type":"remember","varname":"категория","value":"срез(callback_data, 4)"},{"type":"message","text":"Товары категории: {категория}"},{"type":"inline_db","key":"товары","callbackPrefix":"prod:","backText":"⬅️ Категории","backCallback":"back_categories","columns":"1"},{"type":"stop"}],"else":[{"type":"condition","cond":"начинается_с(callback_data, \\"prod:\\")","then":[{"type":"remember","varname":"товар","value":"срез(callback_data, 5)"},{"type":"message","text":"📦 Товар: {товар}\\nЦена и описание берутся из БД."},{"type":"stop"}],"else":[{"type":"ui_state","uiStateId":"ui_categories"},{"type":"stop"}]}]}]}],"blocks":[],"scenarios":[],"transitions":[{"from":"h_catalog","to":"ui_categories","type":"ui_state"},{"from":"h_inline","to":"ui_categories","type":"inline_router"}]}`;
+const IR_FEW_SHOT_ASSISTANT_2 = `{"irVersion":1,"targetCore":"0.3.4","compatibilityMode":"0.3.4 exact","intent":{"primary":"db_inline_catalog"},"state":{"globals":[{"name":"категории","value":"[\\"Пицца\\", \\"Напитки\\"]"}]},"uiStates":[{"id":"ui_menu","message":"🏠 Главное меню","buttons":"📦 Каталог"},{"id":"ui_categories","message":"📦 Выберите категорию:","inlineDb":{"key":"категории","callbackPrefix":"cat:","backText":"⬅️ Назад","backCallback":"back","columns":"2"}}],"handlers":[{"id":"h_start","type":"start","trigger":"","actions":[{"type":"ui_state","uiStateId":"ui_menu"},{"type":"stop"}]},{"id":"h_catalog","type":"callback","trigger":"📦 Каталог","actions":[{"type":"ui_state","uiStateId":"ui_categories"},{"type":"stop"}]},{"id":"h_inline","type":"callback","trigger":"","actions":[{"type":"condition","cond":"начинается_с(callback_data, \\"cat:\\")","then":[{"type":"remember","varname":"категория","value":"срез(callback_data, 4)"},{"type":"message","text":"Товары категории: {категория}"},{"type":"inline_db","key":"товары","callbackPrefix":"prod:","backText":"⬅️ Категории","backCallback":"back_categories","columns":"1"},{"type":"stop"}],"else":[{"type":"condition","cond":"начинается_с(callback_data, \\"prod:\\")","then":[{"type":"remember","varname":"товар","value":"срез(callback_data, 5)"},{"type":"message","text":"📦 Товар: {товар}\\nЦена и описание берутся из БД."},{"type":"stop"}],"else":[{"type":"ui_state","uiStateId":"ui_categories"},{"type":"stop"}]}]}]}],"blocks":[],"scenarios":[],"transitions":[{"from":"h_catalog","to":"ui_categories","type":"ui_state"},{"from":"h_inline","to":"ui_categories","type":"inline_router"}]}`;
 
 function serverAiAstPolicyAppendix(astMode, allowedMemoryKeys) {
   const lines = [
@@ -3965,6 +4064,19 @@ function buildAiCoreContextAppendix() {
   ].join('\n');
 }
 
+function buildIntentPlannedUserPrompt(prompt, intentPlan) {
+  return [
+    'Создай Canonical AI IR строго по IntentPlan и MinimalExecutionGraph ниже.',
+    'Если исходный prompt просит больше, чем budget, сгенерируй minimal viable flow и НЕ добавляй extra handlers/scenarios.',
+    '',
+    'Original prompt:',
+    prompt,
+    '',
+    'IntentPlan:',
+    JSON.stringify(intentPlan, null, 2),
+  ].join('\n');
+}
+
 function buildIrRepairUserPrompt(errors, irJsonSnippet) {
   return [
     'Предыдущий ответ НЕ прошёл проверку Canonical AI IR / core parity. Исправь ТОЛЬКО JSON-объект IR.',
@@ -3986,14 +4098,43 @@ function buildNonJsonRepairPrompt() {
 }
 
 const AI_GENERATE_PUBLIC_ERROR = 'Cicada AI перегружен попробуйте позже';
+const AI_PROMPT_MAX_CHARS = 50;
 const AI_LLM_MAX_ATTEMPTS = 2; // initial generation + one LLM retry
 const AI_IR_REPAIR_MAX_PASSES = 2;
 const AI_GENERATE_TIMEOUT_MS = 9_000;
+const AI_TIME_BUDGET_TIERS = Object.freeze({
+  AI_PRIMARY: 1,
+  AI_RECOVERY: 0.3,
+  AI_PARTIAL: 0.2,
+  FALLBACK_SKELETON: 0,
+});
+const AI_PRIMARY_TIMEOUT_MS = AI_GENERATE_TIMEOUT_MS;
+const AI_RECOVERY_TIMEOUT_MS = Math.floor(AI_GENERATE_TIMEOUT_MS * AI_TIME_BUDGET_TIERS.AI_RECOVERY);
+const AI_PARTIAL_TIMEOUT_MS = Math.floor(AI_GENERATE_TIMEOUT_MS * AI_TIME_BUDGET_TIERS.AI_PARTIAL);
 const AI_PARTIAL_DIAGNOSTIC_LIMIT = 20;
+let aiPrimaryTimeoutStreak = 0;
 const AI_GENERATE_STATUS = Object.freeze({
   SUCCESS: 'success',
   PARTIAL_SUCCESS: 'partial_success',
+  FALLBACK_SKELETON: 'fallback_skeleton',
   FAILED: 'failed',
+});
+const AI_EXECUTION_MODE = Object.freeze({
+  AI_PRIMARY: 'AI_PRIMARY',
+  AI_RECOVERY: 'AI_RECOVERY',
+  AI_PARTIAL: 'AI_PARTIAL',
+  FALLBACK_SKELETON: 'FALLBACK_SKELETON',
+});
+const AI_RETRY_BUDGET = Object.freeze({
+  [AI_EXECUTION_MODE.AI_PRIMARY]: 2,
+  [AI_EXECUTION_MODE.AI_RECOVERY]: 1,
+  [AI_EXECUTION_MODE.AI_PARTIAL]: 1,
+  [AI_EXECUTION_MODE.FALLBACK_SKELETON]: 0,
+});
+const AI_ROOT_CAUSE = Object.freeze({
+  AI_TIMEOUT: 'AI_TIMEOUT',
+  IR_REPAIR_FAILURE: 'IR_REPAIR_FAILURE',
+  NO_VALID_IR: 'NO_VALID_IR',
 });
 const AI_IR_STATE = Object.freeze({
   FINAL: 'FINAL_IR',
@@ -4006,11 +4147,24 @@ const AI_NEXT_ACTION = Object.freeze({
   RETRY: 'retry',
   FALLBACK_TEMPLATE: 'fallback_template',
 });
+const AI_TIMEOUT_CODE = Object.freeze({
+  PRIMARY: 'PRIMARY_TIMEOUT',
+  RECOVERY: 'RECOVERY_TIMEOUT',
+  PARTIAL: 'PARTIAL_TIMEOUT',
+});
+const AI_PRIMARY_PARTIAL_IR_AVAILABLE_CODE = 'PRIMARY_PARTIAL_IR_AVAILABLE';
+const AI_PRIMARY_NO_PARTIAL_IR_CODE = 'PRIMARY_NO_PARTIAL_IR';
+const AI_PARTIAL_IR_SALVAGED_CODE = 'PARTIAL_IR_SALVAGED';
+const IR_PRUNER_FAILED_REASON_CODE = 'IR_PRUNER_FAILED';
 const AI_PARTIAL_REASON_CODES = Object.freeze({
   IR_REPAIR_LIMIT_REACHED: 'IR_REPAIR_LIMIT_REACHED',
   UNKNOWN_SYMBOLS_REPLACED: 'UNKNOWN_SYMBOLS_REPLACED',
   EMPTY_BRANCH_REMOVED: 'EMPTY_BRANCH_REMOVED',
   TIMEOUT_FALLBACK: 'TIMEOUT_FALLBACK',
+  PRIMARY_PARTIAL_IR_AVAILABLE: AI_PRIMARY_PARTIAL_IR_AVAILABLE_CODE,
+  PRIMARY_NO_PARTIAL_IR: AI_PRIMARY_NO_PARTIAL_IR_CODE,
+  PARTIAL_IR_SALVAGED: AI_PARTIAL_IR_SALVAGED_CODE,
+  IR_PRUNER_FAILED: IR_PRUNER_FAILED_REASON_CODE,
   IR_FALLBACK_SKELETON_USED: IR_FALLBACK_SKELETON_REASON_CODE,
 });
 const AI_PARTIAL_USER_ACTIONS = Object.freeze({
@@ -4020,10 +4174,11 @@ const AI_PARTIAL_USER_ACTIONS = Object.freeze({
 });
 
 class AiGenerateTimeoutError extends Error {
-  constructor(stage) {
+  constructor(stage, code = AI_TIMEOUT_CODE.PRIMARY) {
     super(`AI generation deadline exceeded during ${stage}`);
     this.name = 'AiGenerateTimeoutError';
-    this.code = 'IR_REPAIR_TIMEOUT';
+    this.code = code;
+    this.timeoutCode = code;
     this.stage = stage;
   }
 }
@@ -4038,25 +4193,51 @@ function aiTimeRemainingMs(deadline) {
 
 function assertAiDeadline(deadline, stage) {
   if (deadline && aiTimeRemainingMs(deadline) <= 0) {
-    throw new AiGenerateTimeoutError(stage);
+    throw new AiGenerateTimeoutError(stage, deadline.code);
   }
 }
 
 function withAiDeadline(promise, deadline, stage) {
   const remaining = aiTimeRemainingMs(deadline);
-  if (remaining <= 0) return Promise.reject(new AiGenerateTimeoutError(stage));
+  if (remaining <= 0) return Promise.reject(new AiGenerateTimeoutError(stage, deadline?.code));
   let timer = null;
   const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new AiGenerateTimeoutError(stage)), remaining);
+    timer = setTimeout(() => reject(new AiGenerateTimeoutError(stage, deadline?.code)), remaining);
   });
   return Promise.race([promise, timeout]).finally(() => {
     if (timer) clearTimeout(timer);
   });
 }
 
+function isAiTimeoutError(error) {
+  return error instanceof AiGenerateTimeoutError || Object.values(AI_TIMEOUT_CODE).includes(error?.code);
+}
+
+function timeoutCodeForExecutionMode(mode) {
+  if (mode === AI_EXECUTION_MODE.AI_RECOVERY) return AI_TIMEOUT_CODE.RECOVERY;
+  if (mode === AI_EXECUTION_MODE.AI_PARTIAL) return AI_TIMEOUT_CODE.PARTIAL;
+  return AI_TIMEOUT_CODE.PRIMARY;
+}
+
+function timeBudgetMsForExecutionMode(mode) {
+  if (mode === AI_EXECUTION_MODE.AI_RECOVERY) return AI_RECOVERY_TIMEOUT_MS;
+  if (mode === AI_EXECUTION_MODE.AI_PARTIAL) return AI_PARTIAL_TIMEOUT_MS;
+  if (mode === AI_EXECUTION_MODE.FALLBACK_SKELETON) return 0;
+  return AI_PRIMARY_TIMEOUT_MS;
+}
+
+function createAiModeDeadline(mode, startedAt = Date.now()) {
+  return {
+    mode,
+    code: timeoutCodeForExecutionMode(mode),
+    budgetMs: timeBudgetMsForExecutionMode(mode),
+    expiresAt: startedAt + timeBudgetMsForExecutionMode(mode),
+  };
+}
+
 function aiStageTimeoutMs(deadline, stage, maxMs = 2_500) {
   const remaining = aiTimeRemainingMs(deadline);
-  if (remaining <= 500) throw new AiGenerateTimeoutError(stage);
+  if (remaining <= 500) throw new AiGenerateTimeoutError(stage, deadline?.code);
   return Math.max(500, Math.min(maxMs, remaining - 250));
 }
 
@@ -4113,7 +4294,31 @@ function deriveAiReasonCodes({ reason, diagnostics = [], repairActions = [], met
   if (meta?.fallbackFrom === 'IR_REPAIR_TIMEOUT') {
     codes.add(AI_PARTIAL_REASON_CODES.TIMEOUT_FALLBACK);
   }
+  if (normalizedReason === IR_PRUNER_FAILED_REASON_CODE || meta?.fallbackFrom === IR_PRUNER_FAILED_REASON_CODE) {
+    codes.add(AI_PARTIAL_REASON_CODES.IR_PRUNER_FAILED);
+  }
+  if (normalizedReason === AI_PRIMARY_PARTIAL_IR_AVAILABLE_CODE || meta?.primaryPartialIrAvailable) {
+    codes.add(AI_PARTIAL_REASON_CODES.PRIMARY_PARTIAL_IR_AVAILABLE);
+  }
+  if (normalizedReason === AI_PRIMARY_NO_PARTIAL_IR_CODE || meta?.primaryNoPartialIr) {
+    codes.add(AI_PARTIAL_REASON_CODES.PRIMARY_NO_PARTIAL_IR);
+  }
+  if (meta?.partialIrSalvaged) {
+    codes.add(AI_PARTIAL_REASON_CODES.PARTIAL_IR_SALVAGED);
+  }
   for (const diagnostic of aiArray(diagnostics)) {
+    if (diagnostic?.code === IR_PRUNER_FAILED_REASON_CODE) {
+      codes.add(AI_PARTIAL_REASON_CODES.IR_PRUNER_FAILED);
+    }
+    if (diagnostic?.code === AI_PRIMARY_PARTIAL_IR_AVAILABLE_CODE) {
+      codes.add(AI_PARTIAL_REASON_CODES.PRIMARY_PARTIAL_IR_AVAILABLE);
+    }
+    if (diagnostic?.code === AI_PRIMARY_NO_PARTIAL_IR_CODE) {
+      codes.add(AI_PARTIAL_REASON_CODES.PRIMARY_NO_PARTIAL_IR);
+    }
+    if (diagnostic?.code === AI_PARTIAL_IR_SALVAGED_CODE) {
+      codes.add(AI_PARTIAL_REASON_CODES.PARTIAL_IR_SALVAGED);
+    }
     if (diagnostic?.code === 'IR_REPAIR_TIMEOUT') {
       codes.add(AI_PARTIAL_REASON_CODES.TIMEOUT_FALLBACK);
     }
@@ -4229,8 +4434,23 @@ function buildAiDiagnosticSections({ canonicalIr, classification, warnings, repa
   };
 }
 
-function buildAiUserActions({ partial, safeToRun, hasDiagnostics, hasStacks }) {
+function buildAiUserActions({ partial, safeToRun, hasDiagnostics, hasStacks, executionMode }) {
   if (!partial) return [];
+  if (executionMode === AI_EXECUTION_MODE.FALLBACK_SKELETON) {
+    return [
+      {
+        id: AI_PARTIAL_USER_ACTIONS.RUN_PARTIAL_SCENARIO,
+        label: 'run emergency scenario',
+        enabled: Boolean(safeToRun && hasStacks),
+        disabledReason: 'Emergency skeleton has no executable entry point.',
+      },
+      {
+        id: AI_PARTIAL_USER_ACTIONS.VIEW_DIAGNOSTICS,
+        label: 'view diagnostics',
+        enabled: Boolean(hasDiagnostics),
+      },
+    ];
+  }
   return [
     {
       id: AI_PARTIAL_USER_ACTIONS.RUN_PARTIAL_SCENARIO,
@@ -4247,6 +4467,426 @@ function buildAiUserActions({ partial, safeToRun, hasDiagnostics, hasStacks }) {
       enabled: Boolean(hasDiagnostics),
     },
   ];
+}
+
+function inferAiExecutionMode({ classification, resultStatus, executionMode, eds }) {
+  if (executionMode) return executionMode;
+  if (classification.irState === AI_IR_STATE.SKELETON || resultStatus === AI_GENERATE_STATUS.FALLBACK_SKELETON) {
+    return AI_EXECUTION_MODE.FALLBACK_SKELETON;
+  }
+  if (classification.irState === AI_IR_STATE.FINAL && resultStatus === AI_GENERATE_STATUS.SUCCESS) {
+    return AI_EXECUTION_MODE.AI_PRIMARY;
+  }
+  if (eds) return executionModeFromEds(eds);
+  return AI_EXECUTION_MODE.AI_PARTIAL;
+}
+
+function inferAiRootCause({ rootCause, reason, meta = {} }) {
+  if (rootCause) return rootCause;
+  const normalizedReason = String(reason || meta?.fallbackFrom || '');
+  if (
+    normalizedReason === 'IR_REPAIR_TIMEOUT' ||
+    /TIMEOUT/i.test(normalizedReason) ||
+    meta?.timeoutMs ||
+    meta?.fallbackFrom === 'IR_REPAIR_TIMEOUT'
+  ) {
+    return AI_ROOT_CAUSE.AI_TIMEOUT;
+  }
+  if (
+    normalizedReason === 'IR_REPAIR_FAILED' ||
+    normalizedReason === 'RUNTIME_VALIDATION_FAILED' ||
+    normalizedReason === 'PARSER_UNAVAILABLE'
+  ) {
+    return AI_ROOT_CAUSE.IR_REPAIR_FAILURE;
+  }
+  if (
+    normalizedReason === IR_FALLBACK_REASON ||
+    meta?.fallbackKind === AI_IR_STATE.SKELETON ||
+    normalizedReason
+  ) {
+    return AI_ROOT_CAUSE.NO_VALID_IR;
+  }
+  return null;
+}
+
+function clampAiScore(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(1, n));
+}
+
+function inferAiConfidenceFromLlmChoice(choice) {
+  if (!choice || typeof choice !== 'object') return null;
+  const explicit = Number(choice.confidence ?? choice.message?.confidence);
+  if (Number.isFinite(explicit)) return clampAiScore(explicit);
+  const finishReason = String(choice.finish_reason || choice.finishReason || '').toLowerCase();
+  if (finishReason === 'stop') return 0.75;
+  if (finishReason === 'length') return 0.45;
+  if (finishReason) return 0.6;
+  return null;
+}
+
+function aiConfidenceLabel(score) {
+  const n = clampAiScore(score);
+  if (n > 0.8) return 'HIGH';
+  if (n > 0.4) return 'MEDIUM';
+  return 'LOW';
+}
+
+function aiConfidenceLabelForExecutionMode(mode) {
+  if (mode === AI_EXECUTION_MODE.AI_PRIMARY) return 'HIGH';
+  if (mode === AI_EXECUTION_MODE.FALLBACK_SKELETON) return 'LOW';
+  return 'MEDIUM';
+}
+
+function calculateIrCompleteness(canonicalIr, diagnostics = []) {
+  if (!canonicalIr || typeof canonicalIr !== 'object') return 0;
+  const normalizedDiagnostics = diagnostics.map(normalizeAiDiagnosticForResponse);
+  const handlers = aiArray(canonicalIr.handlers);
+  const executableHandlers = handlers.filter((handler) => aiArray(handler?.actions).length > 0);
+  const hasEntryPoint = hasAiIrEntryPoint(canonicalIr);
+  const hasInvalidSymbols = normalizedDiagnostics.some((d) => d.code === 'UNKNOWN_SYMBOL');
+  const hasBrokenTransitions = normalizedDiagnostics.some(
+    (d) => d.code === 'INVALID_TRANSITION' || d.code === 'MISSING_UI_STATE',
+  );
+  const hasEmptyBranches = normalizedDiagnostics.some((d) => d.code === 'EMPTY_BRANCH');
+  let convertible = false;
+  try {
+    convertible = canonicalIrToEditorStacks(canonicalIr).length > 0;
+  } catch {
+    convertible = false;
+  }
+  return clampAiScore(
+    0.2 +
+      (hasEntryPoint ? 0.25 : 0) +
+      (executableHandlers.length > 0 ? 0.2 : 0) +
+      (!hasInvalidSymbols && !hasBrokenTransitions ? 0.2 : 0) +
+      (!hasEmptyBranches ? 0.1 : 0) +
+      (convertible ? 0.05 : 0),
+  );
+}
+
+function canUseNonPrimaryLlm(canonicalIr, diagnostics = []) {
+  const completeness = calculateIrCompleteness(canonicalIr, diagnostics);
+  return completeness < 0.2 && !hasExecutableIrHandlers(canonicalIr);
+}
+
+function buildExecutionDecisionScore({ canonicalIr, diagnostics = [], repairActions = [], meta = {} }) {
+  const irCompleteness = calculateIrCompleteness(canonicalIr, diagnostics);
+  const aiConfidence = Number.isFinite(Number(meta?.aiConfidence))
+    ? clampAiScore(meta.aiConfidence)
+    : 0.65;
+  const repairAttempts = Math.max(
+    Number(meta?.repairPasses || 0),
+    aiArray(repairActions).filter((action) => /^pass\s+\d+:/i.test(String(action || ''))).length,
+  );
+  const timedOut = Boolean(meta?.timeoutMs || meta?.timedOut || meta?.fallbackFrom === 'IR_REPAIR_TIMEOUT');
+  const weighted = {
+    irCompleteness: Number((irCompleteness * 0.75).toFixed(4)),
+    aiConfidence: Number((aiConfidence * 0.25).toFixed(4)),
+  };
+  const penalties = {
+    repairAttempts: Number(Math.min(0.25, repairAttempts * 0.1).toFixed(4)),
+    timeout: timedOut ? 0.2 : 0,
+  };
+  const score = clampAiScore(weighted.irCompleteness + weighted.aiConfidence - penalties.repairAttempts - penalties.timeout);
+  return {
+    score: Number(score.toFixed(4)),
+    label: aiConfidenceLabel(score),
+    inputs: {
+      irCompleteness: Number(irCompleteness.toFixed(4)),
+      repairAttempts,
+      aiConfidence: Number(aiConfidence.toFixed(4)),
+      timedOut,
+    },
+    weighted,
+    penalties,
+  };
+}
+
+function executionModeFromEds(eds) {
+  const score = clampAiScore(eds?.score);
+  if (score > 0.8) return AI_EXECUTION_MODE.AI_PRIMARY;
+  if (score > 0.4) return AI_EXECUTION_MODE.AI_PARTIAL;
+  return AI_EXECUTION_MODE.FALLBACK_SKELETON;
+}
+
+function statusForExecutionMode(mode, requestedStatus) {
+  if (requestedStatus === AI_GENERATE_STATUS.FAILED && mode !== AI_EXECUTION_MODE.FALLBACK_SKELETON) {
+    return AI_GENERATE_STATUS.FAILED;
+  }
+  if (mode === AI_EXECUTION_MODE.AI_PRIMARY) return AI_GENERATE_STATUS.SUCCESS;
+  if (mode === AI_EXECUTION_MODE.FALLBACK_SKELETON) return AI_GENERATE_STATUS.FALLBACK_SKELETON;
+  return AI_GENERATE_STATUS.PARTIAL_SUCCESS;
+}
+
+function hasRetryBudget(mode, attemptNumber) {
+  const budget = AI_RETRY_BUDGET[mode] ?? 0;
+  return Number(attemptNumber || 0) < budget;
+}
+
+function jsonByteSize(value) {
+  try {
+    return Buffer.byteLength(JSON.stringify(value), 'utf8');
+  } catch {
+    return 0;
+  }
+}
+
+function parseJsonObjectLoose(text) {
+  const source = String(text || '').trim();
+  if (!source) return null;
+  const candidates = [
+    source,
+    source.replace(/,\s*([}\]])/g, '$1'),
+  ];
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+    } catch {
+      // try next candidate
+    }
+  }
+  return null;
+}
+
+function completePartialJsonObject(raw) {
+  const cleaned = stripThinkingFromAiRaw(String(raw || ''))
+    .replace(/```(?:json|javascript|js)?\s*/gi, '')
+    .replace(/```/g, '');
+  const start = cleaned.indexOf('{');
+  if (start < 0) return null;
+  let out = '';
+  const stack = [];
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < cleaned.length; i += 1) {
+    const ch = cleaned[i];
+    out += ch;
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\') {
+      escaped = inString;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === '{') stack.push('}');
+    else if (ch === '[') stack.push(']');
+    else if ((ch === '}' || ch === ']') && stack[stack.length - 1] === ch) stack.pop();
+    if (stack.length === 0 && out.trim().endsWith('}')) break;
+  }
+  if (!out.trim()) return null;
+  if (escaped) out = out.slice(0, -1);
+  if (inString) out += '"';
+  out = out.replace(/,\s*$/g, '');
+  while (stack.length > 0) {
+    const closer = stack.pop();
+    out = out.replace(/,\s*$/g, '');
+    out += closer;
+  }
+  return out;
+}
+
+function extractPrimaryPartialIrFromRaw(raw) {
+  const extracted = extractAiCanonicalIrFromRaw(raw);
+  if (extracted?.ir) return normalizeAiCanonicalIr(extracted.ir);
+  const completed = completePartialJsonObject(raw);
+  const parsed = parseJsonObjectLoose(completed);
+  if (!parsed) return null;
+  const unwrapped = parsed.ir || parsed.canonicalIr || parsed.runtimeGraph || parsed.result || parsed;
+  if (!unwrapped || typeof unwrapped !== 'object' || Array.isArray(unwrapped)) return null;
+  if (!Array.isArray(unwrapped.handlers) && !Array.isArray(unwrapped.blocks) && !Array.isArray(unwrapped.scenarios)) {
+    return null;
+  }
+  return normalizeAiCanonicalIr(unwrapped);
+}
+
+function buildPrimaryPartialIrArtifact(raw, { source = AI_EXECUTION_MODE.AI_PRIMARY } = {}) {
+  const ir = extractPrimaryPartialIrFromRaw(raw);
+  if (!ir) return null;
+  return {
+    ir,
+    completeness: calculateIrCompleteness(ir, []),
+    source,
+    partial: true,
+    byteSize: jsonByteSize(ir),
+  };
+}
+
+async function callAiPrimaryWithPartialSnapshots(messages, {
+  attemptDeadline,
+  max_tokens,
+  temperature,
+  onPartialIrArtifact,
+}) {
+  const controller = new AbortController();
+  const remaining = aiTimeRemainingMs(attemptDeadline);
+  if (remaining <= 0) throw new AiGenerateTimeoutError('llm-attempt-primary-start', attemptDeadline?.code);
+  const timer = setTimeout(() => controller.abort(), remaining);
+  let rawSoFar = '';
+  let lastSnapshotKey = '';
+
+  const persistSnapshot = () => {
+    const artifact = buildPrimaryPartialIrArtifact(rawSoFar, { source: AI_EXECUTION_MODE.AI_PRIMARY });
+    if (!artifact) return;
+    const key = `${artifact.byteSize}:${artifact.completeness}:${jsonByteSize(artifact.ir.handlers)}:${jsonByteSize(artifact.ir.scenarios)}`;
+    if (key === lastSnapshotKey) return;
+    lastSnapshotKey = key;
+    console.log(
+      '[AI] PARTIAL_IR_SALVAGED:',
+      JSON.stringify({
+        code: AI_PARTIAL_IR_SALVAGED_CODE,
+        source: artifact.source,
+        partial: artifact.partial,
+        completeness: artifact.completeness,
+        byteSize: artifact.byteSize,
+      }),
+    );
+    onPartialIrArtifact?.(artifact);
+  };
+
+  try {
+    const data = await callGroq(messages, {
+      max_tokens,
+      temperature,
+      stream: true,
+      signal: controller.signal,
+      onTextDelta: (delta, content) => {
+        rawSoFar = content || `${rawSoFar}${delta || ''}`;
+        persistSnapshot();
+      },
+    });
+    rawSoFar = data.choices?.[0]?.message?.content || rawSoFar;
+    persistSnapshot();
+    return data;
+  } catch (e) {
+    persistSnapshot();
+    if (e?.name === 'AbortError') {
+      throw new AiGenerateTimeoutError('llm-attempt-primary-stream', attemptDeadline?.code);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function assertRecoveryArtifactForAiRecovery(artifact) {
+  if (!artifact || artifact.irPruned !== true || !artifact.ir || typeof artifact.ir !== 'object') {
+    const error = new Error('AI_RECOVERY requires a transformed IR_PRUNED artifact.');
+    error.code = AI_RECOVERY_INVALID_INPUT;
+    error.details = {
+      artifactIrPruned: Boolean(artifact?.irPruned),
+      hasArtifactIr: Boolean(artifact?.ir),
+      sourceStage: artifact?.sourceStage || null,
+    };
+    throw error;
+  }
+  assertPrunedRecoveryIr(artifact.ir, IR_PRUNER_DEFAULTS);
+  return true;
+}
+
+function buildIrPrunedArtifact({ sourceIr, sourceArtifact, sourceStage = AI_EXECUTION_MODE.AI_PRIMARY }) {
+  const inputArtifact = sourceArtifact && typeof sourceArtifact === 'object' ? sourceArtifact : null;
+  const inputIr = inputArtifact?.ir || sourceIr;
+  const inputStage = inputArtifact?.source || sourceStage;
+  if (!inputIr || typeof inputIr !== 'object') {
+    console.warn(
+      '[AI] IR_PRUNER_FAILED:',
+      JSON.stringify({
+        code: IR_PRUNER_FAILED_REASON_CODE,
+        sourceStage: inputStage,
+        partialArtifact: Boolean(inputArtifact?.partial),
+        message: 'No source IR artifact available for AI_RECOVERY handoff.',
+      }),
+    );
+    return {
+      ok: false,
+      errorCode: IR_PRUNER_FAILED_REASON_CODE,
+      diagnostics: [{
+        code: IR_PRUNER_FAILED_REASON_CODE,
+        severity: 'error',
+        message: 'IR_PRUNER could not run because no PRIMARY partial IR snapshot was available.',
+      }],
+      repairActions: ['PRUNER: no source IR artifact available for AI_RECOVERY handoff'],
+    };
+  }
+
+  try {
+    const pruning = pruneIrForRecovery(inputIr, IR_PRUNER_DEFAULTS);
+    const artifact = {
+      ir: pruning.ir,
+      irPruned: true,
+      pruningReductionRatio: pruning.pruningReductionRatio,
+      sourceStage: inputStage,
+      sourcePartial: Boolean(inputArtifact?.partial),
+      sourceCompleteness: Number(inputArtifact?.completeness ?? calculateIrCompleteness(inputIr, [])),
+    };
+    assertRecoveryArtifactForAiRecovery(artifact);
+    const artifactByteSize = jsonByteSize(artifact);
+    const enrichedPruning = {
+      ...pruning,
+      artifactByteSize,
+      artifactSourceStage: inputStage,
+      sourcePartial: artifact.sourcePartial,
+      sourceCompleteness: artifact.sourceCompleteness,
+    };
+    console.log(
+      '[AI] IR_PRUNED_CREATED:',
+      JSON.stringify({
+        code: 'IR_PRUNED_CREATED',
+        pruningReductionRatio: pruning.pruningReductionRatio,
+        artifactByteSize,
+        sourceStage: inputStage,
+        sourcePartial: artifact.sourcePartial,
+        sourceCompleteness: artifact.sourceCompleteness,
+        handoff: `${inputStage}->PARTIAL_IR_SNAPSHOTS->PRUNER->${AI_EXECUTION_MODE.AI_RECOVERY}`,
+        beforeNodeCount: pruning.beforeNodeCount,
+        afterNodeCount: pruning.afterNodeCount,
+      }),
+    );
+    return {
+      ok: true,
+      artifact,
+      pruning: enrichedPruning,
+      diagnostics: [{
+        code: 'IR_PRUNED_CREATED',
+        severity: 'info',
+        message:
+          `IR_PRUNED_CREATED pruningReductionRatio=${pruning.pruningReductionRatio} ` +
+          `artifactByteSize=${artifactByteSize} sourcePartial=${artifact.sourcePartial}`,
+      }],
+      repairActions: [`PRUNER: created IR_PRUNED artifact from ${inputStage}`],
+    };
+  } catch (e) {
+    console.warn(
+      '[AI] IR_PRUNER_FAILED:',
+      JSON.stringify({
+        code: IR_PRUNER_FAILED_REASON_CODE,
+        sourceStage: inputStage,
+        partialArtifact: Boolean(inputArtifact?.partial),
+        message: e?.message || String(e),
+        details: e?.details || null,
+      }),
+    );
+    return {
+      ok: false,
+      errorCode: IR_PRUNER_FAILED_REASON_CODE,
+      diagnostics: [{
+        code: IR_PRUNER_FAILED_REASON_CODE,
+        severity: 'error',
+        message: e?.message || 'IR_PRUNER could not create an IR_PRUNED artifact.',
+        details: e?.details,
+      }],
+      repairActions: [`PRUNER: failed to create IR_PRUNED artifact from ${inputStage}`],
+    };
+  }
 }
 
 function hasAiIrEntryPoint(ir) {
@@ -4275,7 +4915,7 @@ function classifyAiIrState({ canonicalIr, diagnostics = [], final = false }) {
       irState: AI_IR_STATE.SKELETON,
       validity: 'skeleton',
       safeToExecute: Boolean(hasEntryPoint),
-      nextAction: AI_NEXT_ACTION.USE_WITH_CAUTION,
+      nextAction: null,
       hasEntryPoint,
       hasInvalidSymbols,
       hasBrokenTransitions,
@@ -4283,7 +4923,7 @@ function classifyAiIrState({ canonicalIr, diagnostics = [], final = false }) {
     };
   }
 
-  if (final && hasIr && !normalizedDiagnostics.length && hasEntryPoint) {
+  if (final && hasIr && hasEntryPoint && !hasBlockingDiagnostics) {
     return {
       irState: AI_IR_STATE.FINAL,
       validity: 'final',
@@ -4333,18 +4973,46 @@ function buildAiGenerationResult({
   final = false,
   safeToRun,
   stacks,
+  executionMode,
+  rootCause,
+  executionDecisionScore,
 }) {
   const warnings = (diagnostics || [])
     .slice(0, AI_PARTIAL_DIAGNOSTIC_LIMIT)
     .map(normalizeAiDiagnosticForResponse);
   const classification = classifyAiIrState({ canonicalIr, diagnostics: warnings, final });
-  const resultStatus = status || (
+  const initialStatus = status || (
     classification.irState === AI_IR_STATE.FINAL
       ? AI_GENERATE_STATUS.SUCCESS
       : (classification.irState === AI_IR_STATE.PARTIAL ? AI_GENERATE_STATUS.PARTIAL_SUCCESS : AI_GENERATE_STATUS.FAILED)
   );
+  const responseDecisionScore = executionDecisionScore || buildExecutionDecisionScore({
+    canonicalIr,
+    diagnostics: warnings,
+    repairActions,
+    meta,
+  });
+  const responseExecutionMode = inferAiExecutionMode({
+    classification,
+    resultStatus: initialStatus,
+    executionMode,
+    eds: responseDecisionScore,
+  });
+  const resultStatus = statusForExecutionMode(responseExecutionMode, initialStatus);
   const partial = resultStatus !== AI_GENERATE_STATUS.SUCCESS;
   const responseSafeToRun = typeof safeToRun === 'boolean' ? safeToRun : classification.safeToExecute;
+  const responseRootCause = inferAiRootCause({ rootCause, reason, meta });
+  const isFallbackSkeleton = responseExecutionMode === AI_EXECUTION_MODE.FALLBACK_SKELETON;
+  const responseConfidenceLabel = aiConfidenceLabelForExecutionMode(responseExecutionMode);
+  console.log(
+    '[AI] execution decision:',
+    JSON.stringify({
+      mode: responseExecutionMode,
+      status: resultStatus,
+      reason: reason || null,
+      eds: responseDecisionScore,
+    }),
+  );
   const reasonCodes = deriveAiReasonCodes({
     reason,
     diagnostics: warnings,
@@ -4374,6 +5042,13 @@ function buildAiGenerationResult({
     canonicalIr: canonicalIr || null,
     irState: classification.irState,
     validity: classification.validity,
+    executionMode: responseExecutionMode,
+    executionDecisionScore: responseDecisionScore,
+    aiConfidence: responseDecisionScore.inputs.aiConfidence,
+    aiConfidenceLabel: responseConfidenceLabel,
+    rootCause: responseRootCause,
+    isDegraded: responseExecutionMode !== AI_EXECUTION_MODE.AI_PRIMARY,
+    isAIGenerated: responseExecutionMode !== AI_EXECUTION_MODE.FALLBACK_SKELETON,
     warnings,
     diagnostics: warnings,
     safeToRun: responseSafeToRun,
@@ -4387,6 +5062,7 @@ function buildAiGenerationResult({
       safeToRun: responseSafeToRun,
       hasDiagnostics,
       hasStacks: Boolean(responseStacks?.length),
+      executionMode: responseExecutionMode,
     }),
     meta: {
       ...(meta || {}),
@@ -4394,6 +5070,13 @@ function buildAiGenerationResult({
       hasInvalidSymbols: classification.hasInvalidSymbols,
       hasBrokenTransitions: classification.hasBrokenTransitions,
       hasEmptyBranches: classification.hasEmptyBranches,
+      executionMode: responseExecutionMode,
+      executionDecisionScore: responseDecisionScore,
+      aiConfidence: responseDecisionScore.inputs.aiConfidence,
+      aiConfidenceLabel: responseConfidenceLabel,
+      rootCause: responseRootCause,
+      isDegraded: responseExecutionMode !== AI_EXECUTION_MODE.AI_PRIMARY,
+      isAIGenerated: !isFallbackSkeleton,
     },
     ...(responseStacks ? { stacks: responseStacks } : {}),
   };
@@ -4417,10 +5100,27 @@ function fallbackSourceDiagnostics(diagnostics = []) {
 function buildAiSkeletonFallbackResponse({
   fallbackFrom,
   prompt,
+  sourceIr,
   diagnostics,
   repairActions,
   meta,
 }) {
+  const sourceDecisionScore = buildExecutionDecisionScore({
+    canonicalIr: sourceIr,
+    diagnostics,
+    repairActions,
+    meta,
+  });
+  const sourceRootCause = inferAiRootCause({ reason: fallbackFrom, meta });
+  console.warn(
+    '[AI] FALLBACK_SKELETON selected:',
+    JSON.stringify({
+      fallbackFrom: fallbackFrom || null,
+      rootCause: sourceRootCause,
+      eds: sourceDecisionScore,
+      retryBudget: AI_RETRY_BUDGET,
+    }),
+  );
   const skeletonIr = buildIrSkeletonFallback({ prompt, reason: fallbackFrom || IR_FALLBACK_REASON });
   const skeletonValidation = validateIrSemanticGate(skeletonIr);
   const skeletonStacks = canonicalIrToEditorStacks(skeletonIr);
@@ -4429,13 +5129,13 @@ function buildAiSkeletonFallbackResponse({
     {
       code: AI_PARTIAL_REASON_CODES.IR_FALLBACK_SKELETON_USED,
       severity: 'info',
-      message: 'Запущена базовая версия сценария (без сложной логики).',
+      message: 'Запущен аварийный режим (без AI логики).',
     },
     ...fallbackSourceDiagnostics(diagnostics),
   ];
 
   return buildAiGenerationResult({
-    status: AI_GENERATE_STATUS.PARTIAL_SUCCESS,
+    status: AI_GENERATE_STATUS.FALLBACK_SKELETON,
     reason: IR_FALLBACK_REASON,
     canonicalIr: skeletonIr,
     diagnostics: fallbackDiagnostics,
@@ -4444,11 +5144,18 @@ function buildAiSkeletonFallbackResponse({
       `${AI_IR_STATE.SKELETON}: generated executable skeleton fallback`,
     ],
     safeToRun: Boolean(hasEntryPoint),
+    executionMode: AI_EXECUTION_MODE.FALLBACK_SKELETON,
+    rootCause: sourceRootCause,
+    executionDecisionScore: sourceDecisionScore,
     stacks: skeletonStacks,
     meta: {
       ...(meta || {}),
       fallbackKind: AI_IR_STATE.SKELETON,
       fallbackFrom: fallbackFrom || null,
+      fallbackLoopBlocked: true,
+      fallbackDecisionScore: sourceDecisionScore,
+      fallbackReason: `EDS ${sourceDecisionScore.score} <= 0.4 after retry budget exhaustion`,
+      executionMode: AI_EXECUTION_MODE.FALLBACK_SKELETON,
       skeletonValidationOk: skeletonValidation.ok,
       skeletonDiagnostics: skeletonValidation.diagnostics || [],
     },
@@ -4463,6 +5170,8 @@ function buildAiPartialResponse({
   meta,
   safeToRun,
   prompt,
+  executionMode = AI_EXECUTION_MODE.AI_PARTIAL,
+  allowSkeletonFallback = false,
 }) {
   const response = buildAiGenerationResult({
     status: canonicalIr ? AI_GENERATE_STATUS.PARTIAL_SUCCESS : AI_GENERATE_STATUS.FAILED,
@@ -4472,19 +5181,13 @@ function buildAiPartialResponse({
     repairActions,
     meta,
     safeToRun,
+    executionMode,
   });
-  if (
-    response.irState === AI_IR_STATE.INVALID ||
-    response.safeToRun !== true ||
-    errorCode === 'IR_REPAIR_TIMEOUT' ||
-    errorCode === 'IR_REPAIR_FAILED' ||
-    errorCode === 'IR_INVALID' ||
-    errorCode === 'IR_EXTRACTION_FAILED' ||
-    errorCode === 'RUNTIME_VALIDATION_FAILED'
-  ) {
+  if (allowSkeletonFallback && response.executionMode === AI_EXECUTION_MODE.FALLBACK_SKELETON) {
     return buildAiSkeletonFallbackResponse({
       fallbackFrom: errorCode,
       prompt,
+      sourceIr: canonicalIr,
       diagnostics,
       repairActions,
       meta,
@@ -4502,6 +5205,7 @@ function buildAiPartialResponse({
           safeToRun: response.safeToRun,
           hasDiagnostics: true,
           hasStacks: true,
+          executionMode: response.executionMode,
         }),
       };
     }
@@ -4514,21 +5218,36 @@ function buildAiPartialResponse({
 function runDeterministicIrRepairLoop(ir, options = {}) {
   let current = normalizeAiCanonicalIr(ir);
   const repairNotes = [];
+  const graphDiagnostics = [];
   const maxRepairPasses = Math.min(
     AI_IR_REPAIR_MAX_PASSES,
     Math.max(0, Number(options.maxRepairPasses ?? AI_IR_REPAIR_MAX_PASSES) || 0),
   );
   for (let repairPass = 0; repairPass <= maxRepairPasses; repairPass += 1) {
+    const reconciliation = reconcileIrGraph(current, options);
+    current = normalizeAiCanonicalIr(reconciliation.ir);
+    if (reconciliation.changed || reconciliation.diagnostics.length) {
+      graphDiagnostics.push(...reconciliation.diagnostics);
+      repairNotes.push(...reconciliation.notes.map((note) => `pass ${repairPass}: GRAPH_RECONCILER: ${note}`));
+      console.log(
+        `[AI] IR graph reconciliation pass ${repairPass}/${maxRepairPasses}: ` +
+          `changed=${reconciliation.changed} unresolved=${reconciliation.unresolvedDiagnostics.length}`,
+      );
+    }
     assertAiDeadline(options.deadline, `ir-validate-${repairPass}`);
     const validation = validateIrSemanticGate(current, options);
+    const mergedDiagnostics = {
+      ...validation,
+      diagnostics: [...graphDiagnostics, ...aiArray(validation.diagnostics)],
+    };
     const messages = irDiagnosticMessages(validation.diagnostics);
     console.log(
       `[AI] IR validation iteration ${repairPass}/${maxRepairPasses}: ` +
         `ok=${validation.ok} errors=${messages.length}` +
         (messages.length ? ` :: ${messages.slice(0, 6).join(' | ')}` : ''),
     );
-    if (validation.ok) return { ok: true, ir: current, validation, repairNotes };
-    if (repairPass === maxRepairPasses) return { ok: false, ir: current, validation, repairNotes };
+    if (validation.ok) return { ok: true, ir: current, validation: mergedDiagnostics, repairNotes };
+    if (repairPass === maxRepairPasses) return { ok: false, ir: current, validation: mergedDiagnostics, repairNotes };
     assertAiDeadline(options.deadline, `ir-repair-${repairPass + 1}`);
     const repaired = repairIrDeterministic(current, validation.diagnostics, options);
     repairNotes.push(...repaired.notes.map((note) => `pass ${repairPass + 1}: ${note}`));
@@ -4538,10 +5257,21 @@ function runDeterministicIrRepairLoop(ir, options = {}) {
         (repaired.notes.length ? ` :: ${repaired.notes.slice(0, 8).join(' | ')}` : ''),
     );
     current = normalizeAiCanonicalIr(repaired.ir);
-    if (!repaired.changed) return { ok: false, ir: current, validation, repairNotes };
+    if (!repaired.changed) return { ok: false, ir: current, validation: mergedDiagnostics, repairNotes };
+  }
+  const reconciliation = reconcileIrGraph(current, options);
+  current = normalizeAiCanonicalIr(reconciliation.ir);
+  if (reconciliation.changed || reconciliation.diagnostics.length) {
+    graphDiagnostics.push(...reconciliation.diagnostics);
+    repairNotes.push(...reconciliation.notes.map((note) => `final: GRAPH_RECONCILER: ${note}`));
   }
   const validation = validateIrSemanticGate(current, options);
-  return { ok: validation.ok, ir: current, validation, repairNotes };
+  return {
+    ok: validation.ok,
+    ir: current,
+    validation: { ...validation, diagnostics: [...graphDiagnostics, ...aiArray(validation.diagnostics)] },
+    repairNotes,
+  };
 }
 
 function validateGeneratedAiDsl(dslFromStacks, options = {}) {
@@ -4613,6 +5343,510 @@ function runtimeDiagnosticsForPrompt(result) {
     .map((d) => `[${d.code || 'RUNTIME_VALIDATION'}] ${d.message || String(d)}`);
 }
 
+async function tryAiRecoveryGeneration({
+  recoveryArtifact,
+  pruning,
+  diagnostics = [],
+  repairActions = [],
+  astMode,
+  allowedMemoryKeys,
+  failureReason,
+  responseMeta,
+  intentPlan,
+}) {
+  const recoveryStartedAt = Date.now();
+  const recoveryDeadline = createAiModeDeadline(AI_EXECUTION_MODE.AI_RECOVERY, recoveryStartedAt);
+  assertRecoveryArtifactForAiRecovery(recoveryArtifact);
+  const sourceIr = recoveryArtifact.ir;
+  const recoveryInputSource = `${recoveryArtifact.sourceStage || 'UNKNOWN'}->PRUNER`;
+  const artifactByteSize = pruning?.artifactByteSize ?? jsonByteSize(recoveryArtifact);
+  const sourceCompleteness = Number(recoveryArtifact.sourceCompleteness ?? calculateIrCompleteness(sourceIr, diagnostics));
+  const sourceExecutableHandlers = hasExecutableIrHandlers(sourceIr);
+  const llmAllowedByPolicy = sourceCompleteness < 0.2 && !sourceExecutableHandlers;
+  console.log(
+    '[AI] AI_RECOVERY_INPUT:',
+    JSON.stringify({
+      recoveryInputSource,
+      artifactByteSize,
+      pruningReductionRatio: recoveryArtifact.pruningReductionRatio ?? sourceIr.meta?.pruningReductionRatio ?? 0,
+      sourcePartial: Boolean(recoveryArtifact.sourcePartial),
+      sourceCompleteness,
+      sourceExecutableHandlers,
+      llmAllowedByPolicy,
+      llmUsed: false,
+    }),
+  );
+  const recoveryRepairActions = [
+    ...aiArray(repairActions),
+    ...aiArray(pruning?.notes),
+    `${AI_EXECUTION_MODE.AI_RECOVERY}: deterministic transform pipeline over IR_PRUNED snapshot with graph reconciliation`,
+  ];
+  const recoveryDiagnostics = [
+    ...aiArray(diagnostics),
+    {
+      code: 'AI_RECOVERY_STARTED',
+      severity: 'info',
+      message: 'Запускаю deterministic recovery pipeline без LLM.',
+    },
+    {
+      code: 'IR_PRUNED_CREATED',
+      severity: 'info',
+      message:
+        `IR_PRUNED=true pruningReductionRatio=${recoveryArtifact.pruningReductionRatio ?? sourceIr.meta?.pruningReductionRatio ?? 0} ` +
+        `artifactByteSize=${artifactByteSize} recoveryInputSource=${recoveryInputSource}`,
+    },
+    {
+      code: 'RECOVERY_NO_LLM_REQUIRED',
+      severity: 'info',
+      message:
+        'AI_RECOVERY выполняется через deterministic IR graph transforms; full LLM generation не используется.',
+      details: {
+        sourceCompleteness,
+        sourceExecutableHandlers,
+        llmAllowedByPolicy,
+        llmUsed: false,
+      },
+    },
+  ];
+
+  try {
+    assertAiDeadline(recoveryDeadline, 'ai-recovery-start');
+    console.log(
+      `[AI] ${AI_EXECUTION_MODE.AI_RECOVERY} deterministic pipeline, ` +
+        `remainingMs=${aiTimeRemainingMs(recoveryDeadline)} input=${recoveryInputSource}`,
+    );
+
+    const transformed = runDeterministicRecoveryPipeline(sourceIr, {
+      astMode,
+      allowedMemoryKeys,
+      intentPlan,
+      maxConditionDepth: IR_PRUNER_DEFAULTS.maxDepth,
+    });
+    let candidate = transformed.ir;
+    const allRepairActions = [
+      ...recoveryRepairActions,
+      ...aiArray(transformed.notes).map((note) => `${AI_EXECUTION_MODE.AI_RECOVERY}: ${note}`),
+    ];
+    const transformDiagnostics = [
+      ...recoveryDiagnostics,
+      {
+        code: 'RECOVERY_TRANSFORM_APPLIED',
+        severity: 'info',
+        message:
+          `Applied deterministic recovery passes: ${transformed.appliedPasses.length ? transformed.appliedPasses.join(', ') : 'none'}.`,
+        details: { appliedPasses: transformed.appliedPasses },
+      },
+      ...aiArray(transformed.diagnostics),
+      ...(transformed.graphPatched
+        ? [{
+          code: 'RECOVERY_GRAPH_PATCHED',
+          severity: 'info',
+          message: 'Recovery patched missing graph transitions/callback handlers deterministically.',
+        }]
+        : []),
+    ];
+
+    const structuralValidation = validateAiCanonicalIr(candidate, { astMode, allowedMemoryKeys });
+    if (structuralValidation.errors.length > 0) {
+      return {
+        ok: false,
+        errorCode: 'AI_RECOVERY_INVALID',
+        sourceIr: candidate,
+        diagnostics: [
+          ...transformDiagnostics,
+          ...structuralValidation.errors.map((message) => ({ code: 'IR_STRUCTURE_ERROR', message })),
+        ],
+        repairActions: allRepairActions,
+      };
+    }
+
+    const repaired = runDeterministicIrRepairLoop(candidate, {
+      astMode,
+      allowedMemoryKeys,
+      deadline: recoveryDeadline,
+      maxRepairPasses: 1,
+    });
+    candidate = repaired.ir;
+    const repairNotes = [...allRepairActions, ...repaired.repairNotes];
+    if (!transformed.ok || !repaired.ok) {
+      return {
+        ok: false,
+        errorCode: 'AI_RECOVERY_REPAIR_FAILED',
+        sourceIr: candidate,
+        diagnostics: [
+          ...transformDiagnostics,
+          ...aiArray(transformed.diagnostics),
+          ...aiArray(repaired.validation?.diagnostics),
+        ],
+        repairActions: repairNotes,
+      };
+    }
+
+    const stacks = canonicalIrToEditorStacks(candidate);
+    assertAiDeadline(recoveryDeadline, 'ai-recovery-dsl-generation');
+    const dslFromStacks = generateDSL(stacks);
+    const runtimeValidation = validateGeneratedAiDsl(dslFromStacks, { deadline: recoveryDeadline });
+    if (!runtimeValidation.ok) {
+      return {
+        ok: false,
+        errorCode: runtimeValidation.parserUnavailable ? 'AI_RECOVERY_PARSER_UNAVAILABLE' : 'AI_RECOVERY_RUNTIME_FAILED',
+        sourceIr: candidate,
+        diagnostics: [
+          ...transformDiagnostics,
+          ...aiArray(runtimeValidation.diagnostics),
+        ],
+        repairActions: repairNotes,
+      };
+    }
+
+    return {
+      ok: true,
+      response: buildAiGenerationResult({
+        status: AI_GENERATE_STATUS.PARTIAL_SUCCESS,
+        reason: failureReason,
+        canonicalIr: candidate,
+        diagnostics: transformDiagnostics,
+        repairActions: repairNotes,
+        meta: responseMeta({
+          aiRecoveryAttempted: true,
+          aiRecoverySucceeded: true,
+          aiRecoveryLlmUsed: false,
+          aiRecoveryLlmAllowedByPolicy: llmAllowedByPolicy,
+          aiRecoveryElapsedMs: Date.now() - recoveryStartedAt,
+          aiRecoveryBudgetMs: recoveryDeadline.budgetMs,
+          IR_PRUNED: true,
+          irPruned: true,
+          recoveryPipeline: 'PRUNED_IR->DETERMINISTIC_REPAIR_PASSES->GRAPH_RECONCILER->PARTIAL_IR',
+          recoveryAppliedPasses: transformed.appliedPasses,
+          recoveryGraphPatched: transformed.graphPatched,
+          pruningReductionRatio: recoveryArtifact.pruningReductionRatio ?? sourceIr.meta?.pruningReductionRatio ?? 0,
+          recoveryInputSource,
+          recoveryArtifactByteSize: artifactByteSize,
+          recoveryArtifactSourceStage: recoveryArtifact.sourceStage || null,
+          recoverySourcePartial: Boolean(recoveryArtifact.sourcePartial),
+          recoverySourceCompleteness: sourceCompleteness,
+          recoveredFrom: failureReason,
+          executionMode: AI_EXECUTION_MODE.AI_RECOVERY,
+        }),
+        final: true,
+        safeToRun: true,
+        stacks,
+        executionMode: AI_EXECUTION_MODE.AI_RECOVERY,
+      }),
+    };
+  } catch (e) {
+    const code = isAiTimeoutError(e) ? AI_TIMEOUT_CODE.RECOVERY : `AI_RECOVERY_${e?.llmKind || 'ERROR'}`;
+    console.warn('[AI] AI_RECOVERY failed:', e?.message || e);
+    return {
+      ok: false,
+      errorCode: code,
+      sourceIr,
+      diagnostics: [
+        ...recoveryDiagnostics,
+        {
+          code,
+          message: e?.message || 'AI recovery deterministic transform failed.',
+        },
+      ],
+      repairActions: recoveryRepairActions,
+    };
+  }
+}
+
+async function buildAiRecoveryOrFallbackResponse({
+  errorCode,
+  canonicalIr,
+  diagnostics,
+  repairActions,
+  meta,
+  safeToRun,
+  prompt,
+  astMode,
+  allowedMemoryKeys,
+  responseMeta,
+  sourceStage = AI_EXECUTION_MODE.AI_PRIMARY,
+  recoverySourceArtifact,
+  intentPlan,
+}) {
+  const recoveryIntentPlan = intentPlan || intentPlanner(prompt || '');
+  const canInjectSemanticTemplate = recoveryIntentPlan?.knownCapabilityTemplate === SEMANTIC_TEMPLATE_IDS.CALCULATOR;
+  const buildSemanticTemplateRecoveryResponse = (fallbackFrom, sourceDiagnostics = [], sourceRepairActions = [], extraMeta = {}) => {
+    const budgetedTemplateIr = applyIntentBudgetToIr(
+      buildSemanticTemplateIr(recoveryIntentPlan, { prompt }),
+      recoveryIntentPlan,
+    ).ir;
+    const templateResolution = resolveFeatureDependencies(budgetedTemplateIr, {
+      intentPlan: recoveryIntentPlan,
+      astMode,
+      allowedMemoryKeys,
+    });
+    const templateIr = templateResolution.ir;
+    const templateStacks = canonicalIrToEditorStacks(templateIr);
+    return buildAiGenerationResult({
+      status: AI_GENERATE_STATUS.PARTIAL_SUCCESS,
+      reason: fallbackFrom,
+      canonicalIr: templateIr,
+      diagnostics: [
+        ...aiArray(sourceDiagnostics),
+        ...templateResolution.diagnostics,
+        {
+          code: 'INTENT_NOT_SATISFIED',
+          severity: 'warning',
+          message: 'Original IR could not satisfy calculator intent; deterministic calculator template was injected.',
+        },
+        {
+          code: 'MISSING_REQUIRED_CAPABILITY',
+          severity: 'warning',
+          message: 'Calculator intent requires arithmetic evaluation capability; generic text fallback is blocked.',
+        },
+      ].slice(0, AI_PARTIAL_DIAGNOSTIC_LIMIT),
+      repairActions: [
+        ...aiArray(sourceRepairActions),
+        ...templateResolution.repairActions.map((action) => `FDR: ${action}`),
+        'ISV: injected calculator semantic template during recovery',
+        'ISV: blocked generic text fallback for calculator intent',
+      ].slice(0, AI_PARTIAL_DIAGNOSTIC_LIMIT),
+      meta: responseMeta({
+        ...(meta || {}),
+        ...extraMeta,
+        aiRecoveryAttempted: true,
+        aiRecoverySucceeded: true,
+        intentTemplateRecovery: true,
+        semanticTemplate: recoveryIntentPlan.knownCapabilityTemplate,
+        executionMode: AI_EXECUTION_MODE.AI_RECOVERY,
+      }),
+      final: true,
+      safeToRun: true,
+      stacks: templateStacks,
+      executionMode: AI_EXECUTION_MODE.AI_RECOVERY,
+    });
+  };
+  const hasPartialRecoveryArtifact = Boolean(recoverySourceArtifact?.partial && recoverySourceArtifact?.ir);
+  const sourceIrForRecovery = recoverySourceArtifact?.ir || canonicalIr;
+  const prunedHandoff = buildIrPrunedArtifact({
+    sourceIr: sourceIrForRecovery,
+    sourceArtifact: recoverySourceArtifact,
+    sourceStage,
+  });
+  if (!prunedHandoff.ok) {
+    const prunerDiagnostics = [
+      ...aiArray(diagnostics),
+      ...aiArray(prunedHandoff.diagnostics),
+    ].slice(0, AI_PARTIAL_DIAGNOSTIC_LIMIT);
+    const prunerRepairActions = [
+      ...aiArray(repairActions),
+      ...aiArray(prunedHandoff.repairActions),
+    ].slice(0, AI_PARTIAL_DIAGNOSTIC_LIMIT);
+    if (canInjectSemanticTemplate) {
+      return buildSemanticTemplateRecoveryResponse(
+        IR_PRUNER_FAILED_REASON_CODE,
+        prunerDiagnostics,
+        prunerRepairActions,
+        {
+          aiRecoverySkippedReason: IR_PRUNER_FAILED_REASON_CODE,
+          recoveryInputSource: `${sourceStage}->PRUNER`,
+          recoveryArtifactSourceStage: sourceStage,
+        },
+      );
+    }
+    if (hasPartialRecoveryArtifact) {
+      return buildAiPartialResponse({
+        errorCode: IR_PRUNER_FAILED_REASON_CODE,
+        canonicalIr: recoverySourceArtifact.ir,
+        diagnostics: prunerDiagnostics,
+        repairActions: prunerRepairActions,
+        meta: responseMeta({
+          ...(meta || {}),
+          aiRecoveryAttempted: false,
+          aiRecoverySkippedReason: IR_PRUNER_FAILED_REASON_CODE,
+          recoveryInputSource: `${recoverySourceArtifact.source}->PARTIAL_IR_SNAPSHOTS->PRUNER`,
+          primaryPartialIrAvailable: true,
+          partialIrSalvaged: true,
+          primaryPartialCompleteness: recoverySourceArtifact.completeness,
+        }),
+        safeToRun: false,
+        prompt,
+        executionMode: AI_EXECUTION_MODE.AI_PARTIAL,
+        allowSkeletonFallback: false,
+      });
+    }
+    return buildAiSkeletonFallbackResponse({
+      fallbackFrom: IR_PRUNER_FAILED_REASON_CODE,
+      prompt,
+      sourceIr: sourceIrForRecovery,
+      diagnostics: prunerDiagnostics,
+      repairActions: prunerRepairActions,
+      meta: responseMeta({
+        ...(meta || {}),
+        aiRecoveryAttempted: false,
+        aiRecoverySkippedReason: IR_PRUNER_FAILED_REASON_CODE,
+        primaryNoPartialIr: true,
+        recoveryInputSource: `${sourceStage}->PRUNER`,
+        recoveryArtifactSourceStage: sourceStage,
+      }),
+    });
+  }
+
+  let recovery;
+  try {
+    recovery = await tryAiRecoveryGeneration({
+      recoveryArtifact: prunedHandoff.artifact,
+      pruning: prunedHandoff.pruning,
+      diagnostics,
+      repairActions: [
+        ...aiArray(repairActions),
+        ...aiArray(prunedHandoff.repairActions),
+      ],
+      astMode,
+      allowedMemoryKeys,
+      failureReason: errorCode,
+      responseMeta,
+      intentPlan: recoveryIntentPlan,
+    });
+  } catch (e) {
+    if (e?.code !== AI_RECOVERY_INVALID_INPUT) throw e;
+    console.warn('[AI] AI_RECOVERY input contract blocked:', JSON.stringify(e.details || {}));
+    recovery = {
+      ok: false,
+      errorCode: IR_PRUNER_FAILED_REASON_CODE,
+      sourceIr: prunedHandoff.artifact?.ir || null,
+      diagnostics: [{
+        code: IR_PRUNER_FAILED_REASON_CODE,
+        message: e.message || 'AI_RECOVERY requires an IR_PRUNED artifact.',
+        details: e.details,
+      }],
+      repairActions: aiArray(repairActions),
+    };
+  }
+
+  if (recovery.ok) return recovery.response;
+
+  const recoveryMeta = responseMeta({
+    ...(meta || {}),
+    aiRecoveryAttempted: true,
+    aiRecoverySucceeded: false,
+    aiRecoveryFailureReason: recovery.errorCode,
+    aiRecoveryBudgetMs: AI_RECOVERY_TIMEOUT_MS,
+    IR_PRUNED: true,
+    irPruned: true,
+    pruningReductionRatio: prunedHandoff.artifact.pruningReductionRatio,
+    recoveryInputSource: `${prunedHandoff.artifact.sourceStage}->PRUNER`,
+    recoveryArtifactByteSize: prunedHandoff.pruning.artifactByteSize,
+    recoveryArtifactSourceStage: prunedHandoff.artifact.sourceStage,
+    recoverySourcePartial: prunedHandoff.artifact.sourcePartial,
+    recoverySourceCompleteness: prunedHandoff.artifact.sourceCompleteness,
+  });
+  const combinedDiagnostics = [
+    ...aiArray(diagnostics),
+    ...aiArray(recovery.diagnostics),
+  ].slice(0, AI_PARTIAL_DIAGNOSTIC_LIMIT);
+  const combinedRepairActions = [
+    ...aiArray(repairActions),
+    ...aiArray(recovery.repairActions),
+  ].slice(0, AI_PARTIAL_DIAGNOSTIC_LIMIT);
+  const partialIr = recovery.sourceIr || prunedHandoff.artifact.ir;
+  const recoveryTimedOut = recovery.errorCode === AI_TIMEOUT_CODE.RECOVERY;
+
+  if (canInjectSemanticTemplate) {
+    return buildSemanticTemplateRecoveryResponse(
+      recovery.errorCode || errorCode,
+      combinedDiagnostics,
+      combinedRepairActions,
+      {
+        aiRecoveryFailureReason: recovery.errorCode,
+        IR_PRUNED: true,
+        irPruned: true,
+        pruningReductionRatio: prunedHandoff.artifact.pruningReductionRatio,
+        recoveryInputSource: `${prunedHandoff.artifact.sourceStage}->PRUNER`,
+        recoveryArtifactByteSize: prunedHandoff.pruning.artifactByteSize,
+        recoveryArtifactSourceStage: prunedHandoff.artifact.sourceStage,
+        recoverySourcePartial: prunedHandoff.artifact.sourcePartial,
+        recoverySourceCompleteness: prunedHandoff.artifact.sourceCompleteness,
+      },
+    );
+  }
+
+  if (recovery.errorCode === IR_PRUNER_FAILED_REASON_CODE) {
+    if (hasPartialRecoveryArtifact) {
+      return buildAiPartialResponse({
+        errorCode: IR_PRUNER_FAILED_REASON_CODE,
+        canonicalIr: partialIr,
+        diagnostics: combinedDiagnostics,
+        repairActions: combinedRepairActions,
+        meta: recoveryMeta,
+        safeToRun: false,
+        prompt,
+        executionMode: AI_EXECUTION_MODE.AI_PARTIAL,
+        allowSkeletonFallback: false,
+      });
+    }
+    return buildAiSkeletonFallbackResponse({
+      fallbackFrom: IR_PRUNER_FAILED_REASON_CODE,
+      prompt,
+      sourceIr: partialIr,
+      diagnostics: combinedDiagnostics,
+      repairActions: combinedRepairActions,
+      meta: recoveryMeta,
+    });
+  }
+
+  if (recoveryTimedOut) {
+    if (hasPartialRecoveryArtifact) {
+      return buildAiPartialResponse({
+        errorCode,
+        canonicalIr: partialIr,
+        diagnostics: combinedDiagnostics.length
+          ? combinedDiagnostics
+          : [{ code: recovery.errorCode, message: 'AI_RECOVERY exceeded reduced budget.' }],
+        repairActions: combinedRepairActions,
+        meta: recoveryMeta,
+        safeToRun: false,
+        prompt,
+        executionMode: AI_EXECUTION_MODE.AI_PARTIAL,
+        allowSkeletonFallback: false,
+      });
+    }
+    return buildAiSkeletonFallbackResponse({
+      fallbackFrom: recovery.errorCode,
+      prompt,
+      sourceIr: partialIr,
+      diagnostics: combinedDiagnostics.length
+        ? combinedDiagnostics
+        : [{ code: recovery.errorCode, message: 'AI_RECOVERY exceeded reduced budget.' }],
+      repairActions: combinedRepairActions,
+      meta: recoveryMeta,
+    });
+  }
+
+  if (partialIr) {
+    return buildAiPartialResponse({
+      errorCode,
+      canonicalIr: partialIr,
+      diagnostics: combinedDiagnostics,
+      repairActions: combinedRepairActions,
+      meta: recoveryMeta,
+      safeToRun,
+      prompt,
+      executionMode: AI_EXECUTION_MODE.AI_PARTIAL,
+      allowSkeletonFallback: false,
+    });
+  }
+
+  return buildAiPartialResponse({
+    errorCode,
+    canonicalIr: null,
+    diagnostics: combinedDiagnostics.length
+      ? combinedDiagnostics
+      : [{ code: recovery.errorCode || errorCode, message: 'AI_RECOVERY could not complete IR.' }],
+    repairActions: combinedRepairActions,
+    meta: recoveryMeta,
+    safeToRun: false,
+    prompt,
+    executionMode: AI_EXECUTION_MODE.AI_PARTIAL,
+    allowSkeletonFallback: false,
+  });
+}
+
 
 function findUnsupportedDslBlockComments(dsl) {
   return String(dsl || '')
@@ -4644,23 +5878,87 @@ app.post('/api/ai-generate', requireUserAuth, async (req, res) => {
   if (!prompt || typeof prompt !== 'string' || prompt.trim().length < 3) {
     return res.status(400).json({ status: AI_GENERATE_STATUS.FAILED, reason: 'PROMPT_TOO_SHORT', error: 'Опиши своего бота подробнее' });
   }
+  const promptText = prompt.trim();
+  if (promptText.length > AI_PROMPT_MAX_CHARS) {
+    return res.status(400).json({
+      status: AI_GENERATE_STATUS.FAILED,
+      reason: 'PROMPT_TOO_LONG',
+      error: `Запрос должен быть не длиннее ${AI_PROMPT_MAX_CHARS} символов`,
+    });
+  }
   const startedAt = Date.now();
-  const deadline = { expiresAt: startedAt + AI_GENERATE_TIMEOUT_MS };
+  const primaryDeadline = createAiModeDeadline(AI_EXECUTION_MODE.AI_PRIMARY, startedAt);
   let lastIrSnapshot = null;
   let lastValidIrSnapshot = null;
   let lastDiagnostics = [];
   let lastRepairActions = [];
   let lastAttempt = 0;
+  let lastAiConfidence = null;
+  let latestPrimaryPartialIrArtifact = null;
+  const astMode = getAiAstMode();
+  const allowedMemoryKeys = getAiAllowedMemoryKeys();
+  const intentPlan = intentPlanner(promptText);
+  const intentDiagnostics = [
+    {
+      code: 'INTENT_PLAN_CREATED',
+      severity: 'info',
+      message:
+        `IntentPlan created: botType=${intentPlan.botType}, complexity=${intentPlan.complexityScore}.`,
+      details: {
+        botType: intentPlan.botType,
+        requiredFeatures: intentPlan.requiredFeatures,
+        complexityScore: intentPlan.complexityScore,
+        budget: intentPlan.budget,
+      },
+    },
+    {
+      code: 'MINIMAL_GRAPH_GENERATED',
+      severity: 'info',
+      message:
+        `MinimalExecutionGraph generated with ${intentPlan.minimalExecutionGraph.nodes.length} nodes and ` +
+        `${intentPlan.minimalExecutionGraph.edges.length} edges.`,
+      details: intentPlan.minimalExecutionGraph,
+    },
+  ];
+  let intentPipelineDiagnostics = [...intentDiagnostics];
+  const withIntentDiagnostics = (items = []) => [
+    ...intentPipelineDiagnostics,
+    ...aiArray(items),
+  ].slice(0, AI_PARTIAL_DIAGNOSTIC_LIMIT);
+  const systemContent =
+    AI_SYSTEM_PROMPT +
+    buildAiCoreContextAppendix() +
+    buildIrSymbolRegistryPromptContext({ allowedMemoryKeys }) +
+    buildIntentPlanPromptContext(intentPlan) +
+    serverAiAstPolicyAppendix(astMode, allowedMemoryKeys);
+  const responseMeta = (extra = {}) => ({
+    attempts: lastAttempt,
+    elapsedMs: Date.now() - startedAt,
+    retryBudget: AI_RETRY_BUDGET,
+    timeBudgetTiers: AI_TIME_BUDGET_TIERS,
+    timeBudgetMs: {
+      [AI_EXECUTION_MODE.AI_PRIMARY]: AI_PRIMARY_TIMEOUT_MS,
+      [AI_EXECUTION_MODE.AI_RECOVERY]: AI_RECOVERY_TIMEOUT_MS,
+      [AI_EXECUTION_MODE.AI_PARTIAL]: AI_PARTIAL_TIMEOUT_MS,
+      [AI_EXECUTION_MODE.FALLBACK_SKELETON]: 0,
+    },
+    intentPlan: {
+      botType: intentPlan.botType,
+      requiredFeatures: intentPlan.requiredFeatures,
+      complexityScore: intentPlan.complexityScore,
+      budget: intentPlan.budget,
+    },
+    minimalExecutionGraph: intentPlan.minimalExecutionGraph,
+    ...(lastAiConfidence != null ? { aiConfidence: lastAiConfidence } : {}),
+    ...extra,
+  });
+  const persistLatestPrimaryPartialIrArtifact = (artifact) => {
+    if (!artifact?.ir || artifact.source !== AI_EXECUTION_MODE.AI_PRIMARY) return;
+    latestPrimaryPartialIrArtifact = artifact;
+    lastIrSnapshot = artifact.ir;
+  };
   try {
-    const astMode = getAiAstMode();
-    const allowedMemoryKeys = getAiAllowedMemoryKeys();
-    const maxAttempts = AI_LLM_MAX_ATTEMPTS;
-
-    const systemContent =
-      AI_SYSTEM_PROMPT +
-      buildAiCoreContextAppendix() +
-      buildIrSymbolRegistryPromptContext({ allowedMemoryKeys }) +
-      serverAiAstPolicyAppendix(astMode, allowedMemoryKeys);
+    const maxAttempts = Math.min(AI_LLM_MAX_ATTEMPTS, AI_RETRY_BUDGET[AI_EXECUTION_MODE.AI_PRIMARY]);
 
     const initialMessages = [
       { role: 'system', content: systemContent },
@@ -4668,7 +5966,7 @@ app.post('/api/ai-generate', requireUserAuth, async (req, res) => {
       { role: 'assistant', content: IR_FEW_SHOT_ASSISTANT },
       { role: 'user', content: IR_FEW_SHOT_USER_2 },
       { role: 'assistant', content: IR_FEW_SHOT_ASSISTANT_2 },
-      { role: 'user', content: prompt.trim() },
+      { role: 'user', content: buildIntentPlannedUserPrompt(promptText, intentPlan) },
     ];
 
     const messages = [...initialMessages];
@@ -4679,67 +5977,156 @@ app.post('/api/ai-generate', requireUserAuth, async (req, res) => {
 
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       lastAttempt = attempt + 1;
-      assertAiDeadline(deadline, `llm-attempt-${lastAttempt}-start`);
-      const data = await withAiDeadline(
-        callGroq(messages, { max_tokens: 4000 }),
-        deadline,
-        `llm-attempt-${lastAttempt}`,
-      );
+      const attemptMode = attempt === 0 ? AI_EXECUTION_MODE.AI_PRIMARY : AI_EXECUTION_MODE.AI_PARTIAL;
+      const attemptDeadline = attempt === 0
+        ? primaryDeadline
+        : createAiModeDeadline(AI_EXECUTION_MODE.AI_PARTIAL);
+      assertAiDeadline(attemptDeadline, `llm-attempt-${lastAttempt}-start`);
+      const data = attemptMode === AI_EXECUTION_MODE.AI_PRIMARY
+        ? await callAiPrimaryWithPartialSnapshots(messages, {
+          attemptDeadline,
+          max_tokens: 4000,
+          temperature: 0.25,
+          onPartialIrArtifact: persistLatestPrimaryPartialIrArtifact,
+        })
+        : await withAiDeadline(
+          callGroq(messages, {
+            max_tokens: 1800,
+            temperature: 0.12,
+          }),
+          attemptDeadline,
+          `llm-attempt-${lastAttempt}`,
+        );
+      if (attemptMode === AI_EXECUTION_MODE.AI_PRIMARY) aiPrimaryTimeoutStreak = 0;
+      lastAiConfidence = inferAiConfidenceFromLlmChoice(data.choices?.[0]);
       lastRaw = data.choices?.[0]?.message?.content || '';
       console.log(
-        `[AI] LLM attempt ${lastAttempt}/${maxAttempts}, ` +
-          `remainingMs=${aiTimeRemainingMs(deadline)}, raw (first 300):`,
+        `[AI] ${attemptMode} LLM attempt ${lastAttempt}/${maxAttempts}, ` +
+          `budgetMs=${attemptDeadline.budgetMs} remainingMs=${aiTimeRemainingMs(attemptDeadline)}, raw (first 300):`,
         lastRaw.slice(0, 300),
       );
 
       const extracted = extractAiCanonicalIrFromRaw(lastRaw);
       if (!extracted) {
-        lastDiagnostics = [{ code: 'IR_EXTRACTION_FAILED', message: 'AI response did not contain Canonical IR JSON' }];
-        if (attempt < maxAttempts - 1) {
+        lastDiagnostics = withIntentDiagnostics([{ code: 'IR_EXTRACTION_FAILED', message: 'AI response did not contain Canonical IR JSON' }]);
+        if (
+          attempt < maxAttempts - 1 &&
+          hasRetryBudget(AI_EXECUTION_MODE.AI_PARTIAL, attempt) &&
+          canUseNonPrimaryLlm(lastIrSnapshot, lastDiagnostics)
+        ) {
           messages.push({ role: 'assistant', content: lastRaw.slice(0, 12000) });
           messages.push({ role: 'user', content: buildNonJsonRepairPrompt() });
           continue;
         }
         const cleaned = stripThinkingFromAiRaw(lastRaw);
         console.error('AI вернул не Canonical IR после очистки:', cleaned.slice(0, 400));
-        return res.json(buildAiPartialResponse({
+        return res.json(await buildAiRecoveryOrFallbackResponse({
           errorCode: 'IR_EXTRACTION_FAILED',
-          message: 'AI не смог собрать корректный IR.',
           canonicalIr: lastIrSnapshot,
           diagnostics: lastDiagnostics,
           repairActions: lastRepairActions,
-          meta: { attempts: lastAttempt, elapsedMs: Date.now() - startedAt },
+          meta: responseMeta(),
           prompt: prompt.trim(),
+          systemContent,
+          astMode,
+          allowedMemoryKeys,
+          responseMeta,
+          sourceStage: attemptMode,
         }));
       }
 
-      const candidate = normalizeAiCanonicalIr(extracted.ir);
+      let candidate = normalizeAiCanonicalIr(extracted.ir);
+      const budgeted = applyIntentBudgetToIr(candidate, intentPlan);
+      candidate = budgeted.ir;
+      if (budgeted.changed) {
+        const complexityDiagnostic = {
+          code: 'COMPLEXITY_REDUCED',
+          severity: 'info',
+          message:
+            `IR reduced to ${intentPlan.complexityScore} complexity budget: ${budgeted.notes.join('; ') || 'budget enforced'}.`,
+          details: {
+            complexityScore: intentPlan.complexityScore,
+            budget: intentPlan.budget,
+            notes: budgeted.notes,
+          },
+        };
+        intentPipelineDiagnostics = [...intentDiagnostics, complexityDiagnostic];
+        lastRepairActions = [
+          ...lastRepairActions,
+          ...budgeted.notes.map((note) => `INTENT_PLAN: ${note}`),
+        ];
+      }
+      const intentRepair = repairIntentSatisfaction(candidate, {
+        prompt: promptText,
+        intentPlan,
+      });
+      if (intentRepair.changed) {
+        candidate = applyIntentBudgetToIr(intentRepair.ir, intentPlan).ir;
+        intentPipelineDiagnostics = [
+          ...intentPipelineDiagnostics,
+          ...intentRepair.diagnostics,
+        ].slice(0, AI_PARTIAL_DIAGNOSTIC_LIMIT);
+        lastRepairActions = [
+          ...lastRepairActions,
+          ...intentRepair.repairNotes,
+        ];
+      }
+      const featureResolution = resolveFeatureDependencies(candidate, {
+        intentPlan,
+        astMode,
+        allowedMemoryKeys,
+      });
+      candidate = featureResolution.ir;
+      if (featureResolution.diagnostics.length) {
+        intentPipelineDiagnostics = [
+          ...intentPipelineDiagnostics,
+          ...featureResolution.diagnostics,
+        ].slice(0, AI_PARTIAL_DIAGNOSTIC_LIMIT);
+      }
+      if (featureResolution.changed) {
+        lastRepairActions = [
+          ...lastRepairActions,
+          ...featureResolution.repairActions.map((action) => `FDR: ${action}`),
+        ];
+      }
       lastIrSnapshot = candidate;
       if (!candidate || typeof candidate !== 'object') {
         lastAstErrors = ['Ожидался JSON-объект Canonical AI IR'];
-        lastDiagnostics = lastAstErrors.map((message) => ({ code: 'IR_STRUCTURE_ERROR', message }));
-        if (attempt < maxAttempts - 1) {
+        lastDiagnostics = withIntentDiagnostics(lastAstErrors.map((message) => ({ code: 'IR_STRUCTURE_ERROR', message })));
+        if (
+          attempt < maxAttempts - 1 &&
+          hasRetryBudget(AI_EXECUTION_MODE.AI_PARTIAL, attempt) &&
+          canUseNonPrimaryLlm(lastIrSnapshot, lastDiagnostics)
+        ) {
           messages.push({ role: 'assistant', content: lastRaw.slice(0, 12000) });
           messages.push({ role: 'user', content: buildIrRepairUserPrompt(lastAstErrors, '{}') });
           continue;
         }
-        return res.json(buildAiPartialResponse({
+        return res.json(await buildAiRecoveryOrFallbackResponse({
           errorCode: 'IR_INVALID',
-          message: 'AI вернул пустой Canonical IR.',
           canonicalIr: lastIrSnapshot,
           diagnostics: lastDiagnostics,
           repairActions: lastRepairActions,
-          meta: { attempts: lastAttempt, elapsedMs: Date.now() - startedAt },
+          meta: responseMeta(),
           prompt: prompt.trim(),
+          systemContent,
+          astMode,
+          allowedMemoryKeys,
+          responseMeta,
+          sourceStage: attemptMode,
         }));
       }
 
       const structuralValidation = validateAiCanonicalIr(candidate, { astMode, allowedMemoryKeys });
       lastAstErrors = structuralValidation.errors;
-      lastDiagnostics = lastAstErrors.map((message) => ({ code: 'IR_STRUCTURE_ERROR', message }));
+      lastDiagnostics = withIntentDiagnostics(lastAstErrors.map((message) => ({ code: 'IR_STRUCTURE_ERROR', message })));
       if (lastAstErrors.length > 0) {
         console.error('[AI] Canonical IR structure:', lastAstErrors.join(' | '));
-        if (attempt < maxAttempts - 1) {
+        if (
+          attempt < maxAttempts - 1 &&
+          hasRetryBudget(AI_EXECUTION_MODE.AI_PARTIAL, attempt) &&
+          canUseNonPrimaryLlm(candidate, lastDiagnostics)
+        ) {
           messages.push({ role: 'assistant', content: lastRaw.slice(0, 12000) });
           messages.push({
             role: 'user',
@@ -4747,14 +6134,18 @@ app.post('/api/ai-generate', requireUserAuth, async (req, res) => {
           });
           continue;
         }
-        return res.json(buildAiPartialResponse({
+        return res.json(await buildAiRecoveryOrFallbackResponse({
           errorCode: 'IR_INVALID',
-          message: 'AI не смог собрать корректный Canonical IR после нескольких попыток.',
           canonicalIr: lastIrSnapshot,
           diagnostics: lastDiagnostics,
           repairActions: lastRepairActions,
-          meta: { attempts: lastAttempt, elapsedMs: Date.now() - startedAt },
+          meta: responseMeta(),
           prompt: prompt.trim(),
+          systemContent,
+          astMode,
+          allowedMemoryKeys,
+          responseMeta,
+          sourceStage: attemptMode,
         }));
       }
 
@@ -4762,16 +6153,20 @@ app.post('/api/ai-generate', requireUserAuth, async (req, res) => {
       const repaired = runDeterministicIrRepairLoop(candidate, {
         astMode,
         allowedMemoryKeys,
-        deadline,
+        deadline: attemptDeadline,
         maxRepairPasses: AI_IR_REPAIR_MAX_PASSES,
       });
       lastIrSnapshot = repaired.ir;
-      lastDiagnostics = repaired.validation?.diagnostics || [];
+      lastDiagnostics = withIntentDiagnostics(repaired.validation?.diagnostics || []);
       lastRepairActions = [...lastRepairActions, ...repaired.repairNotes];
       if (!repaired.ok) {
         const semanticErrors = irDiagnosticMessages(repaired.validation.diagnostics);
         console.error('[AI] IR semantic gate:', semanticErrors.join(' | '));
-        if (attempt < maxAttempts - 1) {
+        if (
+          attempt < maxAttempts - 1 &&
+          hasRetryBudget(AI_EXECUTION_MODE.AI_PARTIAL, attempt) &&
+          canUseNonPrimaryLlm(repaired.ir, repaired.validation.diagnostics)
+        ) {
           messages.push({ role: 'assistant', content: JSON.stringify(repaired.ir).slice(0, 12000) });
           messages.push({
             role: 'user',
@@ -4782,18 +6177,21 @@ app.post('/api/ai-generate', requireUserAuth, async (req, res) => {
           });
           continue;
         }
-        return res.json(buildAiPartialResponse({
+        return res.json(await buildAiRecoveryOrFallbackResponse({
           errorCode: 'IR_REPAIR_FAILED',
-          message: 'AI не смог автоматически исправить структуру сценария.',
           canonicalIr: repaired.ir,
-          diagnostics: repaired.validation.diagnostics,
+          diagnostics: lastDiagnostics,
           repairActions: lastRepairActions,
           meta: {
-            attempts: lastAttempt,
             repairPasses: AI_IR_REPAIR_MAX_PASSES,
-            elapsedMs: Date.now() - startedAt,
+            ...responseMeta(),
           },
           prompt: prompt.trim(),
+          systemContent,
+          astMode,
+          allowedMemoryKeys,
+          responseMeta,
+          sourceStage: attemptMode,
         }));
       }
 
@@ -4805,23 +6203,34 @@ app.post('/api/ai-generate', requireUserAuth, async (req, res) => {
       lastValidIrSnapshot = canonicalIr;
       stacks = canonicalIrToEditorStacks(canonicalIr);
 
-      assertAiDeadline(deadline, 'dsl-generation');
+      assertAiDeadline(attemptDeadline, 'dsl-generation');
       const dslFromStacks = generateDSL(stacks);
-      const runtimeValidation = validateGeneratedAiDsl(dslFromStacks, { deadline });
+      const runtimeValidation = validateGeneratedAiDsl(dslFromStacks, { deadline: attemptDeadline });
       if (!runtimeValidation.ok) {
         const runtimeErrors = runtimeDiagnosticsForPrompt(runtimeValidation);
-        lastDiagnostics = runtimeValidation.diagnostics || [];
+        lastDiagnostics = withIntentDiagnostics(runtimeValidation.diagnostics || []);
         console.error('[AI] Runtime validation rejected generated DSL:', runtimeErrors.join(' | '));
         if (runtimeValidation.parserUnavailable) {
-          return res.json(buildAiSkeletonFallbackResponse({
-            fallbackFrom: 'PARSER_UNAVAILABLE',
+          return res.json(await buildAiRecoveryOrFallbackResponse({
+            errorCode: 'PARSER_UNAVAILABLE',
+            canonicalIr,
             prompt: prompt.trim(),
-            diagnostics: runtimeValidation.diagnostics,
+            diagnostics: lastDiagnostics,
             repairActions: lastRepairActions,
-            meta: { attempts: lastAttempt, elapsedMs: Date.now() - startedAt },
+            meta: responseMeta(),
+            systemContent,
+            astMode,
+            allowedMemoryKeys,
+            responseMeta,
+            sourceStage: attemptMode,
           }));
         }
-        if (attempt < maxAttempts - 1 && runtimeValidation.retryable !== false) {
+        if (
+          attempt < maxAttempts - 1 &&
+          runtimeValidation.retryable !== false &&
+          hasRetryBudget(AI_EXECUTION_MODE.AI_PARTIAL, attempt) &&
+          canUseNonPrimaryLlm(canonicalIr, runtimeValidation.diagnostics)
+        ) {
           messages.push({ role: 'assistant', content: JSON.stringify(canonicalIr).slice(0, 12000) });
           messages.push({
             role: 'user',
@@ -4834,15 +6243,19 @@ app.post('/api/ai-generate', requireUserAuth, async (req, res) => {
           canonicalIr = null;
           continue;
         }
-        return res.json(buildAiPartialResponse({
+        return res.json(await buildAiRecoveryOrFallbackResponse({
           errorCode: 'RUNTIME_VALIDATION_FAILED',
-          message: 'AI собрал IR, но сценарий не прошёл runtime validation.',
           canonicalIr,
-          diagnostics: runtimeValidation.diagnostics,
+          diagnostics: lastDiagnostics,
           repairActions: lastRepairActions,
-          meta: { attempts: lastAttempt, elapsedMs: Date.now() - startedAt },
+          meta: responseMeta(),
           safeToRun: false,
           prompt: prompt.trim(),
+          systemContent,
+          astMode,
+          allowedMemoryKeys,
+          responseMeta,
+          sourceStage: attemptMode,
         }));
       }
 
@@ -4850,14 +6263,18 @@ app.post('/api/ai-generate', requireUserAuth, async (req, res) => {
     }
 
     if (!stacks) {
-      return res.json(buildAiPartialResponse({
+      return res.json(await buildAiRecoveryOrFallbackResponse({
         errorCode: 'IR_INVALID',
-        message: 'AI не вернул валидную схему.',
         canonicalIr: lastIrSnapshot,
         diagnostics: lastDiagnostics,
         repairActions: lastRepairActions,
-        meta: { attempts: lastAttempt, elapsedMs: Date.now() - startedAt },
+        meta: responseMeta(),
         prompt: prompt.trim(),
+        systemContent,
+        astMode,
+        allowedMemoryKeys,
+        responseMeta,
+        sourceStage: lastAttempt > 1 ? AI_EXECUTION_MODE.AI_PARTIAL : AI_EXECUTION_MODE.AI_PRIMARY,
       }));
     }
 
@@ -4866,63 +6283,118 @@ app.post('/api/ai-generate', requireUserAuth, async (req, res) => {
         status: AI_GENERATE_STATUS.SUCCESS,
         reason: null,
         canonicalIr,
-        diagnostics: [],
+        diagnostics: intentPipelineDiagnostics,
         repairActions: lastRepairActions,
-        meta: { attempts: lastAttempt, elapsedMs: Date.now() - startedAt },
+        meta: responseMeta(),
         final: true,
         stacks,
       }),
     });
 
   } catch (e) {
-    if (e?.code === 'IR_REPAIR_TIMEOUT') {
+    if (isAiTimeoutError(e)) {
+      if (e?.code === AI_TIMEOUT_CODE.PRIMARY) aiPrimaryTimeoutStreak += 1;
       const elapsedMs = Date.now() - startedAt;
+      const skipFullRetry = e?.code === AI_TIMEOUT_CODE.PRIMARY && aiPrimaryTimeoutStreak < 2;
+      const primaryTimedOut = e?.code === AI_TIMEOUT_CODE.PRIMARY;
+      const primaryPartialArtifact = primaryTimedOut ? latestPrimaryPartialIrArtifact : null;
+      const primaryPartialDiagnostics = primaryTimedOut
+        ? (primaryPartialArtifact
+          ? [
+            {
+              code: AI_PRIMARY_PARTIAL_IR_AVAILABLE_CODE,
+              severity: 'info',
+              message: `PRIMARY timeout preserved partial IR artifact with completeness=${primaryPartialArtifact.completeness}.`,
+            },
+            {
+              code: AI_PARTIAL_IR_SALVAGED_CODE,
+              severity: 'info',
+              message: 'Latest parseable AI_PRIMARY partial IR was salvaged for PRUNER/RECOVERY.',
+            },
+          ]
+          : [{
+            code: AI_PRIMARY_NO_PARTIAL_IR_CODE,
+            severity: 'warning',
+            message: 'AI_PRIMARY timed out before any parseable partial IR snapshot was available.',
+          }])
+        : [];
       console.error(
-        `[AI] generation timeout stage=${e.stage || 'unknown'} ` +
-          `attempts=${lastAttempt} elapsedMs=${elapsedMs} diagnostics=${lastDiagnostics.length}`,
+        `[AI] ${e.code || 'AI_TIMEOUT'} stage=${e.stage || 'unknown'} ` +
+          `attempts=${lastAttempt} elapsedMs=${elapsedMs} diagnostics=${lastDiagnostics.length}` +
+          (primaryPartialArtifact ? ` partialIrCompleteness=${primaryPartialArtifact.completeness}` : '') +
+          (skipFullRetry ? ' performanceGuard=skip_full_primary_retry' : ''),
       );
-      return res.json(buildAiPartialResponse({
-        errorCode: 'IR_REPAIR_TIMEOUT',
-        message: 'AI generation timed out.',
-        canonicalIr: lastValidIrSnapshot || lastIrSnapshot,
-        diagnostics: lastDiagnostics.length
-          ? lastDiagnostics
-          : [{ code: 'IR_REPAIR_TIMEOUT', message: 'AI generation exceeded time budget.' }],
+      return res.json(await buildAiRecoveryOrFallbackResponse({
+        errorCode: primaryPartialArtifact ? AI_PRIMARY_PARTIAL_IR_AVAILABLE_CODE : (e.code || AI_TIMEOUT_CODE.PRIMARY),
+        canonicalIr: primaryPartialArtifact?.ir || lastValidIrSnapshot || lastIrSnapshot,
+        diagnostics: [
+          ...primaryPartialDiagnostics,
+          ...(lastDiagnostics.length
+            ? lastDiagnostics
+            : [{ code: e.code || 'AI_TIMEOUT', message: 'AI generation exceeded time budget.' }]),
+        ],
         repairActions: lastRepairActions,
-        meta: {
-          attempts: lastAttempt,
-          elapsedMs,
-          timeoutMs: AI_GENERATE_TIMEOUT_MS,
+        meta: responseMeta({
+          timeoutMs: timeBudgetMsForExecutionMode(
+            e?.code === AI_TIMEOUT_CODE.PARTIAL ? AI_EXECUTION_MODE.AI_PARTIAL : AI_EXECUTION_MODE.AI_PRIMARY,
+          ),
+          timedOut: true,
+          timeoutCode: e.code,
           stage: e.stage,
-        },
+          primaryTimeoutStreak: aiPrimaryTimeoutStreak,
+          performanceGuard: skipFullRetry ? 'skip_full_primary_retry' : null,
+          primaryPartialIrAvailable: Boolean(primaryPartialArtifact),
+          primaryNoPartialIr: primaryTimedOut && !primaryPartialArtifact,
+          partialIrSalvaged: Boolean(primaryPartialArtifact),
+          primaryPartialCompleteness: primaryPartialArtifact?.completeness ?? null,
+        }),
         prompt: prompt.trim(),
+        systemContent,
+        astMode,
+        allowedMemoryKeys,
+        responseMeta,
+        sourceStage: e?.code === AI_TIMEOUT_CODE.PARTIAL ? AI_EXECUTION_MODE.AI_PARTIAL : AI_EXECUTION_MODE.AI_PRIMARY,
+        recoverySourceArtifact: primaryPartialArtifact || undefined,
       }));
     }
     const kind = e?.llmKind;
     if (kind === 'NETWORK') {
       console.error('POST /api/ai-generate', e.message);
-      return res.json(buildAiSkeletonFallbackResponse({
-        fallbackFrom: 'AI_NETWORK_ERROR',
+      return res.json(await buildAiRecoveryOrFallbackResponse({
+        errorCode: 'AI_NETWORK_ERROR',
+        canonicalIr: lastValidIrSnapshot || lastIrSnapshot,
         prompt: prompt.trim(),
         diagnostics: [{ code: 'AI_NETWORK_ERROR', message: e.message }],
         repairActions: lastRepairActions,
-        meta: { attempts: lastAttempt, elapsedMs: Date.now() - startedAt },
+        meta: responseMeta(),
+        systemContent,
+        astMode,
+        allowedMemoryKeys,
+        responseMeta,
+        sourceStage: lastAttempt > 1 ? AI_EXECUTION_MODE.AI_PARTIAL : AI_EXECUTION_MODE.AI_PRIMARY,
       }));
     }
     if (kind === 'RATE_LIMIT') {
       console.error('POST /api/ai-generate', e.message);
-      return res.json(buildAiSkeletonFallbackResponse({
-        fallbackFrom: 'AI_RATE_LIMIT',
+      return res.json(await buildAiRecoveryOrFallbackResponse({
+        errorCode: 'AI_RATE_LIMIT',
+        canonicalIr: lastValidIrSnapshot || lastIrSnapshot,
         prompt: prompt.trim(),
         diagnostics: [{ code: 'AI_RATE_LIMIT', message: e.message }],
         repairActions: lastRepairActions,
-        meta: { attempts: lastAttempt, elapsedMs: Date.now() - startedAt },
+        meta: responseMeta(),
+        systemContent,
+        astMode,
+        allowedMemoryKeys,
+        responseMeta,
+        sourceStage: lastAttempt > 1 ? AI_EXECUTION_MODE.AI_PARTIAL : AI_EXECUTION_MODE.AI_PRIMARY,
       }));
     }
     if (kind === 'API' || kind === 'BAD_RESPONSE') {
       console.error('POST /api/ai-generate', e.message);
-      return res.json(buildAiSkeletonFallbackResponse({
-        fallbackFrom: `AI_${kind}`,
+      return res.json(await buildAiRecoveryOrFallbackResponse({
+        errorCode: `AI_${kind}`,
+        canonicalIr: lastValidIrSnapshot || lastIrSnapshot,
         prompt: prompt.trim(),
         diagnostics: [{
           code: `AI_${kind}`,
@@ -4931,17 +6403,28 @@ app.post('/api/ai-generate', requireUserAuth, async (req, res) => {
             (e.message?.length < 400 ? e.message : ''),
         }],
         repairActions: lastRepairActions,
-        meta: { attempts: lastAttempt, elapsedMs: Date.now() - startedAt },
+        meta: responseMeta(),
+        systemContent,
+        astMode,
+        allowedMemoryKeys,
+        responseMeta,
+        sourceStage: lastAttempt > 1 ? AI_EXECUTION_MODE.AI_PARTIAL : AI_EXECUTION_MODE.AI_PRIMARY,
       }));
     }
     console.error('POST /api/ai-generate', e);
     pushSystemError('POST /api/ai-generate', e instanceof Error ? e : new Error(String(e)));
-    return res.json(buildAiSkeletonFallbackResponse({
-      fallbackFrom: 'AI_INTERNAL_ERROR',
+    return res.json(await buildAiRecoveryOrFallbackResponse({
+      errorCode: 'AI_INTERNAL_ERROR',
+      canonicalIr: lastValidIrSnapshot || lastIrSnapshot,
       prompt: prompt.trim(),
       diagnostics: [{ code: 'AI_INTERNAL_ERROR', message: e?.message || 'Внутренняя ошибка сервера.' }],
       repairActions: lastRepairActions,
-      meta: { attempts: lastAttempt, elapsedMs: Date.now() - startedAt },
+      meta: responseMeta(),
+      systemContent,
+      astMode,
+      allowedMemoryKeys,
+      responseMeta,
+      sourceStage: lastAttempt > 1 ? AI_EXECUTION_MODE.AI_PARTIAL : AI_EXECUTION_MODE.AI_PRIMARY,
     }));
   }
 });

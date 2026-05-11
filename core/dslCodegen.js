@@ -240,6 +240,112 @@ function parseMessageButtonRouteRows(rawButtons) {
   return rows;
 }
 
+const RENDER_UI_ACTION_TYPES = new Set([
+  'reply',
+  'message',
+  'caption',
+  'photo',
+  'media',
+  'video',
+  'audio',
+  'document',
+  'send_file',
+  'sticker',
+]);
+
+export function canRenderUi(actionType) {
+  return RENDER_UI_ACTION_TYPES.has(String(actionType || '').trim());
+}
+
+function uiAttachments(block) {
+  const src = block?.uiAttachments && typeof block.uiAttachments === 'object' && !Array.isArray(block.uiAttachments)
+    ? block.uiAttachments
+    : {};
+  return {
+    replies: Array.isArray(src.replies) ? src.replies : [],
+    buttons: Array.isArray(src.buttons) ? src.buttons : [],
+    inline: Array.isArray(src.inline) ? src.inline : [],
+    media: Array.isArray(src.media) ? src.media : [],
+    transitions: Array.isArray(src.transitions) ? src.transitions : [],
+  };
+}
+
+function attachmentActionTarget(item) {
+  const explicit = String(item?.target || '').trim();
+  if (explicit) return explicit;
+  const action = String(item?.action || '').trim();
+  const m = action.match(/^(?:goto|use|run|scenario|block):(.+)$/i);
+  return m ? stripRouteQuotes(m[1]) : '';
+}
+
+function autoUiAttachmentCallback(block, group, index) {
+  return `__uiatt_${safeCallbackIdPart(block?.id || block?.type)}_${safeCallbackIdPart(group)}_${index}`;
+}
+
+function emitAttachmentTransition(item, declaredBlocks = new Set()) {
+  const action = String(item?.action || 'goto').trim().toLowerCase();
+  const target = attachmentActionTarget(item);
+  if (!target) return '';
+  if (action.startsWith('use:') || action === 'use' || action === 'block') return `использовать ${target}`;
+  if (action.startsWith('run:') || action === 'run' || action === 'scenario') return `запустить ${target}`;
+  return autoButtonTargetStatement(target, declaredBlocks);
+}
+
+function emitUiAttachmentButtons(block, attachments, group) {
+  if (group === 'buttons') {
+    const labels = attachments
+      .map((item) => stripRouteQuotes(item?.text || item?.label || ''))
+      .filter(Boolean);
+    return labels.length ? emitButtons({ rows: labels.join(', ') }) : '';
+  }
+
+  const cells = [];
+  attachments.forEach((item, index) => {
+    const label = stripRouteQuotes(item?.text || item?.label || '');
+    if (!label) return;
+    const hasAction = Boolean(attachmentActionTarget(item));
+    const callback = stripRouteQuotes(item?.callback || (hasAction ? autoUiAttachmentCallback(block, group, index) : label));
+    if (callback) cells.push(`${q(label)} ${ARROW} ${q(callback)}`);
+  });
+  if (!cells.length) return '';
+  return ['inline-кнопки:', `    [${cells.join(', ')}]`].join('\n');
+}
+
+function emitUiAttachmentMedia(item) {
+  const kind = String(item?.kind || 'photo').trim();
+  const props = {
+    url: item?.url || '',
+    file: item?.file || item?.url || '',
+    caption: item?.caption || '',
+    filename: item?.filename || '',
+  };
+  if (kind === 'video') return emitBlockText({ type: 'video', props });
+  if (kind === 'audio') return emitBlockText({ type: 'audio', props });
+  if (kind === 'document') return emitBlockText({ type: 'document', props });
+  if (kind === 'send_file') return emitBlockText({ type: 'send_file', props });
+  if (kind === 'sticker') return emitBlockText({ type: 'sticker', props: { file_id: props.url } });
+  return emitBlockText({ type: 'photo', props });
+}
+
+function emitUiAttachmentTexts(block, declaredBlocks = new Set()) {
+  if (!canRenderUi(block?.type)) return [];
+  const attachments = uiAttachments(block);
+  const out = [];
+  const buttons = emitUiAttachmentButtons(block, attachments.buttons, 'buttons');
+  if (buttons) out.push(buttons);
+  const inlineStatic = attachments.inline.filter((item) => !item?.inlineDb);
+  const inline = emitUiAttachmentButtons(block, inlineStatic, 'inline');
+  if (inline) out.push(inline);
+  for (const item of attachments.inline.filter((entry) => entry?.inlineDb)) {
+    out.push(emitInlineDb(item.inlineDb));
+  }
+  for (const item of attachments.media) {
+    const media = emitUiAttachmentMedia(item);
+    if (media) out.push(media);
+  }
+  return out;
+}
+
 function emitMessageWithLocalButtons(block, p) {
   const message = p.md ? `ответ_md ${q(p.text || '')}` : `ответ ${q(p.text || '')}`;
   const rows = parseMessageButtonRouteRows(p.buttons);
@@ -286,6 +392,36 @@ function emitAutoMessageButtonHandlers(stacks) {
           out.push(`    ${action}`);
         }
       }
+    }
+  }
+
+  return out.join('\n');
+}
+
+function emitAutoUiAttachmentHandlers(stacks) {
+  const declaredBlocks = collectDeclaredBlockNames(stacks);
+  const out = [];
+
+  for (const stack of stacks || []) {
+    for (const block of stack?.blocks || []) {
+      if (!canRenderUi(block?.type)) continue;
+      const attachments = uiAttachments(block);
+      [
+        ['buttons', attachments.buttons],
+        ['inline', attachments.inline],
+      ].forEach(([group, list]) => {
+        list.forEach((item, index) => {
+          const target = attachmentActionTarget(item);
+          if (!target) return;
+          const callback = group === 'buttons'
+            ? stripRouteQuotes(item?.text || item?.label || '')
+            : stripRouteQuotes(item?.callback || autoUiAttachmentCallback(block, group, index));
+          const action = emitAttachmentTransition(item, declaredBlocks);
+          if (!callback || !action) return;
+          out.push(`при нажатии ${q(callback)}:`);
+          out.push(`    ${action}`);
+        });
+      });
     }
   }
 
@@ -735,6 +871,7 @@ export function expandScenarioStackBlocksForAskFsm(blocks) {
 function stackToDSLStructured(blocks) {
   const out = [];
   const rootType = blocks[0]?.type || '';
+  const declaredBlocks = collectDeclaredBlockNames([{ blocks }]);
   let i = 0;
   let insideScenarioStep = false;
 
@@ -753,9 +890,18 @@ function stackToDSLStructured(blocks) {
     return false;
   };
 
-  const pushBlock = (block, indent) => {
-    for (const line of emitBlockText(block).split('\n')) {
+  const pushText = (text, indent) => {
+    for (const line of String(text || '').split('\n')) {
       out.push(`${'    '.repeat(indent)}${line}`);
+    }
+  };
+
+  const pushBlock = (block, indent) => {
+    const blockText = emitBlockText(block);
+    pushText(blockText, indent);
+    const attachmentIndent = blockText.trim().endsWith(':') ? indent + 1 : indent;
+    for (const attachmentText of emitUiAttachmentTexts(block, declaredBlocks)) {
+      pushText(attachmentText, attachmentIndent);
     }
   };
 
@@ -822,7 +968,8 @@ export function stackToDSL(stack) {
 export function generateDSLFromStacks(stacks) {
   const body = (stacks || []).map(stackToDSL).filter(Boolean).join('\n\n');
   const autoHandlers = emitAutoMessageButtonHandlers(stacks);
-  return [body, autoHandlers].filter(Boolean).join('\n\n');
+  const attachmentHandlers = emitAutoUiAttachmentHandlers(stacks);
+  return [body, autoHandlers, attachmentHandlers].filter(Boolean).join('\n\n');
 }
 
 export const emitBlock = emitBlockText;
@@ -1170,7 +1317,13 @@ export function inferRequiredFeaturesFromFlow(flow) {
 export function inferRequiredFeaturesFromStacks(stacks) {
   const types = [];
   for (const s of stacks || []) {
-    for (const b of s.blocks || []) types.push(b.type);
+    for (const b of s.blocks || []) {
+      types.push(b.type);
+      const attachments = canRenderUi(b?.type) ? uiAttachments(b) : uiAttachments(null);
+      if (attachments.buttons.length) types.push('buttons');
+      if (attachments.inline.length) types.push('inline');
+      for (const item of attachments.media) types.push(item?.kind || 'photo');
+    }
   }
   return inferFeaturesFromTypes(types);
 }
@@ -1331,7 +1484,13 @@ export function buildProjectGraphDocumentFromStacks(stacks, options = {}) {
         id,
         type: 'cicada',
         position: { x: stack.x || 0, y: stack.y || 0 },
-        data: { type: b.type, props: { ...(b.props || {}) }, semanticId: b.id },
+        data: {
+          type: b.type,
+          props: { ...(b.props || {}) },
+          ui: b.ui || undefined,
+          uiAttachments: b.uiAttachments || undefined,
+          semanticId: b.id,
+        },
       });
       if (prev) {
         edges.push({

@@ -1,7 +1,7 @@
 import { stripThinkingFromAiRaw } from '../validator/fixes.js';
 
 export const AI_CANONICAL_IR_VERSION = 1;
-export const AI_TARGET_CORE_EXACT = '0.3.3';
+export const AI_TARGET_CORE_EXACT = '0.3.4';
 
 const HANDLER_TYPES = new Set(['start', 'command', 'callback', 'text']);
 const ACTION_TYPES = new Set([
@@ -194,6 +194,17 @@ function normalizeAction(action) {
   return next;
 }
 
+function preserveRecoveryMetadata(node) {
+  if (!isObject(node)) return {};
+  const out = {};
+  for (const key of ['optional', 'isOptional', 'required', 'priority', 'tags', 'kind']) {
+    if (Object.prototype.hasOwnProperty.call(node, key)) out[key] = node[key];
+  }
+  if (isObject(node.meta)) out.meta = node.meta;
+  if (isObject(node.props)) out.props = node.props;
+  return out;
+}
+
 export function normalizeAiCanonicalIr(ir) {
   const src = isObject(ir) ? ir : {};
   return {
@@ -207,11 +218,13 @@ export function normalizeAiCanonicalIr(ir) {
       type: str(handler?.type),
       trigger: str(handler?.trigger),
       actions: asArray(handler?.actions || handler?.body || handler?.steps).map(normalizeAction),
+      ...preserveRecoveryMetadata(handler),
     })),
     blocks: asArray(src.blocks).map((block, index) => ({
       id: str(block?.id, `block_${index + 1}`),
       name: str(block?.name),
       actions: asArray(block?.actions || block?.body || block?.steps).map(normalizeAction),
+      ...preserveRecoveryMetadata(block),
     })),
     scenarios: asArray(src.scenarios).map((scenario, scenarioIndex) => ({
       id: str(scenario?.id, `scenario_${scenarioIndex + 1}`),
@@ -221,6 +234,7 @@ export function normalizeAiCanonicalIr(ir) {
         name: str(step?.name, `шаг_${stepIndex + 1}`),
         actions: asArray(step?.actions || step?.body).map(normalizeAction),
       })),
+      ...preserveRecoveryMetadata(scenario),
     })),
     transitions: asArray(src.transitions),
     uiStates: asArray(src.uiStates),

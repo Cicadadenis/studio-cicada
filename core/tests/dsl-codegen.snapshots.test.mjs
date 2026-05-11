@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { renderIr } from '../dslCodegen.js';
+import { canRenderUi, generateDSLFromStacks, renderIr } from '../dslCodegen.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES = path.join(__dirname, 'fixtures');
@@ -46,3 +46,40 @@ for (const name of CASES) {
     assert.equal(actual, expected);
   });
 }
+
+test('render-action UI attachments emit relative DSL without executable editor child nodes', () => {
+  const dsl = generateDSLFromStacks([{
+    id: 's1',
+    x: 0,
+    y: 0,
+    blocks: [
+      {
+        id: 'h_start',
+        type: 'start',
+        props: {},
+        uiAttachments: {
+          buttons: [{ id: 'leak', text: 'Не показывать', action: 'goto:leak' }],
+        },
+      },
+      {
+        id: 'm_menu',
+        type: 'message',
+        props: { text: 'Меню' },
+        uiAttachments: {
+          buttons: [{ id: 'b1', text: 'Каталог', action: 'goto:catalog' }],
+          inline: [{ id: 'i1', text: 'Помощь', callback: 'help_cb' }],
+        },
+      },
+    ],
+  }]);
+
+  assert.equal(canRenderUi('message'), true);
+  assert.equal(canRenderUi('photo'), true);
+  assert.equal(canRenderUi('start'), false);
+  assert.equal(canRenderUi('condition'), false);
+  assert.match(dsl, /при старте:\n    ответ "Меню"/);
+  assert.doesNotMatch(dsl, /Не показывать/);
+  assert.match(dsl, /кнопки "Каталог"/);
+  assert.match(dsl, /inline-кнопки:\n        \["Помощь" → "help_cb"\]/);
+  assert.match(dsl, /при нажатии "Каталог":\n    перейти catalog/);
+});

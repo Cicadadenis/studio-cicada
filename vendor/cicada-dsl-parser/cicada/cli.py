@@ -59,7 +59,7 @@ def main():
 
     # Обработка глобальных флагов
     if "--version" in args or "-v" in args:
-        print("cicada-tg 0.3.3")
+        print("cicada-tg 0.3.4")
         return
 
     if "--help" in args or "-h" in args:

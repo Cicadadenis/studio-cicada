@@ -320,7 +320,7 @@ export function analyzeDslControlFlow(code) {
 
 export function shouldInjectDefaultButtonsForClickHandler(summary) {
   // Kept for explicit callers only. collectDSLFixes intentionally does not use
-  // this legacy fallback because cicada-tg 0.3.3 accepts reply-only handlers.
+  // this legacy fallback because cicada-tg 0.3.4 accepts reply-only handlers.
   void summary;
   return false;
 }

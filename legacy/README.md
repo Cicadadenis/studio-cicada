@@ -1,6 +1,6 @@
 # Legacy Compatibility Layer
 
-`legacy/` contains obsolete Studio compatibility behavior that is intentionally not part of canonical `cicada-tg==0.3.3`.
+`legacy/` contains obsolete Studio compatibility behavior that is intentionally not part of canonical `cicada-tg==0.3.4`.
 
 Rules:
 

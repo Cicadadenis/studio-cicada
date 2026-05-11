@@ -200,7 +200,7 @@ def main() -> None:
     )
 
     # @obsolete Legacy Studio-only expectation: resuming scenario statements after media
-    # input and rendering templates inside DB keys. cicada-tg 0.3.3 is the
+    # input and rendering templates inside DB keys. cicada-tg 0.3.4 is the
     # source of truth and does not expose that behavior, so it is not part of
     # the compatibility gate.
     print(json.dumps({
