@@ -5216,6 +5216,13 @@ const EXAMPLE_FULL = `версия "1.0"
                 setStacks(prev => mergeLibraryStacks(prev, parsed));
                 showToast(builderUi.libInsertSuccess, 'success');
               }
+            }} onInsertAndRun={(code) => {
+              const parsed = parseDSL(code);
+              if (parsed) {
+                setStacks(prev => mergeLibraryStacks(prev, parsed));
+                showToast(builderUi.libInsertSuccess, 'success');
+                setTimeout(() => { startBot(); }, 0);
+              }
             }} />
             <button
               className="tb-btn tb-btn-ai"
@@ -5554,6 +5561,15 @@ const EXAMPLE_FULL = `версия "1.0"
             if (parsed) {
               setStacks(prev => mergeLibraryStacks(prev, parsed));
               showToast(builderUi.libInsertSuccess, 'success');
+            }
+            setShowLibrary(false);
+          }}
+          onInsertAndRun={(code) => {
+            const parsed = parseDSL(code);
+            if (parsed) {
+              setStacks(prev => mergeLibraryStacks(prev, parsed));
+              showToast(builderUi.libInsertSuccess, 'success');
+              setTimeout(() => { startBot(); }, 0);
             }
             setShowLibrary(false);
           }}
