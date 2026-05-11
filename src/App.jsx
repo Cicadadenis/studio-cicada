@@ -1131,6 +1131,8 @@ function darken(hex, amt = 40) {
 const BLOCK_W  = 200;
 const BLOCK_H  = 36;  // regular block
 const ROOT_H   = 42;  // first block in stack (root)
+const MOBILE_TOP_BAR_H = 52;
+const MOBILE_BOTTOM_NAV_H = 56;
 
 // ─── SINGLE BLOCK VISUAL ──────────────────────────────────────────────────
 // Предупреждения и заметки для конкретных блоков
@@ -1314,7 +1316,7 @@ function BlockTooltip({ type, color }) {
   );
 }
 
-function BlockShape({ type, props, isFirst, selected, onClick, onDelete }) {
+function BlockShape({ type, props, isFirst, selected, attention, onClick, onDelete }) {
   const ctx = React.useContext(BuilderUiContext);
   const blockTypes = ctx?.blockTypes || BLOCK_TYPES;
   const ui = ctx?.t || getConstructorStrings('ru');
@@ -1340,12 +1342,14 @@ function BlockShape({ type, props, isFirst, selected, onClick, onDelete }) {
   return (
     <div
       style={{
+        '--new-block-glow': color,
         position: 'relative',
         width: BLOCK_W + 4,
         height: h + (hasBottomTab ? 8 : 0),
         marginBottom: hasBottomTab ? -8 : 0,
         cursor: 'grab',
         userSelect: 'none',
+        animation: attention ? 'editorNewBlockBlink 0.9s ease-in-out infinite' : undefined,
       }}
       onClick={onClick}
     >
@@ -1554,7 +1558,7 @@ function BlockInfoModal({ block, onClose }) {
 
 // ─── BLOCK STACK ──────────────────────────────────────────────────────────
 /** newBlockDrop: 'valid' | 'invalid' | null — подсветка при перетаскивании блока с палитры */
-function BlockStack({ stack, selectedId, onSelectBlock, onDeleteBlock, onDragStack, isDragTarget, newBlockDrop, newBlockDropHint }) {
+function BlockStack({ stack, selectedId, attentionBlockId, onSelectBlock, onDeleteBlock, onDragStack, isDragTarget, newBlockDrop, newBlockDropHint }) {
   const ui = React.useContext(BuilderUiContext)?.t || getConstructorStrings('ru');
   return (
     <div
@@ -1590,6 +1594,7 @@ function BlockStack({ stack, selectedId, onSelectBlock, onDeleteBlock, onDragSta
           props={block.props}
           isFirst={i === 0}
           selected={selectedId === block.id}
+          attention={attentionBlockId === block.id}
           onClick={e => { e.stopPropagation(); onSelectBlock(block.id, stack.id); }}
           onDelete={() => onDeleteBlock(stack.id, block.id)}
         />
@@ -2774,6 +2779,7 @@ export default function App() {
   const [stacks, setStacks] = useState([]);
   const [selectedBlockId, setSelectedBlockId] = useState(null);
   const [selectedStackId, setSelectedStackId] = useState(null);
+  const [mobileAttentionBlockId, setMobileAttentionBlockId] = useState(null);
   const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 });
   const [canvasScale, setCanvasScale] = useState(1);
   const [showInstructions, setShowInstructions] = useState(false);
@@ -3135,6 +3141,7 @@ export default function App() {
   const handleSelectBlock = useCallback((blockId, stackId) => {
     setSelectedBlockId(blockId);
     setSelectedStackId(stackId);
+    setMobileAttentionBlockId(prev => prev === blockId ? null : prev);
   }, []);
 
   const handleDeleteBlock = useCallback((stackId, blockId) => {
@@ -3333,6 +3340,18 @@ export default function App() {
   const zoomIn    = useCallback(() => { const r = canvasRef.current?.getBoundingClientRect(); zoomAt( SCALE_STEP, r ? r.width/2 : 0, r ? r.height/2 : 0); }, [zoomAt]);
   const zoomOut   = useCallback(() => { const r = canvasRef.current?.getBoundingClientRect(); zoomAt(-SCALE_STEP, r ? r.width/2 : 0, r ? r.height/2 : 0); }, [zoomAt]);
   const zoomReset = useCallback(() => { setCanvasScale(1); setCanvasOffset({ x: 0, y: 0 }); }, []);
+
+  const getCanvasCenterStackPosition = useCallback(() => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    const width = rect?.width || window.innerWidth || BLOCK_W;
+    const fullHeight = rect?.height || Math.max(ROOT_H, (window.innerHeight || 0) - MOBILE_TOP_BAR_H);
+    const visibleHeight = Math.max(ROOT_H, fullHeight - (isMobileView ? MOBILE_BOTTOM_NAV_H : 0));
+
+    return {
+      x: (width / 2 - canvasOffset.x) / canvasScale - BLOCK_W / 2,
+      y: (visibleHeight / 2 - canvasOffset.y) / canvasScale - ROOT_H / 2,
+    };
+  }, [canvasOffset, canvasScale, isMobileView]);
 
   const loadExample = useCallback(() => {
     seq = 1;
@@ -5468,6 +5487,7 @@ const EXAMPLE_FULL = `версия "1.0"
       @keyframes editorOrbFloat { 0%,100%{transform:translateY(0) scale(1)} 50%{transform:translateY(-22px) scale(1.04)} }
       @keyframes editorScanLine { 0%{transform:translateY(-100%)} 100%{transform:translateY(100vh)} }
       @keyframes blockEntrance { from{opacity:0;transform:translateY(-6px) scale(0.96)} to{opacity:1;transform:translateY(0) scale(1)} }
+      @keyframes editorNewBlockBlink { 0%,100%{opacity:1;filter:drop-shadow(0 0 7px var(--new-block-glow,#f97316));transform:scale(1)} 50%{opacity:.42;filter:drop-shadow(0 0 18px var(--new-block-glow,#f97316));transform:scale(1.035)} }
       @keyframes neonBlink { 0%,90%,100%{opacity:1} 95%{opacity:0.6} }
       @keyframes editorRunPulse { 0%,100%{box-shadow:0 0 0 0 rgba(249,115,22,0)} 50%{box-shadow:0 0 0 6px rgba(249,115,22,0.25)} }
       .tb-btn {
@@ -6535,8 +6555,7 @@ const EXAMPLE_FULL = `версия "1.0"
             onDragEnd={endPaletteDrag}
             onTapAdd={isMobileView ? (type) => {
             const id = uid();
-            const x = 40 + Math.random() * 60;
-            const y = 40 + stacks.length * 80;
+            const { x, y } = getCanvasCenterStackPosition();
             setStacks(prev => {
               const props = { ...(DEFAULT_PROPS[type] || {}) };
               if (type === 'bot') {
@@ -6548,6 +6567,9 @@ const EXAMPLE_FULL = `версия "1.0"
                 blocks: [{ id, type, props }],
               }];
             });
+            setSelectedBlockId(null);
+            setSelectedStackId(null);
+            setMobileAttentionBlockId(id);
             setMobileTab('canvas');
           } : null} />
         </div>
@@ -6648,6 +6670,7 @@ const EXAMPLE_FULL = `версия "1.0"
                   key={stack.id}
                   stack={stack}
                   selectedId={selectedBlockId}
+                  attentionBlockId={mobileAttentionBlockId}
                   onSelectBlock={handleSelectBlock}
                   onDeleteBlock={handleDeleteBlock}
                   onDragStack={handleDragStack}
