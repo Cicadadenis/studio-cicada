@@ -1686,22 +1686,39 @@ function Sidebar({ onDragStart, onDragEnd, onTapAdd }) {
 function collectReplyButtonOptions(stacks) {
   const options = [];
   const seen = new Set();
+  const addOption = (scope, text) => {
+    const value = String(text || '').trim();
+    if (!value) return;
+    const key = `${scope}::${value}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    options.push({ value, label: `${scope} / ${value}` });
+  };
+
   (stacks || []).forEach((stack) => {
     const blockName = stack?.blocks?.find?.((b) => b?.type === 'block')?.props?.name || 'блок';
     (stack?.blocks || []).forEach((b) => {
-      if (b?.type !== 'buttons') return;
-      const rows = String(b?.props?.rows || '');
-      rows
-        .split('\n')
-        .flatMap((row) => row.split(','))
-        .map((x) => x.trim())
-        .filter(Boolean)
-        .forEach((text) => {
-          const key = `${blockName}::${text}`;
-          if (seen.has(key)) return;
-          seen.add(key);
-          options.push({ value: text, label: `${blockName} / ${text}` });
-        });
+      if (b?.type === 'buttons') {
+        const rows = String(b?.props?.rows || '');
+        rows
+          .split('\n')
+          .flatMap((row) => row.split(','))
+          .forEach((text) => addOption(blockName, text));
+      }
+
+      if (b?.type === 'inline') {
+        const rows = String(b?.props?.buttons || '');
+        rows
+          .split('\n')
+          .flatMap((row) => row.split(','))
+          .map((x) => x.trim())
+          .filter(Boolean)
+          .forEach((pair) => {
+            const [title, callback] = pair.split('|').map((x) => x?.trim());
+            if (callback) addOption(`${blockName} (inline)`, callback);
+            else if (title) addOption(`${blockName} (inline)`, title);
+          });
+      }
     });
   });
   return options;
