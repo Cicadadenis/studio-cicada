@@ -1963,17 +1963,6 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
     setHighlightRows([]);
   };
 
-  const applySuggestedFixes = async () => {
-    const code = previewCorrected ?? dsl;
-    try {
-      await postJsonWithCsrf('/api/dsl/compile', { code });
-      setFixNotice('DSL отправлен в cicada-tg /compile без локальных изменений');
-    } catch {
-      setFixNotice('Не удалось отправить DSL в cicada-tg /compile');
-    }
-    setTimeout(() => setFixNotice(''), 2200);
-  };
-
   const applySchemaFix = () => {
     const fixed = fixDslSchema(previewCorrected ?? dsl);
     const applied = onApplyCorrectedCode?.(fixed);
@@ -1984,6 +1973,21 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
       setHighlightRows(fixed.split('\n').map((_, idx) => idx));
     }
     setTimeout(() => { check(); }, 0);
+  };
+
+
+
+  const applyDetectedFix = async () => {
+    if (!validationResult) {
+      await check();
+      return;
+    }
+    if ((validationResult.errors || []).length > 0) {
+      applySchemaFix();
+      return;
+    }
+    setFixNotice('Ошибки не найдены: исправление недоступно');
+    setTimeout(() => setFixNotice(''), 2200);
   };
 
   const resetPreview = () => {
@@ -2088,42 +2092,24 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
           >{ui.dslDownload}</button>
           <button
             type="button"
-            onClick={applySuggestedFixes}
-            disabled={!validationResult}
-            style={{
-              background: !validationResult ? 'var(--bg3)' : '#0ea5e9',
-              color: !validationResult ? 'var(--text3)' : '#fff',
-              padding: '2px 7px',
-              borderRadius: 4,
-              fontSize: 9,
-              border: 'none',
-              cursor: !validationResult ? 'default' : 'pointer',
-              opacity: !validationResult ? 0.7 : 1,
-            }}
-            title={!validationResult ? ui.dslFixTitleNeedCheck : 'Отправить DSL в cicada-tg /compile'}
-          >
-            {'🔧 Fix via /compile'}
-          </button>
-          <button
-            type="button"
-            onClick={applySchemaFix}
+            onClick={applyDetectedFix}
+            disabled={!validationResult || !hasErrors}
             style={{
               padding: '4px 10px',
               borderRadius: 6,
               fontSize: 10,
               fontWeight: 600,
-              cursor: 'pointer',
+              cursor: (!validationResult || !hasErrors) ? 'default' : 'pointer',
               fontFamily: 'inherit',
               lineHeight: 1.2,
-              background: '#16a34a',
-              color: '#fff',
-              border: '1px solid #15803d',
+              background: (!validationResult || !hasErrors) ? 'var(--bg3)' : '#0ea5e9',
+              color: (!validationResult || !hasErrors) ? 'var(--text3)' : '#fff',
+              border: '1px solid transparent',
+              opacity: (!validationResult || !hasErrors) ? 0.7 : 1,
             }}
-            title="Нормализовать структуру DSL по UI-правилам"
-            onMouseEnter={e => { e.currentTarget.style.background = '#15803d'; }}
-            onMouseLeave={e => { e.currentTarget.style.background = '#16a34a'; }}
+            title={!validationResult ? ui.dslFixTitleNeedCheck : (!hasErrors ? 'Нет ошибок для исправления' : 'Исправить найденные ошибки DSL')}
           >
-            {'🛠 Исправить DSL'}
+            {'🔧 Исправить найденные ошибки'}
           </button>
         </div>
       </div>
