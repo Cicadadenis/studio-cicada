@@ -4200,13 +4200,21 @@ function buildAiDiagnosticSections({ canonicalIr, classification, warnings, repa
   const whatWasFixed = aiArray(repairActions)
     .slice(0, AI_PARTIAL_DIAGNOSTIC_LIMIT)
     .map(describeAiRepairAction);
-  const whatFailed = aiArray(warnings).map((diagnostic) => aiSectionItem(
+  const isSkeletonFallback = (
+    classification.irState === AI_IR_STATE.SKELETON ||
+    reasonCodes.includes(AI_PARTIAL_REASON_CODES.IR_FALLBACK_SKELETON_USED)
+  );
+  const failureDiagnostics = aiArray(warnings).filter((diagnostic) => (
+    diagnostic?.severity !== 'info' &&
+    diagnostic?.code !== AI_PARTIAL_REASON_CODES.IR_FALLBACK_SKELETON_USED
+  ));
+  const whatFailed = failureDiagnostics.map((diagnostic) => aiSectionItem(
     diagnostic.code || 'IR_DIAGNOSTIC',
     diagnostic.code || 'IR diagnostic',
     diagnostic.path ? `${diagnostic.path}: ${diagnostic.message}` : diagnostic.message,
     diagnostic.severity || 'error',
   ));
-  if (whatFailed.length === 0 && reason) {
+  if (whatFailed.length === 0 && reason && !isSkeletonFallback) {
     whatFailed.push(aiSectionItem(
       reason,
       'Generation stopped before final IR',
