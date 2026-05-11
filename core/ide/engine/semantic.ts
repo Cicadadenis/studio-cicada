@@ -1,71 +1,69 @@
-import { AstProgram, AstStatement, Diagnostic, RelationEdge, Scope, SemanticModel, SymbolRecord } from './types.js';
-import { StableId } from './parser.js';
+import { AstHandler, AstProgram, DependencyGraph, GraphEdge, NodeId, ParseSnapshot, SemanticDiagnostic, SemanticModel, SymbolInfo } from './types.js';
 
-export class Binder {
-  bind(program: AstProgram): SemanticModel {
-    const symbolTable = new Map<string, SymbolRecord>();
-    const rootScope: Scope = { id:'root', name:'root', symbols:new Map() };
-    const scopes = new Map([[rootScope.id, rootScope]]);
-    const references = new Map<string, string[]>();
-    const relationGraph = new Map<string, RelationEdge>();
+const freeze = <T>(x: T): T => Object.freeze(x);
 
-    for (const statement of program.body) {
-      if (statement.kind === 'Event') {
-        const s: SymbolRecord = { id: `sym:event:${statement.name}`, name: statement.name, kind:'event', nodeId: statement.id, scope:'root' };
-        symbolTable.set(s.id, s);
-        this.push(rootScope, statement.name, s);
-      }
-      if (statement.kind === 'Handler') {
-        const s: SymbolRecord = { id: `sym:handler:${statement.name}`, name: statement.name, kind:'handler', nodeId: statement.id, scope:'root' };
-        symbolTable.set(s.id, s);
-        this.push(rootScope, statement.name, s);
-        references.set(statement.id, [`sym:event:${statement.eventRef}`]);
-        const relationId = StableId.create(program.uri, 'rel:handles', statement.range, statement.eventRef);
-        relationGraph.set(relationId, { id: relationId, from: statement.id, to: `node:event:${statement.eventRef}`, kind:'handles', valid: true });
-        statement.steps.forEach((step) => {
-          if (step.action === 'goto' && step.target) {
-            const tid = StableId.create(program.uri, 'rel:transition', step.range, `${statement.name}->${step.target}`);
-            relationGraph.set(tid, { id: tid, from: statement.id, to: `node:event:${step.target}`, kind:'transition', valid: true });
-          }
-        });
+export class SemanticEngine {
+  analyze(snapshot: ParseSnapshot, prev?: SemanticModel, dirty?: ReadonlySet<NodeId>): { model: SemanticModel; diagnostics: readonly SemanticDiagnostic[] } {
+    const symbols = new Map<string, SymbolInfo>(prev?.symbols ?? []);
+    const references = new Map(prev?.references ?? []);
+    const transitions = new Map<string, readonly string[]>(prev?.transitions ?? []);
+    const diagnostics: SemanticDiagnostic[] = [];
+
+    const handlers = snapshot.ast.statements.filter((s): s is AstHandler => s.kind === 'Handler');
+    const events = new Set(snapshot.ast.statements.filter((s) => s.kind === 'Event').map((e: any) => e.name));
+
+    for (const st of snapshot.ast.statements) {
+      if (dirty && !dirty.has(st.id) && prev) continue;
+      if (st.kind === 'Event') symbols.set(`event:${st.name}`, freeze({ id:`event:${st.name}`, name:st.name, nodeId:st.id, kind:'event' }));
+      if (st.kind === 'Handler') {
+        symbols.set(`handler:${st.name}`, freeze({ id:`handler:${st.name}`, name:st.name, nodeId:st.id, kind:'handler' }));
+        references.set(st.id, freeze([`event:${st.eventRef}`]));
+        transitions.set(st.name, freeze(st.steps.filter((x)=>x.action==='goto' && x.target).map((x)=>x.target!)));
       }
     }
-    return { symbolTable, scopes, references, relationGraph };
+
+    this.semanticDiagnostics(events, handlers, transitions, diagnostics);
+    const dependencyGraph = this.patchGraph(snapshot.dependencyGraph, transitions);
+    return { model: freeze({ symbols, references, transitions, dependencyGraph }), diagnostics: freeze(diagnostics) };
   }
 
-  private push(scope: Scope, key: string, symbol: SymbolRecord): void {
-    const existing = scope.symbols.get(key) ?? [];
-    scope.symbols.set(key, [...existing, symbol]);
+  private semanticDiagnostics(events: Set<string>, handlers: AstHandler[], transitions: Map<string, readonly string[]>, out: SemanticDiagnostic[]): void {
+    for (const e of events) {
+      const hs = handlers.filter((h) => h.eventRef === e);
+      if (!hs.length) out.push({ code:'missing-handler', message:`No handler for event '${e}'`, severity:'error', nodeId:(`event:${e}` as any) });
+      if (hs.length > 1) out.push({ code:'duplicate-handler', message:`Multiple handlers for '${e}'`, severity:'warning', nodeId:hs[0].id });
+    }
+    for (const h of handlers) {
+      if (!events.has(h.eventRef)) out.push({ code:'dangling-reference', message:`Unknown event '${h.eventRef}'`, severity:'error', nodeId:h.id });
+      if (!h.steps.length) out.push({ code:'orphan-handler', message:`Handler '${h.name}' has no steps`, severity:'warning', nodeId:h.id });
+      if (this.detectInfiniteLoop(h, transitions)) out.push({ code:'infinite-loop', message:`Potential infinite loop in '${h.name}'`, severity:'warning', nodeId:h.id });
+      if (this.detectRecursiveTransition(h.name, transitions, new Set())) out.push({ code:'recursive-transition', message:`Recursive transition from '${h.name}'`, severity:'warning', nodeId:h.id });
+    }
+    const reachable = this.flowReachable('start', transitions);
+    for (const e of events) if (!reachable.has(e) && e !== 'start') out.push({ code:'dead-state', message:`Dead state '${e}' unreachable from start`, severity:'info', nodeId:(`event:${e}` as any) });
   }
-}
 
-export class SemanticDiagnostics {
-  analyze(program: AstProgram, semantic: SemanticModel): readonly Diagnostic[] {
-    const diagnostics: Diagnostic[] = [];
-    const eventNames = new Set(program.body.filter((n): n is Extract<AstStatement,{kind:'Event'}> => n.kind==='Event').map((e)=>e.name));
-    const handlers = program.body.filter((n): n is Extract<AstStatement,{kind:'Handler'}> => n.kind==='Handler');
-
-    for (const event of eventNames) {
-      const eventHandlers = handlers.filter((h)=>h.eventRef===event);
-      if (eventHandlers.length === 0) diagnostics.push({ code:'missing-handlers', severity:'error', message:`Missing handler for ${event}`, nodeId:`node:event:${event}` });
-      if (eventHandlers.length > 1) diagnostics.push({ code:'duplicate-handlers', severity:'warning', message:`Duplicate handlers for ${event}`, nodeId:eventHandlers[0].id });
-    }
-
-    for (const handler of handlers) {
-      if (!eventNames.has(handler.eventRef)) diagnostics.push({ code:'dangling-references', severity:'error', message:`Handler ${handler.name} references unknown event ${handler.eventRef}`, nodeId:handler.id });
-      if (handler.steps.length === 0) diagnostics.push({ code:'orphan-handlers', severity:'warning', message:`Orphan handler ${handler.name} has no transitions`, nodeId:handler.id });
-      for (const step of handler.steps) {
-        if (step.action === 'goto' && step.target && !eventNames.has(step.target)) diagnostics.push({ code:'invalid-transitions', severity:'error', message:`Invalid transition to ${step.target}`, nodeId:step.id });
-      }
-    }
-
-    const transitionTargets = handlers.flatMap((h)=>h.steps.filter((s)=>s.action==='goto' && s.target).map((s)=>s.target!));
-    for (const event of eventNames) if (!transitionTargets.includes(event) && !handlers.some((h)=>h.eventRef===event)) diagnostics.push({ code:'unreachable-flows', severity:'info', message:`Unreachable flow ${event}`, nodeId:`node:event:${event}` });
-
-    // naive cycle check
-    for (const handler of handlers) {
-      if (handler.steps.some((s)=>s.action==='goto' && s.target===handler.eventRef)) diagnostics.push({ code:'cyclic-navigation', severity:'warning', message:`Cyclic navigation in ${handler.name}`, nodeId:handler.id });
-    }
-    return diagnostics;
+  private detectRecursiveTransition(name: string, transitions: Map<string, readonly string[]>, seen: Set<string>): boolean {
+    if (seen.has(name)) return true; seen.add(name);
+    for (const t of transitions.get(name) ?? []) if (this.detectRecursiveTransition(`on_${t}`, transitions, new Set(seen))) return true;
+    return false;
+  }
+  private detectInfiniteLoop(handler: AstHandler, transitions: Map<string, readonly string[]>): boolean {
+    const targets = transitions.get(handler.name) ?? [];
+    return targets.includes(handler.eventRef) || (targets.length === 1 && targets[0] === handler.eventRef);
+  }
+  private flowReachable(start: string, transitions: Map<string, readonly string[]>): Set<string> {
+    const q = [`on_${start}`]; const seen = new Set<string>([start]);
+    while (q.length) { const h = q.shift()!; for (const e of transitions.get(h) ?? []) if (!seen.has(e)) { seen.add(e); q.push(`on_${e}`); } }
+    return seen;
+  }
+  private patchGraph(prev: DependencyGraph, transitions: Map<string, readonly string[]>): DependencyGraph {
+    const adjacency = new Map(prev.adjacency); const reverse = new Map(prev.reverse);
+    transitions.forEach((targets, handler) => targets.forEach((e) => {
+      const edge: GraphEdge = { from: (`node:${handler}` as any), to: (`event:${e}` as any), type:'transition' };
+      adjacency.set(edge.from, [...(adjacency.get(edge.from) ?? []), edge]);
+      reverse.set(edge.to, [...(reverse.get(edge.to) ?? []), edge]);
+    }));
+    return { adjacency, reverse };
   }
 }

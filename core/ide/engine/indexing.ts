@@ -1,30 +1,28 @@
-import { AstSnapshot, WorkspaceSnapshot } from './types.js';
-import { Binder, SemanticDiagnostics } from './semantic.js';
+import { ParseSnapshot, WorkspaceSnapshot } from './types.js';
+import { SemanticEngine } from './semantic.js';
 
-export class IncrementalIndex {
-  private readonly byUri = new Map<string, WorkspaceSnapshot>();
-  private readonly byAst = new WeakMap<object, WorkspaceSnapshot>();
-  private readonly binder = new Binder();
-  private readonly diagnostics = new SemanticDiagnostics();
+const freeze = <T>(x: T): T => Object.freeze(x);
 
-  compute(ast: AstSnapshot): WorkspaceSnapshot {
-    const memo = this.byAst.get(ast.program);
+export class PersistentSnapshotStore {
+  private readonly byUri = new Map<string, WorkspaceSnapshot[]>();
+  append(snapshot: WorkspaceSnapshot): void { const list = this.byUri.get(snapshot.parse.uri) ?? []; list.push(snapshot); this.byUri.set(snapshot.parse.uri, list); }
+  latest(uri: string): WorkspaceSnapshot | undefined { const list = this.byUri.get(uri); return list?.[list.length - 1]; }
+}
+
+export class IncrementalIndexer {
+  private readonly semantic = new SemanticEngine();
+  private readonly parseMemo = new WeakMap<object, WorkspaceSnapshot>();
+  private readonly store = new PersistentSnapshotStore();
+
+  index(parse: ParseSnapshot): WorkspaceSnapshot {
+    const memo = this.parseMemo.get(parse.ast);
     if (memo) return memo;
-
-    const semantic = this.binder.bind(ast.program);
-    const diagnostics = this.diagnostics.analyze(ast.program, semantic);
-    const snapshot: WorkspaceSnapshot = {
-      uri: ast.program.uri,
-      version: ast.program.version,
-      ast,
-      semantic,
-      diagnostics,
-      codeActions: [],
-      navigationTargets: new Map(),
-    };
-
-    this.byUri.set(snapshot.uri, snapshot);
-    this.byAst.set(ast.program, snapshot);
-    return snapshot;
+    const prev = this.store.latest(parse.uri);
+    const dirty = new Set(parse.ast.statements.map((s) => s.id));
+    const { model, diagnostics } = this.semantic.analyze(parse, prev?.semantic, dirty);
+    const snap = freeze({ snapshotId: parse.id, parse, semantic: model, diagnostics, createdAt: Date.now() });
+    this.parseMemo.set(parse.ast, snap);
+    this.store.append(snap);
+    return snap;
   }
 }

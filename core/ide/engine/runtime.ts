@@ -1,51 +1,47 @@
-import { Parser } from './parser.js';
-import { QuickActionsEngine } from './actions.js';
-import { IncrementalIndex } from './indexing.js';
-import { WorkspaceSnapshot } from './types.js';
+import { CompletionItem, HoverResult, LspSemanticToken, WorkspaceSnapshot } from './types.js';
+import { RecursiveDescentParser } from './parser.js';
+import { IncrementalIndexer } from './indexing.js';
 
-export interface EventBusEvent { readonly type: 'snapshot'|'transaction'; readonly snapshot?: WorkspaceSnapshot }
+export interface EngineTx { readonly id: string; readonly uri: string; readonly version: number; readonly content: string; readonly baseVersion?: number }
+export interface CollaborationEnvelope { readonly tx: EngineTx; readonly actorId: string; readonly vectorClock: ReadonlyMap<string, number> }
 
-export interface PluginHost {
-  parserPlugins: Array<(source: string) => string>;
-  diagnosticsPlugins: Array<(snapshot: WorkspaceSnapshot) => WorkspaceSnapshot>;
-  codeActionPlugins: Array<(actions: readonly import('./types.js').CodeAction[]) => readonly import('./types.js').CodeAction[]>;
-  rendererPlugins: Array<(snapshot: WorkspaceSnapshot) => WorkspaceSnapshot>;
-  semanticAnalyzers: Array<(snapshot: WorkspaceSnapshot) => WorkspaceSnapshot>;
-}
+export class TransactionEngine {
+  private readonly parser = new RecursiveDescentParser();
+  private readonly indexer = new IncrementalIndexer();
+  private readonly listeners = new Set<(snapshot: WorkspaceSnapshot) => void>();
+  private readonly workers = new Map<string, number>();
 
-export class EventBus {
-  private listeners = new Set<(event: EventBusEvent) => void>();
-  emit(event: EventBusEvent): void { for (const l of this.listeners) l(event); }
-  subscribe(listener: (event: EventBusEvent) => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
-}
-
-export class EngineRuntime {
-  private readonly parser = new Parser();
-  private readonly index = new IncrementalIndex();
-  private readonly actions = new QuickActionsEngine();
-  private readonly history: WorkspaceSnapshot[] = [];
-  private readonly redoStack: WorkspaceSnapshot[] = [];
-  private readonly bus = new EventBus();
-
-  constructor(private readonly plugins: PluginHost = { parserPlugins: [], diagnosticsPlugins: [], codeActionPlugins: [], rendererPlugins: [], semanticAnalyzers: [] }) {}
-
-  update(uri: string, version: number, source: string): WorkspaceSnapshot {
-    const transformed = this.plugins.parserPlugins.reduce((src, p) => p(src), source);
-    const ast = this.parser.parse(uri, version, transformed);
-    let snapshot = this.index.compute(ast);
-    snapshot = { ...snapshot, codeActions: this.actions.getActions(snapshot) };
-    snapshot = this.plugins.semanticAnalyzers.reduce((s, p) => p(s), snapshot);
-    snapshot = this.plugins.diagnosticsPlugins.reduce((s, p) => p(s), snapshot);
-    snapshot = { ...snapshot, codeActions: this.plugins.codeActionPlugins.reduce((a, p) => p(a), snapshot.codeActions) };
-    snapshot = this.plugins.rendererPlugins.reduce((s, p) => p(s), snapshot);
-
-    this.history.push(snapshot);
-    this.redoStack.length = 0;
-    this.bus.emit({ type: 'snapshot', snapshot });
+  apply(tx: EngineTx): WorkspaceSnapshot {
+    const parsed = this.parser.parse(tx.uri, tx.version, tx.content);
+    const snapshot = this.indexer.index(parsed);
+    this.emit(snapshot);
     return snapshot;
   }
+  applyRemote(envelope: CollaborationEnvelope): WorkspaceSnapshot { return this.apply(envelope.tx); }
+  subscribe(fn: (snapshot: WorkspaceSnapshot) => void): () => void { this.listeners.add(fn); return () => this.listeners.delete(fn); }
+  registerWorker(name: string, capacity = 1): void { this.workers.set(name, capacity); }
+  private emit(snapshot: WorkspaceSnapshot): void { for (const l of this.listeners) l(snapshot); }
+}
 
-  subscribe(fn: (event: EventBusEvent) => void): () => void { return this.bus.subscribe(fn); }
-  undo(): WorkspaceSnapshot | undefined { const current = this.history.pop(); if (current) this.redoStack.push(current); return this.history[this.history.length - 1]; }
-  redo(): WorkspaceSnapshot | undefined { const next = this.redoStack.pop(); if (!next) return undefined; this.history.push(next); return next; }
+export class LspFacade {
+  semanticTokens(snapshot: WorkspaceSnapshot): readonly LspSemanticToken[] {
+    return snapshot.parse.tokens.filter((t)=>t.kind==='kw' || t.kind==='id').map((t) => ({ line:t.range.start.line, startChar:t.range.start.column, length:t.text.length, tokenType: t.kind === 'kw' ? 'keyword' : 'variable' }));
+  }
+  hover(snapshot: WorkspaceSnapshot, offset: number): HoverResult | undefined {
+    const tok = snapshot.parse.tokens.find((t)=>t.range.start.offset <= offset && t.range.end.offset >= offset);
+    if (!tok) return undefined;
+    return { contents: tok.kind === 'kw' ? `Keyword: ${tok.text}` : `Identifier: ${tok.text}`, range: tok.range };
+  }
+  references(snapshot: WorkspaceSnapshot, symbol: string): readonly string[] {
+    return [...snapshot.semantic.references.entries()].filter(([,refs]) => refs.includes(symbol)).map(([nid]) => nid as string);
+  }
+  rename(snapshot: WorkspaceSnapshot, from: string, to: string): { edits: readonly string[] } {
+    const edits = [...snapshot.semantic.symbols.values()].filter((s)=>s.name===from).map((s)=>`rename:${s.nodeId}:${from}->${to}`);
+    return { edits };
+  }
+  completion(snapshot: WorkspaceSnapshot, _offset: number): readonly CompletionItem[] {
+    const kws: CompletionItem[] = ['event','handler','goto','reply','emit'].map((k) => ({ label:k, kind:'keyword' }));
+    const symbols: CompletionItem[] = [...snapshot.semantic.symbols.values()].map((s) => ({ label:s.name, kind:s.kind, detail:`${s.kind} symbol` }));
+    return [...kws, ...symbols];
+  }
 }

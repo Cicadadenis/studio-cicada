@@ -1,46 +1,42 @@
-export type NodeId = string;
-export type SymbolId = string;
-export type DocumentUri = string;
+export type Brand<K, T> = K & { __brand: T };
+export type NodeId = Brand<string, 'NodeId'>;
+export type SnapshotId = Brand<string, 'SnapshotId'>;
+export type TokenId = Brand<string, 'TokenId'>;
 
-export interface TextRange { readonly start: number; readonly end: number; readonly line: number; readonly column: number }
-export interface AstNodeBase { readonly id: NodeId; readonly kind: string; readonly range: TextRange; readonly parentId?: NodeId; readonly frozen: true }
+export interface TextPos { readonly offset: number; readonly line: number; readonly column: number }
+export interface TextRange { readonly start: TextPos; readonly end: TextPos }
+export interface Trivia { readonly leading: readonly string[]; readonly trailing: readonly string[] }
 
-export interface AstProgram extends AstNodeBase { readonly kind: 'Program'; readonly body: readonly AstStatement[]; readonly version: number; readonly uri: DocumentUri; readonly hash: string }
+export interface Token { readonly id: TokenId; readonly kind: 'kw'|'id'|'string'|'symbol'|'newline'|'eof'|'error'; readonly text: string; readonly range: TextRange; readonly trivia: Trivia }
+export interface ParseDiagnostic { readonly code: string; readonly message: string; readonly severity: 'error'|'warning'; readonly range: TextRange; readonly recoverable: boolean }
+
+export interface CstNodeBase { readonly id: NodeId; readonly kind: string; readonly range: TextRange; readonly children: readonly CstNode[]; readonly recovery: boolean }
+export interface CstProgram extends CstNodeBase { readonly kind: 'CstProgram' }
+export interface CstEventDecl extends CstNodeBase { readonly kind: 'CstEventDecl'; readonly name: Token }
+export interface CstHandlerDecl extends CstNodeBase { readonly kind: 'CstHandlerDecl'; readonly eventRef: Token; readonly steps: readonly CstStepDecl[] }
+export interface CstStepDecl extends CstNodeBase { readonly kind: 'CstStepDecl'; readonly action: Token; readonly target?: Token }
+export interface CstRecoveryNode extends CstNodeBase { readonly kind: 'CstRecovery'; readonly unexpected: readonly Token[] }
+export type CstNode = CstProgram | CstEventDecl | CstHandlerDecl | CstStepDecl | CstRecoveryNode;
+
+export interface AstNodeBase { readonly id: NodeId; readonly kind: string; readonly range: TextRange; readonly trivia: Trivia }
+export interface AstProgram extends AstNodeBase { readonly kind: 'Program'; readonly statements: readonly AstStatement[]; readonly uri: string; readonly version: number }
 export interface AstEvent extends AstNodeBase { readonly kind: 'Event'; readonly name: string }
 export interface AstHandler extends AstNodeBase { readonly kind: 'Handler'; readonly name: string; readonly eventRef: string; readonly steps: readonly AstStep[] }
-export interface AstStep extends AstNodeBase { readonly kind: 'Step'; readonly action: 'goto' | 'reply' | 'emit'; readonly target?: string; readonly payload?: string }
+export interface AstStep extends AstNodeBase { readonly kind: 'Step'; readonly action: 'goto'|'reply'|'emit'; readonly target?: string }
 export type AstStatement = AstEvent | AstHandler;
 
-export interface AstSnapshot { readonly program: AstProgram; readonly createdAt: number }
+export interface ParseSnapshot { readonly id: SnapshotId; readonly uri: string; readonly version: number; readonly tokens: readonly Token[]; readonly cst: CstProgram; readonly ast: AstProgram; readonly diagnostics: readonly ParseDiagnostic[]; readonly dependencyGraph: DependencyGraph }
 
-export interface SymbolRecord { readonly id: SymbolId; readonly name: string; readonly kind: 'event' | 'handler' | 'flow'; readonly nodeId: NodeId; readonly scope: string }
-export interface Scope { readonly id: string; readonly name: string; readonly symbols: ReadonlyMap<string, SymbolRecord[]>; readonly parent?: string }
-export interface RelationEdge { readonly id: string; readonly from: NodeId; readonly to: NodeId; readonly kind: 'handles' | 'transition' | 'emits'; readonly valid: boolean }
+export interface GraphEdge { readonly from: NodeId; readonly to: NodeId; readonly type: 'syntax'|'semantic'|'transition'|'reference' }
+export interface DependencyGraph { readonly adjacency: ReadonlyMap<NodeId, readonly GraphEdge[]>; readonly reverse: ReadonlyMap<NodeId, readonly GraphEdge[]> }
+export interface DirtySet { readonly dirtyNodes: ReadonlySet<NodeId>; readonly dirtyRanges: readonly TextRange[] }
 
-export interface SemanticModel {
-  readonly symbolTable: ReadonlyMap<SymbolId, SymbolRecord>;
-  readonly scopes: ReadonlyMap<string, Scope>;
-  readonly references: ReadonlyMap<NodeId, SymbolId[]>;
-  readonly relationGraph: ReadonlyMap<string, RelationEdge>;
-}
+export interface SymbolInfo { readonly id: string; readonly name: string; readonly nodeId: NodeId; readonly kind: 'event'|'handler' }
+export interface SemanticModel { readonly symbols: ReadonlyMap<string, SymbolInfo>; readonly references: ReadonlyMap<NodeId, readonly string[]>; readonly transitions: ReadonlyMap<string, readonly string[]>; readonly dependencyGraph: DependencyGraph }
+export interface SemanticDiagnostic { readonly code: string; readonly message: string; readonly severity: 'error'|'warning'|'info'; readonly nodeId: NodeId }
 
-export interface Diagnostic { readonly code: string; readonly severity: 'error'|'warning'|'info'; readonly message: string; readonly nodeId: NodeId }
-export interface CodeAction { readonly id: string; readonly title: string; readonly kind: 'quickfix'|'refactor.extract'|'refactor.rename'; readonly diagnosticCodes: readonly string[]; readonly execute(tx: WorkspaceTransaction): void }
+export interface WorkspaceSnapshot { readonly snapshotId: SnapshotId; readonly parse: ParseSnapshot; readonly semantic: SemanticModel; readonly diagnostics: readonly SemanticDiagnostic[]; readonly createdAt: number }
 
-export interface WorkspaceTransaction {
-  createHandler(uri: string, eventName: string): void;
-  rename(uri: string, from: string, to: string): void;
-  removeHandler(uri: string, handlerName: string): void;
-  createTransition(uri: string, fromHandler: string, toEvent: string): void;
-  extractReusableFlow(uri: string, handlerName: string, flowName: string): void;
-}
-
-export interface WorkspaceSnapshot {
-  readonly uri: string;
-  readonly version: number;
-  readonly ast: AstSnapshot;
-  readonly semantic: SemanticModel;
-  readonly diagnostics: readonly Diagnostic[];
-  readonly codeActions: readonly CodeAction[];
-  readonly navigationTargets: ReadonlyMap<NodeId, readonly NodeId[]>;
-}
+export interface LspSemanticToken { readonly line: number; readonly startChar: number; readonly length: number; readonly tokenType: 'keyword'|'function'|'variable'|'string'|'operator' }
+export interface HoverResult { readonly contents: string; readonly range: TextRange }
+export interface CompletionItem { readonly label: string; readonly kind: 'event'|'handler'|'keyword'; readonly detail?: string }

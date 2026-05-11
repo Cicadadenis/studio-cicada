@@ -1,80 +1,59 @@
-# Visual Bot IDE Event-Relation Engine (Production Blueprint)
+# Production Event-Relation Compiler Frontend for Visual Bot IDE
 
-## Folder structure
+## Compiler frontend design
 
-- `core/ide/engine/types.ts` — contracts (AST, semantic model, diagnostics, actions, snapshots)
-- `core/ide/engine/parser.ts` — lexer/parser/AST factory/stable IDs/snapshots
-- `core/ide/engine/semantic.ts` — binder/symbol table/scope+reference resolver/relation graph/semantic diagnostics
-- `core/ide/engine/indexing.ts` — incremental index with WeakMap memoization and cache invalidation boundaries
-- `core/ide/engine/actions.ts` — quick actions + rename propagation/extract flow
-- `core/ide/engine/runtime.ts` — reactive workspace runtime/event bus/undo-redo/plugin host
+- **Lexer**: token stream with positional metadata and trivia channels.
+- **Recursive descent parser**: declaration/step grammar with explicit error recovery.
+- **CST + AST split**: CST keeps recovery + token structure, AST keeps normalized semantics.
+- **Parser diagnostics**: recoverable errors (`P001`, `P002`, `P999`) with ranges.
+- **Incremental parsing**: dirty-range detection and dependency-edge patch basis.
 
-## Dependency graph
+## Core architecture
 
-`types -> parser -> semantic -> indexing -> actions -> runtime`
-
-Plugins wrap runtime stages:
-`parser plugins -> semantic analyzers -> diagnostics plugins -> code action plugins -> renderer plugins`
+1. `parser.ts`
+   - `Lexer`
+   - `TokenStream`
+   - `RecursiveDescentParser`
+   - recovery nodes + parser diagnostics
+   - dependency graph construction and dirty diffing
+2. `semantic.ts`
+   - semantic model build
+   - transition graph patching
+   - flow analysis
+   - dead state analysis
+   - recursive transition detection
+   - infinite loop analysis
+3. `indexing.ts`
+   - persistent snapshot store
+   - structural sharing via semantic reuse
+   - partial semantic recompute hook with dirty set
+4. `runtime.ts`
+   - transaction engine
+   - collaboration envelope (CRDT-friendly metadata)
+   - worker registration for threaded index partitioning
+   - LSP facade providers
 
 ## Lifecycle pipeline
 
-1. Source update enters runtime transaction.
-2. Parser plugins preprocess DSL.
-3. Lexer + parser build immutable AST snapshot.
-4. Binder builds symbol graph, scopes, references, relations.
-5. Incremental index reuses previous snapshot via WeakMap/object identity.
-6. Diagnostics detect missing/duplicate/dangling/orphan/unreachable/cyclic/invalid issues.
-7. Quick actions generated.
-8. Renderer plugins consume semantic snapshot.
-9. Snapshot published to event bus + Info Panel subscribers.
-10. History transaction persisted for undo/redo.
+`transaction -> parser -> CST -> AST -> dependency graph patch -> semantic recompute -> diagnostics -> persistent snapshot -> LSP/UI consumers`
 
-## AST example
+## LSP integration
 
-```txt
-event start
-handler start goto help | reply Hello
-event help
-handler help reply How can I help?
-```
+Implemented providers:
+- semantic tokens
+- hover
+- references
+- rename edits
+- autocomplete
 
-## Semantic model example
+## Scalability plan
 
-- symbols: `event:start`, `event:help`, `handler:on_start`, `handler:on_help`
-- references: `on_start -> event:start`
-- relations:
-  - `on_start handles start`
-  - `on_start transition help`
-
-## Diagnostics example
-
-- `missing-handlers`
-- `duplicate-handlers`
-- `dangling-references`
-- `orphan-handlers`
-- `unreachable-flows`
-- `cyclic-navigation`
-- `invalid-transitions`
-
-## Performance strategy
-
-- Immutable AST snapshots + structural sharing.
-- Stable deterministic IDs enable fine-grained graph patching.
-- WeakMap memoization avoids full recompute for unchanged AST nodes.
-- URI-index cache + partial subtree reindex scaffolding.
-- Lazy semantic analysis extension point via `semanticAnalyzers` plugins.
-
-## Info Panel integration contract
-
-UI reads from `WorkspaceSnapshot`:
-- `diagnostics`
-- `codeActions`
-- `semantic.references`
-- `navigationTargets`
-
-## Future scaling roadmap
-
-- Worker-pool semantic partitions by module boundary.
-- Persistent on-disk index and bloom filters for symbol lookup.
-- Cross-file relation graph federation.
-- Plugin sandboxing and capability-based execution.
+- Multiplayer editing: `CollaborationEnvelope` + vector clocks.
+- CRDT synchronization: envelope design ready for CRDT op application layer.
+- Worker-thread indexing: runtime worker registry and partitioning extension point.
+- Million-node projects:
+  - persistent snapshots
+  - structural sharing
+  - graph patching
+  - partial semantic recompute
+  - memory-local weak caches
