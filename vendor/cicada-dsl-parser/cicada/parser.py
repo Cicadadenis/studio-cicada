@@ -129,6 +129,17 @@ class InlineKeyboard:
 
 
 @dataclass
+class InlineKeyboardFromList:
+    """Динамическая inline-клавиатура из списка словарей/объектов."""
+    items: Any
+    text_field: str
+    id_field: str
+    callback_prefix: str = ""
+    columns: int = 1
+    append_back: bool = True
+
+
+@dataclass
 class Photo:
     url: str
 
@@ -1547,6 +1558,30 @@ class Parser:
             # inline-кнопки: (блок inline кнопок)
             # Все ряды [...] собираются в один InlineKeyboard — одно сообщение с InlineKeyboardMarkup
             if stripped.startswith("inline-кнопки:") or stripped == "inline-кнопки":
+                dyn = re.match(
+                    r'^inline-кнопки:\s*из\s+(\w+)\s+по\s+(\w+)\s*/\s*(\w+)(?:\s+callback=([^\s]+))?(?:\s+columns=(\d+))?(?:\s+append_back=(true|false))?\s*$',
+                    stripped,
+                    flags=re.IGNORECASE,
+                )
+                if dyn:
+                    self.consume()
+                    items_name = dyn.group(1)
+                    text_field = dyn.group(2)
+                    id_field = dyn.group(3)
+                    callback_prefix = dyn.group(4) or ""
+                    columns = int(dyn.group(5) or 1)
+                    append_back = (dyn.group(6) or "true").lower() == "true"
+                    stmts.append(
+                        InlineKeyboardFromList(
+                            items=Variable(items_name),
+                            text_field=text_field,
+                            id_field=id_field,
+                            callback_prefix=callback_prefix,
+                            columns=max(1, columns),
+                            append_back=append_back,
+                        )
+                    )
+                    continue
                 self.consume()
                 keyboard_rows = []
                 while self.pos < len(self.lines):
