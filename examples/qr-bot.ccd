@@ -25,6 +25,6 @@
 
     шаг ответ:
         сохранить "qr_text" = qr_text
-        ответ "📷 Ваш QR-код: https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={qr_text}"
+        ответ "📷 Ваш QR-код: https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={кодировать_url(qr_text)}"
         кнопки "🔄 Создать ещё" "🏠 Главная"
         завершить сценарий

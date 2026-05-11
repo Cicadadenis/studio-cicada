@@ -10,12 +10,13 @@ import json as _json
 import datetime as _dt
 import os as _os
 import re
+from urllib.parse import quote as _url_quote
 import requests
 
 from cicada.parser import (
     Program, Handler, Reply, RandomReply, Ask, Remember, If,
     parse_condition,
-    Buttons, InlineButton, InlineKeyboard, Photo, PhotoVar, Sticker,
+    Buttons, InlineButton, InlineKeyboard, InlineKeyboardFromList, Photo, PhotoVar, Sticker,
     GlobalVar,
     StartScenario, Step,
     Condition, VarRef, FunctionCall, ComplexCondition,
@@ -213,7 +214,7 @@ def register_func(name: str, fn) -> None:
 _BUILTIN_FUNCS = {
     # строковые
     "содержит", "длина", "начинается_с", "верхний", "нижний",
-    "обрезать", "разделить", "соединить",
+    "обрезать", "разделить", "соединить", "urlencode", "url_encode", "кодировать_url",
     # новые строковые
     "заменить", "найти", "срез",
     # типизация
@@ -595,6 +596,8 @@ def _call_builtin(name: str, args: list):
         sep   = str(args[0]) if args else ""
         items = args[1] if len(args) > 1 else []
         return sep.join(str(i) for i in (items if isinstance(items, list) else [items]))
+    if name in ("urlencode", "url_encode", "кодировать_url"):
+        return _url_quote(str(args[0]) if args else "", safe="")
 
     # типизация — старые
     if name == "число":
@@ -798,6 +801,7 @@ class Executor:
             Buttons:            self._exec_buttons,
             InlineButton:       self._exec_inline_button,
             InlineKeyboard:     self._exec_inline_keyboard,
+            InlineKeyboardFromList: self._exec_inline_keyboard_from_list,
             Photo:              self._exec_photo,
             Sticker:            self._exec_sticker,
             ForwardPhoto:       self._exec_forward_photo,
@@ -1450,6 +1454,39 @@ class Executor:
             ctx._pending_message = None
 
         self.tg.send_inline_keyboard(ctx.chat_id, keyboard, text=pending_text or "\u200b")
+
+    def _exec_inline_keyboard_from_list(self, stmt: InlineKeyboardFromList, ctx):
+        items = eval_expr(stmt.items, ctx) if not isinstance(stmt.items, list) else stmt.items
+        if not isinstance(items, list):
+            return
+
+        buttons = []
+        for item in items:
+            if isinstance(item, dict):
+                text = item.get(stmt.text_field, "")
+                item_id = item.get(stmt.id_field, "")
+            else:
+                text = getattr(item, stmt.text_field, "")
+                item_id = getattr(item, stmt.id_field, "")
+            if text in (None, "") or item_id in (None, ""):
+                continue
+            buttons.append(
+                InlineButton(
+                    text=str(text),
+                    callback=f"{stmt.callback_prefix}{item_id}",
+                )
+            )
+
+        rows = []
+        cols = max(1, int(stmt.columns or 1))
+        for i in range(0, len(buttons), cols):
+            rows.append(buttons[i:i + cols])
+
+        if stmt.append_back:
+            rows.append([InlineButton(text="🔙 Назад", callback="back")])
+
+        if rows:
+            self._exec_inline_keyboard(InlineKeyboard(rows=rows), ctx)
 
     def _exec_photo(self, stmt: Photo, ctx):
         self.tg.send_photo(ctx.chat_id, stmt.url)

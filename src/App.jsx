@@ -433,6 +433,7 @@ export const BLOCK_TYPES = [
   // ── Данные (расширенная БД) ──────────────────────────────────────────────
   { type:'db_delete',   label:'Удалить из БД',     icon:'🗑', color:'#ef4444', group:'Данные',  canBeRoot:false, canStack:true  },
   { type:'save_global', label:'Глобальная БД',      icon:'🌐', color:'#10b981', group:'Данные',  canBeRoot:false, canStack:true  },
+  { type:'set_global',  label:'Обновить глобальную', icon:'🌍', color:'#10b981', group:'Данные',  canBeRoot:false, canStack:true  },
   { type:'get_user',    label:'Данные польз-ля',   icon:'👤', color:'#0ea5e9', group:'Данные',  canBeRoot:false, canStack:true  },
   { type:'all_keys',    label:'Все ключи',          icon:'🗂', color:'#64748b', group:'Данные',  canBeRoot:false, canStack:true  },
   // ── Блоки-функции ───────────────────────────────────────────────────────
@@ -443,8 +444,8 @@ export const BuilderUiContext = React.createContext(null);
 
 // ─── COMPATIBILITY: what can stack BELOW a given type ─────────────────────
 // Базовый набор без buttons и inline — они только после message
-const FLOW_CHILDREN = ['message','typing','delay','condition','else','switch','ask','remember','get','save','random','loop','http','log','notify','broadcast','role','payment','analytics','photo','video','audio','document','send_file','sticker','contact','location','poll','database','classify','use','stop','goto','menu','check_sub','member_role','forward_msg','db_delete','save_global','get_user','all_keys','call_block'];
-const FLOW_NO_MEDIA = ['message','typing','delay','condition','switch','ask','remember','get','save','random','loop','http','log','stop','goto','use'];
+const FLOW_CHILDREN = ['message','typing','delay','condition','else','switch','ask','remember','get','save','random','loop','http','log','notify','broadcast','role','payment','analytics','photo','video','audio','document','send_file','sticker','contact','location','poll','database','classify','use','stop','goto','menu','check_sub','member_role','forward_msg','db_delete','save_global','set_global','get_user','all_keys','call_block'];
+const FLOW_NO_MEDIA = ['message','typing','delay','condition','switch','ask','remember','get','save','random','loop','http','log','stop','goto','use','set_global'];
 const TERMINAL = [];
 
 const CAN_STACK_BELOW = {
@@ -507,6 +508,7 @@ const CAN_STACK_BELOW = {
   broadcast:   ['message','stop','goto','log'],
   db_delete:   [...FLOW_NO_MEDIA, 'notify'],
   save_global: [...FLOW_NO_MEDIA],
+  set_global:  [...FLOW_NO_MEDIA],
   get_user:    [...FLOW_NO_MEDIA, 'notify'],
   all_keys:    [...FLOW_NO_MEDIA, 'notify'],
   call_block:  ['message','remember','save','condition','log','stop','goto','use'],
@@ -571,7 +573,7 @@ const NEXT_BLOCK_PRIORITY = [
   'typing', 'delay', 'get', 'save', 'random', 'photo', 'video', 'stop', 'goto',
   'log', 'loop', 'switch', 'http', 'menu', 'poll', 'document', 'send_file', 'audio', 'sticker',
   'contact', 'location', 'notify', 'broadcast', 'database', 'classify', 'role', 'payment', 'analytics',
-  'check_sub', 'member_role', 'forward_msg', 'db_delete', 'save_global', 'get_user', 'all_keys', 'call_block',
+  'check_sub', 'member_role', 'forward_msg', 'db_delete', 'save_global', 'set_global', 'get_user', 'all_keys', 'call_block',
 ];
 
 function getSuggestedNextBlockLabels(parentType, max = 14, blockTypes = BLOCK_TYPES) {
@@ -635,6 +637,7 @@ const BEGINNER_GUIDE = {
   forward_msg: 'Пересылает последнее входящее сообщение пользователя другому Telegram ID.',
   db_delete: 'Полностью удаляет ключ из БД (не обнуляет, а удаляет запись). Используй вместо сохранить "" = "".',
   save_global: 'Сохраняет значение в глобальную БД (общую для всех пользователей). Читать через обычный «Получить».',
+  set_global: 'Обновляет runtime-глобальную переменную проекта. Подходит для общих списков и настроек, которые используют разные сценарии.',
   get_user: 'Читает данные ДРУГОГО пользователя по его ID. Только для adminской логики.',
   all_keys: 'Возвращает список всех ключей текущего пользователя в БД. Удобно для отладки и динамических операций.',
   call_block: 'Вызывает именованный блок и сохраняет значение «вернуть» в переменную. Блок должен содержать «вернуть значение».',
@@ -755,6 +758,7 @@ const DEFAULT_PROPS = {
   broadcast:   { mode: 'all', text: 'Привет всем!', tag: '' },
   db_delete:   { key: 'мой_ключ' },
   save_global: { key: 'global_key', value: 'значение' },
+  set_global:  { varname: 'товары', value: 'добавить(товары, значение)' },
   get_user:    { user_id: 'target_id', key: 'профиль_имя', varname: 'имя' },
   all_keys:    { varname: 'ключи' },
   call_block:  { blockname: 'мой_блок', varname: 'результат' },
@@ -794,7 +798,9 @@ const FIELDS = {
   on_sticker:[],
   on_location:[],
   on_contact:[],
-  message:   [{ key:'text',      label:'текст ответа',     tag:'textarea', rows:3 }],
+  message:   [{ key:'text',      label:'текст ответа',     tag:'textarea', rows:3 },
+              { key:'buttons',   label:'кнопки ответа: Текст → блок/сценарий', tag:'textarea', rows:3,
+                placeholder:'➕ Добавить ещё → добавить_товар\n🏠 Главная → главная' }],
   buttons:   [{ key:'rows',      label:'кнопки (запятая = в ряд, Enter = новый ряд)', tag:'textarea', rows:4 }],
   command:   [{ key:'cmd',       label:'команда (без /)',   tag:'input' }],
   callback:  [{ key:'label',     label:'текст кнопки',     tag:'input' },
@@ -880,6 +886,8 @@ const FIELDS = {
   db_delete:   [{ key:'key',    label:'ключ для удаления из БД',                  tag:'input' }],
   save_global: [{ key:'key',   label:'ключ (глобальная БД)',                       tag:'input' },
                 { key:'value', label:'значение',                                   tag:'input' }],
+  set_global:  [{ key:'varname',label:'имя глобальной переменной',                 tag:'input' },
+                { key:'value', label:'новое значение',                             tag:'input' }],
   get_user:    [{ key:'user_id',label:'user_id другого пользователя',             tag:'input' },
                 { key:'key',   label:'ключ в его БД',                              tag:'input' },
                 { key:'varname',label:'переменная →',                             tag:'input' }],
@@ -1036,7 +1044,7 @@ function getPreview(type, props) {
     case 'block':      return p.name||'';
     case 'use':        return p.blockname||'';
     case 'middleware':  return p.type === 'before' ? 'до каждого' : 'после каждого';
-    case 'message':    return `"${(p.text||'').slice(0,28)}"`;
+    case 'message':    return p.buttons ? `"${(p.text||'').slice(0,20)}" + кнопки` : `"${(p.text||'').slice(0,28)}"`;
     case 'buttons':    return (p.rows||'').split('\n')[0]?.slice(0,28)||'';
     case 'command':    return `"/${p.cmd||'start'}"`;
     case 'callback':   return `"${p.label||'Кнопка'}"`;
@@ -1047,6 +1055,7 @@ function getPreview(type, props) {
     case 'remember':   return `${p.varname||''} = ${p.value||''}`;
     case 'get':        return `"${p.key||''}" → ${p.varname||''}`;
     case 'save':       return `"${p.key||''}" = ${p.value||''}`;
+    case 'set_global': return `${p.varname||''} = ${p.value||''}`;
     case 'goto':       return `→ "${p.target||''}"`;
     case 'delay':      return `${p.seconds||'2'}с`;
     case 'typing':     return `${p.seconds||'1'}с`;
@@ -1165,6 +1174,7 @@ const BLOCK_NOTES = {
   broadcast:   { icon: '⚠️', color: '#0ea5e9', text: 'Рассылка отправляет сообщения последовательно — для больших баз может занять время. Используй только из обработчика кнопки.' },
   db_delete:   { icon: '💡', color: '#ef4444', text: 'Удаляет ключ полностью, не обнуляет. Для обнуления используй «Сохранить» с пустым значением.' },
   save_global: { icon: '💡', color: '#10b981', text: 'Глобальная БД одна для всех пользователей. Читается через обычный «Получить».' },
+  set_global:  { icon: '💡', color: '#10b981', text: 'Обновляет общую переменную проекта: например товары = добавить(товары, новый_товар).' },
   get_user:    { icon: '⚠️', color: '#f59e0b', text: 'Читает данные ДРУГОГО пользователя — только для admin-функций. В «user_id» укажи ID цели.' },
   all_keys:    { icon: '💡', color: '#64748b', text: 'Возвращает список всех ключей текущего пользователя. Хорошо сочетается с циклом «для каждого».' },
   call_block:  { icon: '💡', color: '#8b5cf6', text: 'Блок должен содержать «вернуть значение». Результат сохранится в указанную переменную.' },
@@ -1683,7 +1693,191 @@ function Sidebar({ onDragStart, onDragEnd, onTapAdd }) {
 }
 
 // ─── PROPS PANEL ──────────────────────────────────────────────────────────
-function PropsPanel({ block, onChange }) {
+/** Единый список блоков проекта для полей «При нажатии», «Сохранить», «Если», «Переход», «Использовать»… */
+const PROJECT_BLOCK_PICKER_KINDS = [
+  'callback_label',
+  'save_key',
+  'save_value',
+  'condition_cond',
+  'goto_target',
+  'use_blockname',
+];
+
+function firstReplyButtonLabelFromRows(rowsStr) {
+  const rows = String(rowsStr || '').split('\n');
+  for (const row of rows) {
+    for (const cell of row.split(',')) {
+      const t = cell.trim();
+      if (t) return t;
+    }
+  }
+  return '';
+}
+
+function firstInlineCallbackFromButtons(buttonsStr) {
+  const rows = String(buttonsStr || '').split('\n');
+  for (const row of rows) {
+    for (const cell of row.split(',')) {
+      const pair = cell.trim();
+      if (!pair) continue;
+      const [title, cb] = pair.split('|').map((x) => x?.trim());
+      if (cb) return cb;
+      if (title) return title;
+    }
+  }
+  return '';
+}
+
+function getStackContextTitle(stack, blockTypes) {
+  const blocks = stack?.blocks || [];
+  const named = blocks.find((b) => b?.type === 'block')?.props?.name?.trim();
+  if (named) return named;
+  const root = blocks[0];
+  if (!root) return '—';
+  const p = root.props || {};
+  const def = getBlockDef(root.type, blockTypes);
+  const fallback = def?.label || root.type;
+  switch (root.type) {
+    case 'scenario':
+      return p.name?.trim() || fallback;
+    case 'command': {
+      const c = String(p.cmd || '').replace(/^\//, '').trim();
+      return c ? `/${c}` : fallback;
+    }
+    case 'callback':
+      return p.label?.trim() || fallback;
+    case 'start':
+      return fallback;
+    default:
+      return fallback;
+  }
+}
+
+function resolvePickerInsertForKind(kind, targetBlock) {
+  if (!targetBlock) return null;
+  const t = targetBlock.type;
+  const p = targetBlock.props || {};
+  switch (kind) {
+    case 'callback_label': {
+      if (t === 'callback') return (p.label || '').trim() || null;
+      if (t === 'buttons') {
+        const v = firstReplyButtonLabelFromRows(p.rows);
+        return v || null;
+      }
+      if (t === 'inline') {
+        const v = firstInlineCallbackFromButtons(p.buttons);
+        return v || null;
+      }
+      return null;
+    }
+    case 'save_key': {
+      if (['save', 'save_global', 'get', 'get_user', 'db_delete'].includes(t)) {
+        const k = (p.key || '').trim();
+        return k || null;
+      }
+      if (t === 'remember' || t === 'ask') {
+        const k = (p.varname || '').trim();
+        return k || null;
+      }
+      if (t === 'global' || t === 'set_global') {
+        const k = (p.varname || '').trim();
+        return k || null;
+      }
+      if (t === 'block') {
+        const k = (p.name || '').trim();
+        return k || null;
+      }
+      return null;
+    }
+    case 'save_value': {
+      if (
+        t === 'remember' ||
+        t === 'ask' ||
+        t === 'get' ||
+        t === 'get_user' ||
+        t === 'http' ||
+        t === 'classify' ||
+        t === 'database' ||
+        t === 'all_keys' ||
+        t === 'check_sub' ||
+        t === 'member_role' ||
+        t === 'call_block'
+      ) {
+        const v = (p.varname || '').trim();
+        return v || null;
+      }
+      if (t === 'save' || t === 'save_global' || t === 'set_global') {
+        const v = (p.value || p.varname || p.key || '').trim();
+        return v || null;
+      }
+      return null;
+    }
+    case 'condition_cond': {
+      if (t === 'condition') {
+        const c = String(p.cond || '').trim().replace(/:?\s*$/, '');
+        return c || null;
+      }
+      const vn = (p.varname || '').trim();
+      if (
+        vn &&
+        ['ask', 'remember', 'get', 'get_user', 'http', 'classify', 'database', 'check_sub', 'member_role', 'role', 'all_keys', 'call_block'].includes(t)
+      ) {
+        return `не ${vn}`;
+      }
+      return null;
+    }
+    case 'goto_target': {
+      if (t === 'goto') return (p.target || '').trim() || null;
+      if (t === 'scenario' || t === 'step' || t === 'block') return (p.name || '').trim() || null;
+      if (t === 'command') return String(p.cmd || '').replace(/^\//, '').trim() || null;
+      if (t === 'callback') return (p.label || '').trim() || null;
+      return null;
+    }
+    case 'use_blockname': {
+      if (t === 'block') return (p.name || '').trim() || null;
+      if (t === 'use' || t === 'call_block') return (p.blockname || '').trim() || null;
+      return null;
+    }
+    default:
+      return null;
+  }
+}
+
+function getPropsFieldPickerKind(blockType, fieldKey) {
+  if (blockType === 'callback' && fieldKey === 'label') return 'callback_label';
+  if ((blockType === 'save' || blockType === 'save_global') && fieldKey === 'key') return 'save_key';
+  if ((blockType === 'save' || blockType === 'save_global') && fieldKey === 'value') return 'save_value';
+  if (blockType === 'set_global' && (fieldKey === 'varname' || fieldKey === 'value')) return fieldKey === 'varname' ? 'save_key' : 'save_value';
+  if (blockType === 'condition' && fieldKey === 'cond') return 'condition_cond';
+  if (blockType === 'goto' && fieldKey === 'target') return 'goto_target';
+  if ((blockType === 'use' || blockType === 'call_block') && fieldKey === 'blockname') return 'use_blockname';
+  if (blockType === 'get' && (fieldKey === 'key' || fieldKey === 'varname')) return fieldKey === 'key' ? 'save_key' : 'save_value';
+  if (blockType === 'db_delete' && fieldKey === 'key') return 'save_key';
+  if (blockType === 'get_user' && (fieldKey === 'key' || fieldKey === 'varname')) return fieldKey === 'key' ? 'save_key' : 'save_value';
+  if (blockType === 'call_block' && fieldKey === 'varname') return 'save_value';
+  return null;
+}
+
+function collectProjectBlockPickerOptionsByKind(stacks, blockTypes) {
+  const map = Object.fromEntries(PROJECT_BLOCK_PICKER_KINDS.map((k) => [k, []]));
+  for (const stack of stacks || []) {
+    const st = getStackContextTitle(stack, blockTypes);
+    for (const b of stack.blocks || []) {
+      for (const kind of PROJECT_BLOCK_PICKER_KINDS) {
+        const insert = resolvePickerInsertForKind(kind, b);
+        if (!insert) continue;
+        const def = getBlockDef(b.type, blockTypes);
+        const typeLabel = def?.label || b.type;
+        const preview = getPreview(b.type, b.props) || '';
+        const panelLabel = `${st} — ${typeLabel}: ${preview}`.slice(0, 200);
+        map[kind].push({ id: b.id, panelLabel, insert });
+      }
+    }
+  }
+  return map;
+}
+
+function PropsPanel({ block, onChange, stacks }) {
   const ctx = React.useContext(BuilderUiContext);
   const lang = ctx?.lang || 'ru';
   const blockTypes = ctx?.blockTypes || BLOCK_TYPES;
@@ -1701,6 +1895,10 @@ function PropsPanel({ block, onChange }) {
   const fields = localizedPropFields(block.type, lang, FIELDS[block.type] || []);
   const props = block.props || {};
   const beginnerHint = getBeginnerPanelHint(block, { blockTypes, ui, lang });
+  const pickerByKind = React.useMemo(
+    () => collectProjectBlockPickerOptionsByKind(stacks, blockTypes),
+    [stacks, blockTypes],
+  );
   return (
     <div style={{ overflowY: 'auto', flex: 1, padding: '10px 12px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
@@ -1730,7 +1928,14 @@ function PropsPanel({ block, onChange }) {
           {beginnerHint}
         </div>
       )}
-      {fields.map(f => (
+      {fields.map(f => {
+        const pickerKind = getPropsFieldPickerKind(block.type, f.key);
+        const pickerOptions = pickerKind ? pickerByKind[pickerKind] : [];
+        const cur = props[f.key] || '';
+        const matched = pickerOptions.find((o) => o.insert === cur);
+        const selectValue = matched ? JSON.stringify({ id: matched.id, ins: matched.insert }) : '';
+
+        return (
         <div key={f.key} style={{ marginBottom: 8 }}>
           <div style={{
             fontSize: 9, color: 'var(--text3)', marginBottom: 3,
@@ -1741,16 +1946,44 @@ function PropsPanel({ block, onChange }) {
               rows={f.rows || 3}
               value={props[f.key] || ''}
               onChange={e => onChange(f.key, e.target.value)}
+              placeholder={f.placeholder || ''}
               style={{ resize: 'vertical', lineHeight: 1.5 }}
             />
           ) : (
-            <input
-              value={props[f.key] || ''}
-              onChange={e => onChange(f.key, e.target.value)}
-            />
+            <>
+              {pickerKind && (
+                <select
+                  style={{ width: '100%', marginBottom: 6 }}
+                  value={selectValue}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    if (!raw) return;
+                    try {
+                      const { ins } = JSON.parse(raw);
+                      if (ins != null) onChange(f.key, String(ins));
+                    } catch { /* ignore */ }
+                  }}
+                >
+                  <option value="">{ui.propsPickBlock || 'Выберите блок…'}</option>
+                  {pickerOptions.map((opt) => (
+                    <option
+                      key={`${pickerKind}:${opt.id}:${opt.insert}`}
+                      value={JSON.stringify({ id: opt.id, ins: opt.insert })}
+                    >
+                      {opt.panelLabel}
+                    </option>
+                  ))}
+                </select>
+              )}
+              <input
+                value={props[f.key] || ''}
+                onChange={e => onChange(f.key, e.target.value)}
+              />
+            </>
           )}
         </div>
-      ))}
+        );
+      })}
       {fields.length === 0 && (
         <div style={{ color: 'var(--text3)', fontSize: 10 }}>{ui.noSettings}</div>
       )}
@@ -1876,7 +2109,7 @@ function fixDslSchema(input) {
 }
 
 // ─── DSL PANEL ────────────────────────────────────────────────────────────
-function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
+function DSLPane({ stacks, isMobile, isExpanded = false, onToggleExpanded, onClose, onApplyCorrectedCode }) {
   const ctx = React.useContext(BuilderUiContext);
   const blockTypes = ctx?.blockTypes || BLOCK_TYPES;
   const ui = ctx?.t || getConstructorStrings('ru');
@@ -1963,17 +2196,6 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
     setHighlightRows([]);
   };
 
-  const applySuggestedFixes = async () => {
-    const code = previewCorrected ?? dsl;
-    try {
-      await postJsonWithCsrf('/api/dsl/compile', { code });
-      setFixNotice('DSL отправлен в cicada-tg /compile без локальных изменений');
-    } catch {
-      setFixNotice('Не удалось отправить DSL в cicada-tg /compile');
-    }
-    setTimeout(() => setFixNotice(''), 2200);
-  };
-
   const applySchemaFix = () => {
     const fixed = fixDslSchema(previewCorrected ?? dsl);
     const applied = onApplyCorrectedCode?.(fixed);
@@ -1984,6 +2206,21 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
       setHighlightRows(fixed.split('\n').map((_, idx) => idx));
     }
     setTimeout(() => { check(); }, 0);
+  };
+
+
+
+  const applyDetectedFix = async () => {
+    if (!validationResult) {
+      await check();
+      return;
+    }
+    if ((validationResult.errors || []).length > 0) {
+      applySchemaFix();
+      return;
+    }
+    setFixNotice('Ошибки не найдены: исправление недоступно');
+    setTimeout(() => setFixNotice(''), 2200);
   };
 
   const resetPreview = () => {
@@ -2009,14 +2246,20 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
 
   const displayCode = previewCorrected ?? dsl;
   const displayLines = displayCode.split('\n');
+  const canToggleExpanded = typeof onToggleExpanded === 'function';
+  const canClose = typeof onClose === 'function';
+  const expandTitle = isExpanded
+    ? (isMobile ? 'Свернуть панель до половины экрана' : 'Свернуть панель к обычной высоте')
+    : (isMobile ? 'Развернуть панель на весь экран' : 'Раскрыть панель до половины высоты');
 
   return (
     <div style={{
       display: 'flex', flexDirection: 'column',
       borderTop: '1px solid var(--border)',
-      flex: isMobile ? 1 : '0 0 280px',
+      flex: isMobile ? 1 : `0 0 ${isExpanded ? '50%' : '280px'}`,
       minHeight: 0,
       minWidth: 0,
+      transition: 'flex-basis 0.2s ease',
     }}>
       <div style={{
         padding: '5px 10px', display: 'flex', alignItems: 'center',
@@ -2027,7 +2270,7 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
       }}>
         <div style={{
           display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'flex-start',
-          width: '100%', minWidth: 0,
+          alignItems: 'center', width: '100%', minWidth: 0,
         }}>
           <button
             type="button"
@@ -2088,43 +2331,71 @@ function DSLPane({ stacks, isMobile, onApplyCorrectedCode }) {
           >{ui.dslDownload}</button>
           <button
             type="button"
-            onClick={applySuggestedFixes}
-            disabled={!validationResult}
-            style={{
-              background: !validationResult ? 'var(--bg3)' : '#0ea5e9',
-              color: !validationResult ? 'var(--text3)' : '#fff',
-              padding: '2px 7px',
-              borderRadius: 4,
-              fontSize: 9,
-              border: 'none',
-              cursor: !validationResult ? 'default' : 'pointer',
-              opacity: !validationResult ? 0.7 : 1,
-            }}
-            title={!validationResult ? ui.dslFixTitleNeedCheck : 'Отправить DSL в cicada-tg /compile'}
-          >
-            {'🔧 Fix via /compile'}
-          </button>
-          <button
-            type="button"
-            onClick={applySchemaFix}
+            onClick={applyDetectedFix}
+            disabled={!validationResult || !hasErrors}
             style={{
               padding: '4px 10px',
               borderRadius: 6,
               fontSize: 10,
               fontWeight: 600,
-              cursor: 'pointer',
+              cursor: (!validationResult || !hasErrors) ? 'default' : 'pointer',
               fontFamily: 'inherit',
               lineHeight: 1.2,
-              background: '#16a34a',
-              color: '#fff',
-              border: '1px solid #15803d',
+              background: (!validationResult || !hasErrors) ? 'var(--bg3)' : '#0ea5e9',
+              color: (!validationResult || !hasErrors) ? 'var(--text3)' : '#fff',
+              border: '1px solid transparent',
+              opacity: (!validationResult || !hasErrors) ? 0.7 : 1,
             }}
-            title="Нормализовать структуру DSL по UI-правилам"
-            onMouseEnter={e => { e.currentTarget.style.background = '#15803d'; }}
-            onMouseLeave={e => { e.currentTarget.style.background = '#16a34a'; }}
+            title={!validationResult ? ui.dslFixTitleNeedCheck : (!hasErrors ? 'Нет ошибок для исправления' : 'Исправить найденные ошибки DSL')}
           >
-            {'🛠 Исправить DSL'}
+            {'🔧 Исправить'}
           </button>
+          {(canToggleExpanded || canClose) && (
+            <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
+              {canToggleExpanded && (
+                <button
+                  type="button"
+                  onClick={onToggleExpanded}
+                  title={expandTitle}
+                  style={{
+                    padding: '4px 8px',
+                    borderRadius: 6,
+                    fontSize: 10,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                    lineHeight: 1.2,
+                    background: isExpanded ? 'rgba(99,102,241,0.22)' : 'rgba(255,255,255,0.04)',
+                    color: isExpanded ? '#c4b5fd' : 'var(--text3)',
+                    border: `1px solid ${isExpanded ? 'rgba(196,181,253,0.45)' : 'var(--border2)'}`,
+                  }}
+                >
+                  {isExpanded ? (isMobile ? '1/2' : '280') : (isMobile ? '100%' : '1/2')}
+                </button>
+              )}
+              {canClose && (
+                <button
+                  type="button"
+                  onClick={onClose}
+                  title="Закрыть панель кода"
+                  style={{
+                    padding: '4px 8px',
+                    borderRadius: 6,
+                    fontSize: 11,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                    lineHeight: 1.2,
+                    background: 'rgba(255,255,255,0.04)',
+                    color: 'var(--text3)',
+                    border: '1px solid var(--border2)',
+                  }}
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -2509,6 +2780,7 @@ export default function App() {
   const [isMobileView, setIsMobileView] = useState(() => window.innerWidth < 768);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [showFilesMenu, setShowFilesMenu] = useState(false);
+  const [dslPaneExpanded, setDslPaneExpanded] = useState(false);
   const [tourActive, setTourActive] = useState(false);
   const [tourStep, setTourStep] = useState(0);
 
@@ -2677,6 +2949,10 @@ export default function App() {
   useEffect(() => {
     if (!canSeeCode && mobileTab === 'dsl') setMobileTab('canvas');
   }, [canSeeCode, mobileTab]);
+
+  useEffect(() => {
+    if (isMobileView && mobileTab !== 'dsl') setDslPaneExpanded(false);
+  }, [isMobileView, mobileTab]);
 
   useEffect(() => {
     const handler = () => setIsMobileView(window.innerWidth < 768);
@@ -3295,8 +3571,9 @@ export default function App() {
         continue;
       }
 
-      const parsed = parseLine(raw);
+      let parsed = parseLine(raw);
       if (!parsed) continue;
+      if (parsed.type === 'global' && indent > 0) parsed = { ...parsed, type: 'set_global' };
 
       const isRoot = indent === 0 && ROOT_INDENT_TYPES.has(parsed.type);
 
@@ -3378,6 +3655,55 @@ export default function App() {
     }
 
     return stacks.length > 0 ? stacks : null;
+  }, []);
+
+  const mergeLibraryStacks = useCallback((prevStacks, incomingStacks) => {
+    if (!Array.isArray(incomingStacks) || incomingStacks.length === 0) return prevStacks;
+    const result = [...prevStacks];
+
+    const rootKey = (stack) => {
+      const root = stack?.blocks?.[0];
+      if (!root) return '';
+      const p = root.props || {};
+      if (root.type === 'global') return `global:${p.varname || ''}`;
+      if (root.type === 'command') return `command:${p.cmd || ''}`;
+      if (root.type === 'callback') return `callback:${p.label || ''}`;
+      if (root.type === 'block' || root.type === 'scenario') return `${root.type}:${p.name || ''}`;
+      return `${root.type}`;
+    };
+    const blockKey = (b) => `${b?.type || ''}:${JSON.stringify(b?.props || {})}`;
+
+    const rootIndex = new Map(result.map((s, i) => [rootKey(s), i]));
+    for (const stack of incomingStacks) {
+      const k = rootKey(stack);
+      const i = rootIndex.get(k);
+      if (i == null || !k) {
+        result.push(stack);
+        rootIndex.set(k, result.length - 1);
+        continue;
+      }
+      const target = result[i];
+      const seen = new Set((target.blocks || []).map(blockKey));
+      for (const b of (stack.blocks || [])) {
+        const bk = blockKey(b);
+        if (!seen.has(bk)) {
+          target.blocks.push({ ...b, id: uid() });
+          seen.add(bk);
+        }
+      }
+    }
+
+    // Удаляем повторы глобальных переменных по varname (синхронизация библиотек без дублей).
+    const seenGlobals = new Set();
+    return result.filter((stack) => {
+      const root = stack?.blocks?.[0];
+      if (root?.type !== 'global') return true;
+      const name = root?.props?.varname || '';
+      if (!name) return true;
+      if (seenGlobals.has(name)) return false;
+      seenGlobals.add(name);
+      return true;
+    });
   }, []);
 
   const applyCorrectedDSLCode = useCallback((code) => {
@@ -3862,7 +4188,115 @@ const EXAMPLE_FULL = `версия "1.0"
     использовать full_test_меню
 `
 
+  const buildModularProjectStacks = useCallback((token = '') => {
+    const stack = (x, y, blocks) => ({
+      id: uid(),
+      x,
+      y,
+      blocks: blocks.map(([type, props]) => ({ id: uid(), type, props })),
+    });
+
+    return [
+      stack(40, 20, [['version', { version: '1.0' }]]),
+      stack(250, 20, [['bot', { token }]]),
+      stack(460, 20, [['global', { varname: 'товары', value: '[]' }]]),
+      stack(670, 20, [['global', { varname: 'пользователи', value: '[]' }]]),
+      stack(880, 20, [['global', { varname: 'админы', value: '[123456789]' }]]),
+      stack(1090, 20, [['global', { varname: 'настройки', value: '["валюта:RUB", "доставка:самовывоз"]' }]]),
+
+      stack(40, 170, [
+        ['start', {}],
+        ['goto', { target: 'проверка_админа' }],
+      ]),
+      stack(250, 170, [
+        ['command', { cmd: 'menu' }],
+        ['goto', { target: 'главное_меню' }],
+      ]),
+      stack(460, 170, [
+        ['command', { cmd: 'catalog' }],
+        ['goto', { target: 'каталог_товаров' }],
+      ]),
+
+      stack(40, 330, [
+        ['scenario', { name: 'проверка_админа' }],
+        ['step', { name: 'проверка' }],
+        ['condition', { cond: 'пользователь.id в админы' }],
+        ['goto', { target: 'главное_меню' }],
+        ['else', {}],
+        ['message', { text: '❌ У вас нет прав администратора' }],
+        ['stop', {}],
+      ]),
+
+      stack(360, 330, [
+        ['scenario', { name: 'главное_меню' }],
+        ['step', { name: 'старт' }],
+        ['message', {
+          text: 'Выберите действие:',
+          buttons: '➕ Добавить товар → добавить_товар\n📦 Каталог товаров → каталог_товаров\n🔧 Настройки → настройки',
+        }],
+        ['stop', {}],
+      ]),
+
+      stack(700, 330, [
+        ['scenario', { name: 'добавить_товар' }],
+        ['step', { name: 'название' }],
+        ['ask', { question: '📦 Название товара:', varname: 'название' }],
+        ['step', { name: 'цена' }],
+        ['ask', { question: '💰 Цена:', varname: 'цена' }],
+        ['step', { name: 'описание' }],
+        ['ask', { question: '📝 Описание:', varname: 'описание' }],
+        ['step', { name: 'сохранение' }],
+        ['set_global', {
+          varname: 'товары',
+          value: 'добавить(товары, "📦 " + название + "\\n💰 " + цена + "₽\\n📝 " + описание)',
+        }],
+        ['message', {
+          text: '✅ Товар добавлен',
+          buttons: '➕ Добавить ещё → добавить_товар\n🏠 Главное меню → главное_меню',
+        }],
+        ['stop', {}],
+      ]),
+
+      stack(1040, 330, [
+        ['scenario', { name: 'каталог_товаров' }],
+        ['step', { name: 'показать_каталог' }],
+        ['condition', { cond: 'не товары' }],
+        ['message', { text: '📭 Каталог пуст' }],
+        ['message', { text: 'Добавьте первый товар.', buttons: '➕ Добавить товар → добавить_товар\n🏠 Главное меню → главное_меню' }],
+        ['stop', {}],
+        ['loop', { mode: 'foreach', var: 'товар', collection: 'товары', _afterScope: true }],
+        ['message', { text: '{товар}' }],
+        ['message', {
+          text: 'Действия с каталогом:',
+          buttons: '🏠 Главное меню → главное_меню\n➕ Добавить товар → добавить_товар',
+          _afterScope: true,
+        }],
+        ['stop', {}],
+      ]),
+
+      stack(1380, 330, [
+        ['scenario', { name: 'настройки' }],
+        ['step', { name: 'старт' }],
+        ['message', {
+          text: '🔧 Настройки проекта:\n{настройки}',
+          buttons: '🏠 Главное меню → главное_меню\n📦 Каталог товаров → каталог_товаров',
+        }],
+        ['stop', {}],
+      ]),
+    ];
+  }, []);
+
   const loadExampleFromFile = useCallback((exampleName) => {
+    if (exampleName === 'modular') {
+      seq = 1;
+      const userTestToken = (currentUser?.test_token || '').trim();
+      setStacks(buildModularProjectStacks(userTestToken));
+      setSelectedBlockId(null);
+      setSelectedStackId(null);
+      setProjectName('Модульный проект');
+      return;
+    }
+
     const examples = {
       echo: EXAMPLE_ECHO,
       shop: EXAMPLE_SHOP,
@@ -3902,7 +4336,7 @@ const EXAMPLE_FULL = `версия "1.0"
     setSelectedBlockId(null);
     setSelectedStackId(null);
     setProjectName(exampleName === 'echo' ? 'Эхо Бот' : exampleName === 'shop' ? 'Магазин Бот' : exampleName === 'fullTest' ? 'Full Test' : 'Все Функции');
-  }, [parseDSL, showToast, currentUser]);
+  }, [parseDSL, showToast, currentUser, buildModularProjectStacks]);
 
   const startFirstWowFlow = useCallback(() => {
     loadExampleFromFile('echo');
@@ -5126,7 +5560,7 @@ const EXAMPLE_FULL = `версия "1.0"
             <ModuleLibraryButton t={builderUi} lang={uiLang} currentUser={currentUser} dataTour="top-library-desktop" onInsert={(code) => {
               const parsed = parseDSL(code);
               if (parsed) {
-                setStacks(prev => [...prev, ...parsed]);
+                setStacks(prev => mergeLibraryStacks(prev, parsed));
                 showToast(builderUi.libInsertSuccess, 'success');
               }
             }} />
@@ -5465,7 +5899,7 @@ const EXAMPLE_FULL = `версия "1.0"
           onInsert={(code) => {
             const parsed = parseDSL(code);
             if (parsed) {
-              setStacks(prev => [...prev, ...parsed]);
+              setStacks(prev => mergeLibraryStacks(prev, parsed));
               showToast(builderUi.libInsertSuccess, 'success');
             }
             setShowLibrary(false);
@@ -5958,7 +6392,7 @@ const EXAMPLE_FULL = `версия "1.0"
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            {[['echo', builderUi.examplesEcho], ['shop', builderUi.examplesShop], ['full', builderUi.examplesFull], ['fullTest', builderUi.examplesFullTest]].map(([key, label], i, arr) => (
+            {[['echo', builderUi.examplesEcho], ['shop', builderUi.examplesShop], ['modular', builderUi.examplesModular], ['full', builderUi.examplesFull], ['fullTest', builderUi.examplesFullTest]].map(([key, label], i, arr) => (
               <button
                 key={key}
                 type="button"
@@ -6049,8 +6483,8 @@ const EXAMPLE_FULL = `версия "1.0"
         </div>
         )}
 
-        {/* Canvas — hidden on mobile unless canvas tab */}
-        {(isMobileView && mobileTab !== 'canvas') ? null : (
+        {/* Canvas — hidden on mobile unless canvas tab (or DSL bottom sheet overlays it) */}
+        {(isMobileView && mobileTab !== 'canvas' && mobileTab !== 'dsl') ? null : (
         <div
           ref={canvasRef}
           data-tour="canvas-area"
@@ -6059,7 +6493,7 @@ const EXAMPLE_FULL = `версия "1.0"
             position:'relative', overflow:'hidden',
             cursor: canvasDrag ? 'grabbing' : 'default',
             background: 'linear-gradient(160deg, #06030f 0%, #0a0518 50%, #080615 100%)',
-            ...(isMobileView ? { gridColumn: '1', display: mobileTab === 'canvas' ? 'block' : 'none' } : {}),
+            ...(isMobileView ? { gridColumn: '1', display: (mobileTab === 'canvas' || mobileTab === 'dsl') ? 'block' : 'none' } : {}),
           }}
           onMouseDown={handleCanvasMouseDown}
           onTouchStart={e => {
@@ -6315,11 +6749,24 @@ const EXAMPLE_FULL = `версия "1.0"
           display:'flex', flexDirection:'column',
           borderLeft: isMobileView ? 'none' : '1px solid rgba(99,102,241,0.2)', overflow:'hidden',
           background: 'linear-gradient(180deg, #0d0920 0%, #080618 100%)',
-          boxShadow: isMobileView ? 'none' : '-4px 0 24px rgba(0,0,0,0.4)',
+          boxShadow: isMobileView
+            ? (mobileTab === 'dsl' ? '0 -10px 34px rgba(0,0,0,0.58)' : 'none')
+            : '-4px 0 24px rgba(0,0,0,0.4)',
           minWidth: 0,
           position: 'relative',
           zIndex: 2,
-          ...(isMobileView ? { gridColumn: '1', position: 'absolute', top: 0, left: 0, right: 0, bottom: 56, zIndex: 6 } : {}),
+          ...(isMobileView ? {
+            gridColumn: '1',
+            position: 'absolute',
+            top: mobileTab === 'dsl' && !dslPaneExpanded ? '50%' : 0,
+            left: 0,
+            right: 0,
+            bottom: 56,
+            zIndex: mobileTab === 'dsl' ? 80 : 6,
+            borderTop: mobileTab === 'dsl' ? '1px solid rgba(99,102,241,0.3)' : undefined,
+            borderRadius: mobileTab === 'dsl' && !dslPaneExpanded ? '16px 16px 0 0' : 0,
+            transition: 'top 0.22s ease, border-radius 0.22s ease',
+          } : {}),
         }}
         data-tour={!isMobileView ? 'props-panel-desktop' : undefined}>
           {(!isMobileView || mobileTab === 'props') && (
@@ -6331,12 +6778,19 @@ const EXAMPLE_FULL = `версия "1.0"
                 display:'flex', alignItems:'center', gap:6,
               }}><span style={{ color:'#06b6d4', fontSize:11 }}>✏</span> {builderUi.propsHeader}</div>
               <div style={{ flex: isMobileView ? 1 : '1', minHeight:0, display:'flex', flexDirection:'column', overflow:'hidden' }}>
-                <PropsPanel block={selectedBlock} onChange={handlePropChange} />
+                <PropsPanel block={selectedBlock} onChange={handlePropChange} stacks={stacks} />
               </div>
             </>
           )}
           {canSeeCode && (!isMobileView || mobileTab === 'dsl') && (
-            <DSLPane stacks={stacks} isMobile={isMobileView} onApplyCorrectedCode={applyCorrectedDSLCode} />
+            <DSLPane
+              stacks={stacks}
+              isMobile={isMobileView}
+              isExpanded={dslPaneExpanded}
+              onToggleExpanded={() => setDslPaneExpanded(v => !v)}
+              onClose={isMobileView ? () => setMobileTab('canvas') : undefined}
+              onApplyCorrectedCode={applyCorrectedDSLCode}
+            />
           )}
         </div>
         )}
@@ -6363,7 +6817,14 @@ const EXAMPLE_FULL = `версия "1.0"
             <button
               key={tab.key}
               data-tour={tab.key === 'canvas' ? 'mobile-tab-canvas' : tab.key === 'blocks' ? 'mobile-tab-blocks' : tab.key === 'props' ? 'mobile-tab-props' : tab.key === 'dsl' ? 'mobile-tab-dsl' : undefined}
-              onClick={() => setMobileTab(tab.key)}
+              onClick={() => {
+                if (tab.key === 'dsl') {
+                  setDslPaneExpanded(false);
+                  setMobileTab(prev => prev === 'dsl' ? 'canvas' : 'dsl');
+                  return;
+                }
+                setMobileTab(tab.key);
+              }}
               className={`editor-mobile-tab${mobileTab === tab.key ? ' active' : ''}`}
             >
               <span className="tab-icon">{tab.icon}</span>

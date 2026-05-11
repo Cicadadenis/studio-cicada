@@ -112,6 +112,13 @@ function analyzeBodyUiState(nodes, errors, ctx = { scope: 'body' }) {
     }
   }
 
+  const isClickScope = /^при\s+нажатии\s+/i.test(String(ctx.scope || '').trim());
+  if (isClickScope && state.messages.length === 0 && !state.buttons) {
+    errors.push(
+      `❌ ${ctx.scope}: UI_STATE_INVALID: обработчик нажатия не формирует UI (нет «ответ» и «кнопки»)`,
+    );
+  }
+
   return state;
 }
 

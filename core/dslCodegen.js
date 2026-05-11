@@ -193,6 +193,104 @@ function emitInline(p) {
   return out.join('\n');
 }
 
+function stripRouteQuotes(value) {
+  return String(value || '').trim().replace(/^["«]+/, '').replace(/["»]+$/, '').trim();
+}
+
+function targetFromButtonLabel(label) {
+  return String(label || '')
+    .replace(/[^\p{L}\p{N}\s_/-]+/gu, ' ')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '_');
+}
+
+function safeCallbackIdPart(value) {
+  return String(value || 'btn')
+    .replace(/[^A-Za-z0-9_]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 32) || 'btn';
+}
+
+function autoMessageButtonCallback(block, index) {
+  return `__msgbtn_${safeCallbackIdPart(block?.id || block?.props?.text)}_${index}`;
+}
+
+function parseMessageButtonRouteRows(rawButtons) {
+  const raw = String(rawButtons || '').trim();
+  if (!raw) return [];
+
+  let seq = 0;
+  const rows = [];
+  for (const line of raw.split('\n')) {
+    const cells = line.split(',').map((x) => x.trim()).filter(Boolean);
+    const row = [];
+    for (const cell of cells) {
+      const m = cell.match(/^(.*?)\s*(?:->|=>|→|\|)\s*(.+)$/);
+      const label = stripRouteQuotes(m ? m[1] : cell);
+      const target = stripRouteQuotes(m ? m[2] : targetFromButtonLabel(label));
+      if (!label || !target) continue;
+      row.push({ label, target, index: seq });
+      seq += 1;
+    }
+    if (row.length) rows.push(row);
+  }
+  return rows;
+}
+
+function emitMessageWithLocalButtons(block, p) {
+  const message = p.md ? `ответ_md ${q(p.text || '')}` : `ответ ${q(p.text || '')}`;
+  const rows = parseMessageButtonRouteRows(p.buttons);
+  if (!rows.length) return message;
+
+  const out = [message, 'inline-кнопки:'];
+  for (const row of rows) {
+    const cells = row.map((btn) => `${q(btn.label)} ${ARROW} ${q(autoMessageButtonCallback(block, btn.index))}`);
+    out.push(`    [${cells.join(', ')}]`);
+  }
+  return out.join('\n');
+}
+
+function collectDeclaredBlockNames(stacks) {
+  return new Set(
+    (stacks || [])
+      .map((stack) => stack?.blocks?.[0])
+      .filter((block) => block?.type === 'block')
+      .map((block) => String(block?.props?.name || '').trim())
+      .filter(Boolean),
+  );
+}
+
+function autoButtonTargetStatement(target, declaredBlocks) {
+  const t = stripRouteQuotes(target);
+  if (!t) return '';
+  if (declaredBlocks.has(t)) return `использовать ${t}`;
+  return emitBlockText({ type: 'goto', props: { target: t } });
+}
+
+function emitAutoMessageButtonHandlers(stacks) {
+  const declaredBlocks = collectDeclaredBlockNames(stacks);
+  const out = [];
+
+  for (const stack of stacks || []) {
+    for (const block of stack?.blocks || []) {
+      if (block?.type !== 'message') continue;
+      const rows = parseMessageButtonRouteRows(block?.props?.buttons);
+      for (const row of rows) {
+        for (const btn of row) {
+          const action = autoButtonTargetStatement(btn.target, declaredBlocks);
+          if (!action) continue;
+          out.push(`при нажатии ${q(autoMessageButtonCallback(block, btn.index))}:`);
+          out.push(`    ${action}`);
+        }
+      }
+    }
+  }
+
+  return out.join('\n');
+}
+
 function emitRandom(p) {
   const v = String(p.variants || '')
     .split('\n')
@@ -287,6 +385,8 @@ export function emitBlockText(block) {
       return `бот ${q(String(p.token || '').trim() || 'YOUR_BOT_TOKEN')}`;
     case 'global':
       return `глобально ${p.varname} = ${dslAssignRhs(p.value)}`;
+    case 'set_global':
+      return `глобально ${p.varname} = ${dslAssignRhs(p.value)}`;
     case 'commands': {
       const out = ['команды:'];
       const cmdText = String(p.commands || '').trim();
@@ -346,7 +446,7 @@ export function emitBlockText(block) {
       return `если ${cond}:`;
     }
     case 'message':
-      return p.md ? `ответ_md ${q(p.text || '')}` : `ответ ${q(p.text || '')}`;
+      return emitMessageWithLocalButtons(block, p);
     case 'use':
       return `использовать ${p.blockname || ''}`;
     case 'run':
@@ -680,7 +780,9 @@ export function stackToDSL(stack) {
 }
 
 export function generateDSLFromStacks(stacks) {
-  return (stacks || []).map(stackToDSL).filter(Boolean).join('\n\n');
+  const body = (stacks || []).map(stackToDSL).filter(Boolean).join('\n\n');
+  const autoHandlers = emitAutoMessageButtonHandlers(stacks);
+  return [body, autoHandlers].filter(Boolean).join('\n\n');
 }
 
 export const emitBlock = emitBlockText;

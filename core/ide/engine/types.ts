@@ -35,7 +35,9 @@ export interface SymbolInfo { readonly id: string; readonly name: string; readon
 export interface SemanticModel { readonly symbols: ReadonlyMap<string, SymbolInfo>; readonly references: ReadonlyMap<NodeId, readonly string[]>; readonly transitions: ReadonlyMap<string, readonly string[]>; readonly dependencyGraph: DependencyGraph }
 export interface SemanticDiagnostic { readonly code: string; readonly message: string; readonly severity: 'error'|'warning'|'info'; readonly nodeId: NodeId }
 
-export interface WorkspaceSnapshot { readonly snapshotId: SnapshotId; readonly parse: ParseSnapshot; readonly semantic: SemanticModel; readonly diagnostics: readonly SemanticDiagnostic[]; readonly createdAt: number }
+export interface Suggestion { readonly id: string; readonly kind: 'create-button-handler'|'remove-orphan-handler'|'rename-button-sync'|'remove-button-handler'; readonly title: string; readonly description: string; readonly targetNodeId: NodeId; readonly stableKey: string }
+
+export interface WorkspaceSnapshot { readonly snapshotId: SnapshotId; readonly parse: ParseSnapshot; readonly semantic: SemanticModel; readonly diagnostics: readonly SemanticDiagnostic[]; readonly suggestions: readonly Suggestion[]; readonly createdAt: number }
 
 export interface LspSemanticToken { readonly line: number; readonly startChar: number; readonly length: number; readonly tokenType: 'keyword'|'function'|'variable'|'string'|'operator' }
 export interface HoverResult { readonly contents: string; readonly range: TextRange }

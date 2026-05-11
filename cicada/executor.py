@@ -10,6 +10,7 @@ import json as _json
 import datetime as _dt
 import os as _os
 import re
+from urllib.parse import quote as _url_quote
 import requests
 
 from cicada.parser import (
@@ -213,7 +214,7 @@ def register_func(name: str, fn) -> None:
 _BUILTIN_FUNCS = {
     # строковые
     "содержит", "длина", "начинается_с", "верхний", "нижний",
-    "обрезать", "разделить", "соединить",
+    "обрезать", "разделить", "соединить", "urlencode", "url_encode", "кодировать_url",
     # новые строковые
     "заменить", "найти", "срез",
     # типизация
@@ -595,6 +596,8 @@ def _call_builtin(name: str, args: list):
         sep   = str(args[0]) if args else ""
         items = args[1] if len(args) > 1 else []
         return sep.join(str(i) for i in (items if isinstance(items, list) else [items]))
+    if name in ("urlencode", "url_encode", "кодировать_url"):
+        return _url_quote(str(args[0]) if args else "", safe="")
 
     # типизация — старые
     if name == "число":
