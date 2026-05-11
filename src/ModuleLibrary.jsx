@@ -2934,6 +2934,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
 
   return (
     <div
+      className="neo-lib-overlay"
       style={{
         position: "fixed", inset: 0,
         background: "rgba(0,0,0,0.75)",
@@ -2946,7 +2947,239 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
       }}
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div style={{
+      <style>{`
+        @keyframes neoLibIn {
+          from { opacity: 0; transform: translateY(16px) scale(0.97); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+
+        .neo-lib-overlay {
+          background:
+            radial-gradient(circle at 20% 12%, rgba(37, 99, 235, 0.32), transparent 34%),
+            radial-gradient(circle at 82% 18%, rgba(168, 85, 247, 0.34), transparent 35%),
+            radial-gradient(circle at 52% 84%, rgba(14, 165, 233, 0.22), transparent 38%),
+            rgba(5, 4, 18, 0.82) !important;
+          backdrop-filter: blur(16px) saturate(130%) !important;
+        }
+
+        .neo-lib-shell {
+          position: relative;
+          isolation: isolate;
+          background:
+            linear-gradient(145deg, rgba(18, 14, 54, 0.9), rgba(13, 10, 37, 0.86) 48%, rgba(8, 8, 26, 0.94)),
+            rgba(10, 8, 30, 0.92) !important;
+          border: 1px solid rgba(123, 92, 255, 0.58) !important;
+          border-radius: 24px !important;
+          box-shadow:
+            0 34px 120px rgba(0, 0, 0, 0.78),
+            0 0 80px rgba(80, 70, 255, 0.28),
+            inset 0 0 0 1px rgba(255, 255, 255, 0.05) !important;
+          animation: neoLibIn 0.24s cubic-bezier(0.34, 1.25, 0.64, 1) both;
+        }
+
+        .neo-lib-shell::before {
+          content: "";
+          position: absolute;
+          inset: 0;
+          z-index: 0;
+          pointer-events: none;
+          background:
+            radial-gradient(circle at 25% 4%, rgba(45, 212, 191, 0.28), transparent 20%),
+            radial-gradient(circle at 92% 0%, rgba(168, 85, 247, 0.34), transparent 24%),
+            linear-gradient(90deg, rgba(34, 211, 238, 0.08), transparent 25%, rgba(168, 85, 247, 0.12));
+        }
+
+        .neo-lib-shell > * {
+          position: relative;
+          z-index: 1;
+        }
+
+        .neo-lib-header {
+          background: linear-gradient(180deg, rgba(35, 22, 86, 0.72), rgba(17, 12, 48, 0.36)) !important;
+          border-bottom: 1px solid rgba(121, 98, 255, 0.28) !important;
+        }
+
+        .neo-lib-close {
+          width: 34px !important;
+          height: 34px !important;
+          border-radius: 12px !important;
+          background: rgba(255, 255, 255, 0.06) !important;
+          border: 1px solid rgba(255, 255, 255, 0.16) !important;
+          color: rgba(255, 255, 255, 0.72) !important;
+          box-shadow: inset 0 0 18px rgba(139, 92, 246, 0.12) !important;
+        }
+
+        .neo-lib-close:hover {
+          border-color: rgba(248, 113, 113, 0.78) !important;
+          color: #fecaca !important;
+          background: rgba(248, 113, 113, 0.13) !important;
+        }
+
+        .neo-lib-tabs { gap: 8px !important; }
+
+        .neo-lib-tab {
+          min-height: 38px;
+          border-radius: 12px !important;
+          background: rgba(72, 48, 170, 0.28) !important;
+          border: 1px solid rgba(99, 102, 241, 0.36) !important;
+          color: rgba(235, 230, 255, 0.68) !important;
+          box-shadow: inset 0 0 22px rgba(99, 102, 241, 0.11) !important;
+        }
+
+        .neo-lib-tab-active {
+          background: linear-gradient(135deg, rgba(251, 191, 36, 0.18), rgba(168, 85, 247, 0.18)) !important;
+          border-color: rgba(251, 191, 36, 0.75) !important;
+          color: #ffe86a !important;
+          box-shadow: 0 0 24px rgba(251, 191, 36, 0.2), inset 0 0 24px rgba(251, 191, 36, 0.08) !important;
+        }
+
+        .neo-lib-tab span {
+          background: rgba(255, 255, 255, 0.13) !important;
+        }
+
+        .neo-lib-search-wrap,
+        .neo-lib-toolbar {
+          background: rgba(10, 8, 34, 0.28) !important;
+          border-bottom: 1px solid rgba(111, 92, 255, 0.22) !important;
+        }
+
+        .neo-lib-search {
+          min-height: 38px;
+          border-radius: 12px !important;
+          background: rgba(23, 16, 71, 0.58) !important;
+          border: 1px solid rgba(99, 102, 241, 0.35) !important;
+          box-shadow: inset 0 0 18px rgba(59, 130, 246, 0.14), 0 0 20px rgba(99, 102, 241, 0.08) !important;
+        }
+
+        .neo-lib-search:focus {
+          border-color: rgba(96, 165, 250, 0.72) !important;
+          box-shadow: inset 0 0 18px rgba(59, 130, 246, 0.18), 0 0 24px rgba(59, 130, 246, 0.22) !important;
+        }
+
+        .neo-lib-body {
+          background:
+            radial-gradient(circle at 78% 18%, rgba(168, 85, 247, 0.14), transparent 34%),
+            radial-gradient(circle at 34% 12%, rgba(14, 165, 233, 0.12), transparent 32%) !important;
+        }
+
+        .neo-lib-sidebar {
+          width: 220px !important;
+          background: linear-gradient(180deg, rgba(18, 12, 54, 0.5), rgba(9, 8, 30, 0.32)) !important;
+          border-right: 1px solid rgba(111, 92, 255, 0.24) !important;
+        }
+
+        .neo-lib-cat {
+          border-left: 2px solid transparent !important;
+          color: rgba(235, 230, 255, 0.64) !important;
+        }
+
+        .neo-lib-cat:hover {
+          background: rgba(99, 102, 241, 0.1) !important;
+          color: rgba(255, 255, 255, 0.86) !important;
+        }
+
+        .neo-lib-cat-active {
+          background: linear-gradient(90deg, rgba(59, 130, 246, 0.2), rgba(168, 85, 247, 0.08)) !important;
+          border-left-color: #22d3ee !important;
+          color: #e0f2fe !important;
+          box-shadow: inset 10px 0 22px rgba(34, 211, 238, 0.08) !important;
+        }
+
+        .neo-lib-card,
+        .neo-lib-library-card,
+        .neo-lib-snippet-card {
+          position: relative;
+          overflow: hidden;
+          background: linear-gradient(135deg, rgba(23, 17, 68, 0.74), rgba(25, 10, 58, 0.58)) !important;
+          border: 1px solid rgba(90, 118, 255, 0.32) !important;
+          border-radius: 14px !important;
+          box-shadow: inset 0 0 22px rgba(59, 130, 246, 0.08), 0 10px 24px rgba(0, 0, 0, 0.18) !important;
+        }
+
+        .neo-lib-card::before,
+        .neo-lib-snippet-card::before,
+        .neo-lib-library-card::before {
+          content: "";
+          position: absolute;
+          inset: 0 auto auto 0;
+          width: 54%;
+          height: 1px;
+          background: linear-gradient(90deg, rgba(34, 211, 238, 0.9), transparent);
+          opacity: 0.75;
+        }
+
+        .neo-lib-card:hover,
+        .neo-lib-snippet-card:hover,
+        .neo-lib-library-card:hover {
+          transform: translateY(-1px);
+          border-color: rgba(34, 211, 238, 0.55) !important;
+          box-shadow: inset 0 0 26px rgba(59, 130, 246, 0.12), 0 0 28px rgba(59, 130, 246, 0.16) !important;
+        }
+
+        .neo-lib-card-selected {
+          background: linear-gradient(135deg, rgba(251, 191, 36, 0.16), rgba(168, 85, 247, 0.22)) !important;
+          border-color: rgba(251, 191, 36, 0.72) !important;
+          box-shadow: inset 0 0 28px rgba(251, 191, 36, 0.1), 0 0 32px rgba(168, 85, 247, 0.22) !important;
+        }
+
+        .neo-lib-insert-bar {
+          background: linear-gradient(180deg, rgba(11, 8, 33, 0.34), rgba(5, 4, 18, 0.66)) !important;
+          border-top: 1px solid rgba(121, 98, 255, 0.3) !important;
+        }
+
+        .neo-lib-code-preview {
+          background: rgba(4, 6, 22, 0.78) !important;
+          border: 1px solid rgba(96, 165, 250, 0.24) !important;
+          box-shadow: inset 0 0 22px rgba(34, 211, 238, 0.08) !important;
+        }
+
+        .neo-lib-primary-btn {
+          box-shadow: 0 0 24px rgba(251, 191, 36, 0.32), inset 0 0 12px rgba(255, 255, 255, 0.18) !important;
+        }
+
+        .neo-lib-primary-btn:hover {
+          transform: translateY(-1px);
+          filter: saturate(1.15);
+        }
+
+        .neo-lib-sub-overlay {
+          background: rgba(4, 3, 16, 0.78) !important;
+          backdrop-filter: blur(14px) saturate(120%) !important;
+        }
+
+        .neo-lib-sub-shell {
+          background: linear-gradient(145deg, rgba(18, 14, 54, 0.94), rgba(8, 8, 26, 0.96)) !important;
+          border-color: rgba(123, 92, 255, 0.46) !important;
+          box-shadow: 0 24px 80px rgba(0,0,0,0.72), 0 0 50px rgba(99,102,241,0.2) !important;
+        }
+
+        .neo-lib-sub-shell input,
+        .neo-lib-sub-shell textarea {
+          background: rgba(23, 16, 71, 0.58) !important;
+          border-color: rgba(99, 102, 241, 0.35) !important;
+        }
+
+        .neo-lib-dropdown-btn {
+          background: rgba(23, 16, 71, 0.58) !important;
+          border-color: rgba(99, 102, 241, 0.4) !important;
+          box-shadow: inset 0 0 18px rgba(59, 130, 246, 0.12) !important;
+        }
+
+        .neo-lib-dropdown-list {
+          background: rgba(12, 9, 38, 0.96) !important;
+          border-color: rgba(123, 92, 255, 0.45) !important;
+          box-shadow: 0 20px 60px rgba(0,0,0,0.7), 0 0 36px rgba(99,102,241,0.22) !important;
+        }
+
+        @media (max-width: 640px) {
+          .neo-lib-shell {
+            border-radius: 22px 22px 0 0 !important;
+          }
+          .neo-lib-sidebar { width: 100% !important; }
+        }
+      `}</style>
+
+      <div className="neo-lib-shell" style={{
         background: "#111114",
         border: isMobile ? "none" : "1px solid rgba(255,255,255,0.1)",
         borderRadius: isMobile ? "18px 18px 0 0" : 18,
@@ -2961,7 +3194,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
       }}>
 
         {/* Header */}
-        <div style={{
+        <div className="neo-lib-header" style={{
           padding: isMobile ? "14px 14px 10px" : "18px 24px 14px",
           borderBottom: "1px solid rgba(255,255,255,0.07)",
           flexShrink: 0,
@@ -2971,19 +3204,21 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
               {t.libModalHeadline}
             </div>
             <button
+              className="neo-lib-close"
               style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.1)", color:"rgba(255,255,255,0.6)", borderRadius:8, width:30, height:30, cursor:"pointer", fontSize:15, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}
               onClick={onClose}
             >✕</button>
           </div>
 
           {/* Tab switcher */}
-          <div style={{ display:"flex", gap:6 }}>
+          <div className="neo-lib-tabs" style={{ display:"flex", gap:6 }}>
             {[
               { id:"builtin", label: t.libTabBuiltin, count: totalModules },
               { id:"mine",    label: t.libTabMine,     count: totalSnippets },
             ].map(tb => (
               <button
                 key={tb.id}
+                className={`neo-lib-tab ${tab === tb.id ? 'neo-lib-tab-active' : ''}`}
                 onClick={() => { setTab(tb.id); setSelected(null); setSelectedItem(null); }}
                 style={{
                   flex:1, padding: isMobile ? "8px 6px" : "8px 14px",
@@ -3009,8 +3244,9 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
 
         {/* Search — only for builtin */}
         {tab === "builtin" && (
-          <div style={{ padding: isMobile ? "10px 12px" : "12px 24px", borderBottom:"1px solid rgba(255,255,255,0.06)", flexShrink:0 }}>
+          <div className="neo-lib-search-wrap" style={{ padding: isMobile ? "10px 12px" : "12px 24px", borderBottom:"1px solid rgba(255,255,255,0.06)", flexShrink:0 }}>
             <input
+              className="neo-lib-search"
               style={{ width:"100%", background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:10, padding:"9px 14px", color:"#fff", fontSize:13, fontFamily:"inherit", outline:"none", boxSizing:"border-box" }}
               placeholder={t.libSearchPlaceholder}
               value={search}
@@ -3024,7 +3260,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
           <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column" }}>
 
             {/* Toolbar */}
-            <div style={{ padding: isMobile ? "10px 12px" : "12px 20px", borderBottom:"1px solid rgba(255,255,255,0.06)", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
+            <div className="neo-lib-toolbar" style={{ padding: isMobile ? "10px 12px" : "12px 20px", borderBottom:"1px solid rgba(255,255,255,0.06)", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
               <div style={{ fontSize:12, color:"rgba(255,255,255,0.35)" }}>
                 {!isPro && (
                   <span>
@@ -3038,6 +3274,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
                 {isPro && <span style={{ color:"#3ecf8e", fontWeight:600 }}>{t.libProUnlimited}</span>}
               </div>
               <button
+                className="neo-lib-primary-btn"
                 onClick={() => {
                   if (!currentUser) { alert(t.libAlertLogin); return; }
                   if (!isPro && libraries.length >= LIMIT) {
@@ -3080,7 +3317,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
               {libraries.map((lib) => {
                 const isOpen = expandedLib === lib.id;
                 return (
-                  <div key={lib.id} style={{ marginBottom:10, background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:14, overflow:"hidden" }}>
+                  <div key={lib.id} className="neo-lib-library-card" style={{ marginBottom:10, background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:14, overflow:"hidden" }}>
                     {/* Library header */}
                     <div
                       style={{ padding: isMobile ? "12px 14px" : "13px 16px", display:"flex", alignItems:"center", gap:10, cursor:"pointer" }}
@@ -3110,6 +3347,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
                             return (
                               <div key={item.id}
                                 onClick={() => setSelectedItem(sel ? null : {...item})}
+                                className={`neo-lib-snippet-card ${sel ? 'neo-lib-card-selected' : ''}`}
                                 style={{ background: sel ? "rgba(255,215,0,0.08)" : "rgba(255,255,255,0.03)", border:`1px solid ${sel ? "rgba(255,215,0,0.4)" : "rgba(255,255,255,0.07)"}`, borderRadius:10, padding:"10px 12px", cursor:"pointer", position:"relative" }}
                               >
                                 <div style={{ fontSize:12, fontWeight:700, color:"#fff", fontFamily:"Syne,system-ui", marginBottom:3, paddingRight:20 }}>{item.name}</div>
@@ -3120,7 +3358,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
                                   title={t.libDeleteSnippetHint}
                                 >✕</button>
                                 {isMobile && sel && (
-                                  <button onClick={(e) => { e.stopPropagation(); onInsert(item.code); onClose(); }}
+                                  <button className="neo-lib-primary-btn" onClick={(e) => { e.stopPropagation(); onInsert(item.code); onClose(); }}
                                     style={{ marginTop:8, width:"100%", padding:"9px", background:"linear-gradient(135deg,#ffd700,#ffaa00)", border:"none", borderRadius:8, color:"#111", fontWeight:800, fontFamily:"Syne,system-ui", fontSize:12, cursor:"pointer" }}
                                   >{t.libInsert}</button>
                                 )}
@@ -3129,6 +3367,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
                           })}
                         </div>
                         <button
+                          className="neo-lib-primary-btn"
                           onClick={(e) => { e.stopPropagation(); setShowAddSnippet(lib.id); setSnipName(""); setSnipDesc(""); setSnipCode(""); setSnipError(""); }}
                           style={{ padding:"7px 14px", borderRadius:8, fontSize:12, fontWeight:600, fontFamily:"Syne,system-ui", background:"rgba(62,207,142,0.08)", color:"#3ecf8e", border:"1px solid rgba(62,207,142,0.2)", cursor:"pointer" }}
                         >{t.libAddSnippetBtn}</button>
@@ -3141,9 +3380,10 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
 
             {/* Desktop insert bar */}
             {!isMobile && selectedItem && (
-              <div style={{ borderTop:"1px solid rgba(255,255,255,0.07)", padding:"14px 20px", flexShrink:0, background:"rgba(0,0,0,0.3)", display:"flex", gap:12, alignItems:"flex-end" }}>
-                <div style={{ flex:1, background:"#0d0d0f", border:"1px solid rgba(255,255,255,0.08)", borderRadius:10, padding:"10px 14px", fontFamily:"monospace", fontSize:11, color:"rgba(255,255,255,0.55)", maxHeight:110, overflowY:"auto", whiteSpace:"pre" }}>{selectedItem.code}</div>
+              <div className="neo-lib-insert-bar" style={{ borderTop:"1px solid rgba(255,255,255,0.07)", padding:"14px 20px", flexShrink:0, background:"rgba(0,0,0,0.3)", display:"flex", gap:12, alignItems:"flex-end" }}>
+                <div className="neo-lib-code-preview" style={{ flex:1, background:"#0d0d0f", border:"1px solid rgba(255,255,255,0.08)", borderRadius:10, padding:"10px 14px", fontFamily:"monospace", fontSize:11, color:"rgba(255,255,255,0.55)", maxHeight:110, overflowY:"auto", whiteSpace:"pre" }}>{selectedItem.code}</div>
                 <button
+                  className="neo-lib-primary-btn"
                   style={{ background:"linear-gradient(135deg,#ffd700,#ffaa00)", border:"none", borderRadius:10, padding:"12px 22px", color:"#111", fontWeight:800, fontFamily:"Syne,system-ui", fontSize:13, cursor:"pointer", whiteSpace:"nowrap", boxShadow:"0 4px 16px rgba(255,215,0,0.35)", flexShrink:0 }}
                   onClick={handleInsert}
                 >{t.libInsertEditor}</button>
@@ -3154,9 +3394,9 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
 
         {/* ═══════════════ CREATE LIBRARY MODAL ═══════════════ */}
         {showCreateLib && (
-          <div style={{ position:"fixed", inset:0, zIndex:100, background:"rgba(0,0,0,0.7)", backdropFilter:"blur(4px)", display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}
+          <div className="neo-lib-sub-overlay" style={{ position:"fixed", inset:0, zIndex:100, background:"rgba(0,0,0,0.7)", backdropFilter:"blur(4px)", display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}
             onClick={() => setShowCreateLib(false)}>
-            <div style={{ background:"#1a1d24", border:"1px solid rgba(255,215,0,0.2)", borderRadius:18, padding:"24px", width:"100%", maxWidth:400, boxShadow:"0 20px 60px rgba(0,0,0,0.8)" }}
+            <div className="neo-lib-sub-shell" style={{ background:"#1a1d24", border:"1px solid rgba(255,215,0,0.2)", borderRadius:18, padding:"24px", width:"100%", maxWidth:400, boxShadow:"0 20px 60px rgba(0,0,0,0.8)" }}
               onClick={e => e.stopPropagation()}>
               <div style={{ fontSize:15, fontWeight:800, color:"#fff", fontFamily:"Syne,system-ui", marginBottom:16 }}>{t.libNewLibraryTitle}</div>
               <label style={{ display:"block", fontSize:10, fontWeight:700, color:"rgba(255,255,255,0.35)", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:6, fontFamily:"Syne,system-ui" }}>{t.libLabelNameReq}</label>
@@ -3172,6 +3412,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
                 <button onClick={() => setShowCreateLib(false)}
                   style={{ flex:1, padding:"10px", borderRadius:10, background:"rgba(255,255,255,0.05)", color:"rgba(255,255,255,0.5)", border:"1px solid rgba(255,255,255,0.1)", cursor:"pointer", fontSize:13 }}>{t.libCancel}</button>
                 <button onClick={handleCreateLib} disabled={createLoading || !newLibName.trim()}
+                  className="neo-lib-primary-btn"
                   style={{ flex:2, padding:"10px", borderRadius:10, background: newLibName.trim() ? "linear-gradient(135deg,#3ecf8e,#0ea5e9)" : "rgba(255,255,255,0.05)", color: newLibName.trim() ? "#0a0a0a" : "rgba(255,255,255,0.3)", border:"none", cursor: newLibName.trim() ? "pointer" : "not-allowed", fontSize:13, fontWeight:700, fontFamily:"Syne,system-ui" }}>
                   {createLoading ? t.libCreating : t.libCreate}</button>
               </div>
@@ -3181,9 +3422,9 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
 
         {/* ═══════════════ ADD SNIPPET MODAL ═══════════════ */}
         {showAddSnippet && (
-          <div style={{ position:"fixed", inset:0, zIndex:100, background:"rgba(0,0,0,0.7)", backdropFilter:"blur(4px)", display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}
+          <div className="neo-lib-sub-overlay" style={{ position:"fixed", inset:0, zIndex:100, background:"rgba(0,0,0,0.7)", backdropFilter:"blur(4px)", display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}
             onClick={() => setShowAddSnippet(null)}>
-            <div style={{ background:"#1a1d24", border:"1px solid rgba(62,207,142,0.2)", borderRadius:18, padding:"24px", width:"100%", maxWidth:480, maxHeight:"90vh", overflowY:"auto", boxShadow:"0 20px 60px rgba(0,0,0,0.8)" }}
+            <div className="neo-lib-sub-shell" style={{ background:"#1a1d24", border:"1px solid rgba(62,207,142,0.2)", borderRadius:18, padding:"24px", width:"100%", maxWidth:480, maxHeight:"90vh", overflowY:"auto", boxShadow:"0 20px 60px rgba(0,0,0,0.8)" }}
               onClick={e => e.stopPropagation()}>
               <div style={{ fontSize:15, fontWeight:800, color:"#fff", fontFamily:"Syne,system-ui", marginBottom:16 }}>{t.libNewSnippetTitle}</div>
               <div style={{marginBottom:12}}>
@@ -3207,6 +3448,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
                 <button onClick={() => setShowAddSnippet(null)}
                   style={{ flex:1, padding:"10px", borderRadius:10, background:"rgba(255,255,255,0.05)", color:"rgba(255,255,255,0.5)", border:"1px solid rgba(255,255,255,0.1)", cursor:"pointer", fontSize:13 }}>{t.libCancel}</button>
                 <button onClick={handleAddSnippet} disabled={snipLoading || !snipName.trim() || !snipCode.trim()}
+                  className="neo-lib-primary-btn"
                   style={{ flex:2, padding:"10px", borderRadius:10, background: (snipName.trim() && snipCode.trim()) ? "linear-gradient(135deg,#3ecf8e,#0ea5e9)" : "rgba(255,255,255,0.05)", color: (snipName.trim() && snipCode.trim()) ? "#0a0a0a" : "rgba(255,255,255,0.3)", border:"none", cursor: (snipName.trim() && snipCode.trim()) ? "pointer" : "not-allowed", fontSize:13, fontWeight:700, fontFamily:"Syne,system-ui" }}>
                   {snipLoading ? t.libSavingSnippet : t.libAddSnippet}</button>
               </div>
@@ -3224,6 +3466,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
             {/* Trigger button */}
             <button
               onClick={() => setCatDropOpen(v => !v)}
+              className="neo-lib-dropdown-btn"
               style={{
                 width:"100%", padding:"11px 14px",
                 background:"rgba(255,255,255,0.05)",
@@ -3245,7 +3488,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
 
             {/* Dropdown list */}
             {catDropOpen && (
-              <div style={{
+              <div className="neo-lib-dropdown-list" style={{
                 position:"absolute", left:12, right:12, top:"calc(100% - 2px)",
                 background:"#1a1d24",
                 border:"1px solid rgba(255,215,0,0.25)",
@@ -3285,16 +3528,17 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
         )}
 
         {/* ═══════════════ BUILTIN BODY ═══════════════ */}
-        {tab === "builtin" && <div style={{ display:"flex", flex:1, overflow:"hidden" }}>
+        {tab === "builtin" && <div className="neo-lib-body" style={{ display:"flex", flex:1, overflow:"hidden" }}>
 
           {/* Sidebar — только десктоп */}
           {!search && !isMobile && (
-            <div style={{ width:210, borderRight:"1px solid rgba(255,255,255,0.06)", overflowY:"auto", flexShrink:0, padding:"10px 0" }}>
+            <div className="neo-lib-sidebar" style={{ width:210, borderRight:"1px solid rgba(255,255,255,0.06)", overflowY:"auto", flexShrink:0, padding:"10px 0" }}>
               {localizedBuiltin.map((cat) => {
                 const active = activeCat === cat.categoryRu;
                 return (
                   <button
                     key={cat.categoryRu}
+                    className={`neo-lib-cat ${active ? 'neo-lib-cat-active' : ''}`}
                     style={{
                       width:"100%", padding:"9px 16px", textAlign:"left",
                       background: active ? "rgba(255,215,0,0.1)" : "transparent",
@@ -3335,6 +3579,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
                         <div
                           key={mod.id}
                           onClick={() => setSelected(sel ? null : mod)}
+                          className={`neo-lib-card ${sel ? 'neo-lib-card-selected' : ''}`}
                           style={{
                             background: sel ? "rgba(255,215,0,0.08)" : "rgba(255,255,255,0.03)",
                             border:`1px solid ${sel ? "rgba(255,215,0,0.4)" : "rgba(255,255,255,0.08)"}`,
@@ -3352,6 +3597,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
                           {isMobile && sel && (
                             <>
                               <button
+                                className="neo-lib-primary-btn"
                                 onClick={(e) => { e.stopPropagation(); onInsert(mod.code); onClose(); }}
                                 style={{
                                   marginTop:12, width:"100%", padding:"11px",
@@ -3375,13 +3621,13 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
 
         {/* Preview & Insert — только десктоп, builtin */}
         {tab === "builtin" && !isMobile && selected && (
-          <div style={{
+          <div className="neo-lib-insert-bar" style={{
             borderTop:"1px solid rgba(255,255,255,0.07)",
             padding:"14px 20px", flexShrink:0,
             background:"rgba(0,0,0,0.3)",
             display:"flex", gap:12, alignItems:"flex-end",
           }}>
-            <div style={{
+            <div className="neo-lib-code-preview" style={{
               flex:1, background:"#0d0d0f",
               border:"1px solid rgba(255,255,255,0.08)",
               borderRadius:10, padding:"10px 14px",
@@ -3391,6 +3637,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
             }}>{selected.code}</div>
             <div style={{ display:"flex", flexDirection:"column", gap:8, flexShrink:0 }}>
               <button
+                className="neo-lib-primary-btn"
                 style={{
                   background:"linear-gradient(135deg,#ffd700,#ffaa00)",
                   border:"none", borderRadius:10, padding:"12px 22px",
@@ -3419,7 +3666,7 @@ function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructor
 //     // setStacks(prev => [...prev, ...parseDSL(code)])
 //   }} />
 // ─────────────────────────────────────────────────────────────────────────────
-export function ModuleLibraryButton({ onInsert, currentUser, t = getConstructorStrings('ru'), lang = 'ru', dataTour }) {
+export function ModuleLibraryButton({ onInsert, currentUser, t = getConstructorStrings('ru'), lang = 'ru', dataTour, compact = false }) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -3430,8 +3677,9 @@ export function ModuleLibraryButton({ onInsert, currentUser, t = getConstructorS
         data-tour={dataTour || undefined}
         onClick={() => setOpen(true)}
         title={t.libButtonTooltip}
+        aria-label={t.moduleLibrary}
       >
-        {t.moduleLibrary}
+        {compact ? '▰' : t.moduleLibrary}
       </button>
 
       {open && (

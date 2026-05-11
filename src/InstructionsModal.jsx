@@ -5,13 +5,13 @@ const pStyle = { fontSize: 13.5, lineHeight: 1.7, color: 'rgba(232,234,240,0.75)
 
 function ICode({ children }) {
   return (
-    <code style={{ background: 'rgba(255,255,255,0.09)', padding: '2px 6px', borderRadius: 4, fontFamily: 'monospace', fontSize: 12, color: '#3ecf8e' }}>{children}</code>
+    <code className="instr-inline-code" style={{ background: 'rgba(255,255,255,0.09)', padding: '2px 6px', borderRadius: 4, fontFamily: 'monospace', fontSize: 12, color: '#3ecf8e' }}>{children}</code>
   );
 }
 
 function ICard({ icon, children }) {
   return (
-    <div style={{ display: 'flex', gap: 10, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, padding: '10px 14px', marginTop: 12 }}>
+    <div className="instr-card" style={{ display: 'flex', gap: 10, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, padding: '10px 14px', marginTop: 12 }}>
       <span style={{ fontSize: 15, flexShrink: 0 }}>{icon}</span>
       <p style={{ fontSize: 12.5, color: 'rgba(232,234,240,0.6)', margin: 0, lineHeight: 1.6 }}>{children}</p>
     </div>
@@ -25,7 +25,7 @@ function IList({ color, title, items }) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {items.map((item, i) => (
           <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ width: 28, height: 28, borderRadius: 6, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.09)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, flexShrink: 0 }}>{item.icon}</span>
+            <span className="instr-list-icon" style={{ width: 28, height: 28, borderRadius: 6, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.09)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, flexShrink: 0 }}>{item.icon}</span>
             <span style={{ fontSize: 13.5, color: 'rgba(232,234,240,0.85)' }}>{item.text}</span>
           </div>
         ))}
@@ -36,7 +36,7 @@ function IList({ color, title, items }) {
 
 function IExample({ steps, exampleLabel }) {
   return (
-    <div style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 8, padding: '12px 14px', marginBottom: 14 }}>
+    <div className="instr-example" style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 8, padding: '12px 14px', marginBottom: 14 }}>
       <p style={{ fontSize: 10, color: 'rgba(232,234,240,0.35)', margin: '0 0 10px 0', letterSpacing: '0.1em', textTransform: 'uppercase' }}>{exampleLabel}</p>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {steps.map((step, i) => (
@@ -52,7 +52,7 @@ function IExample({ steps, exampleLabel }) {
 
 function ICodeBlock({ lines }) {
   return (
-    <div style={{ background: '#0d0f16', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, padding: '12px 14px', marginBottom: 12, fontFamily: 'monospace', fontSize: 12.5, lineHeight: 2 }}>
+    <div className="instr-codeblock" style={{ background: '#0d0f16', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, padding: '12px 14px', marginBottom: 12, fontFamily: 'monospace', fontSize: 12.5, lineHeight: 2 }}>
       {lines.map((l, i) => <div key={i} style={{ color: l.c }}>{l.t}</div>)}
     </div>
   );
@@ -130,18 +130,136 @@ export default function InstructionsModal({ lang, onClose }) {
           @keyframes instrSlideR { from { opacity:0; transform:translateX(16px); } to { opacity:1; transform:translateX(0); } }
           @keyframes instrSlideL { from { opacity:0; transform:translateX(-16px); } to { opacity:1; transform:translateX(0); } }
           @keyframes instrFadeIn { from { opacity:0; transform:scale(0.97) translateY(10px); } to { opacity:1; transform:scale(1) translateY(0); } }
-          .instr-nav-btn:hover { background: rgba(255,255,255,0.04) !important; }
-          .instr-close:hover { background: rgba(239,68,68,0.12) !important; border-color: #ef4444 !important; color: #ef4444 !important; }
+          .instr-modal-overlay {
+            background:
+              radial-gradient(circle at 16% 10%, rgba(37, 99, 235, 0.32), transparent 34%),
+              radial-gradient(circle at 84% 16%, rgba(168, 85, 247, 0.36), transparent 36%),
+              radial-gradient(circle at 50% 86%, rgba(14, 165, 233, 0.2), transparent 38%),
+              rgba(5, 4, 18, 0.84) !important;
+            backdrop-filter: blur(16px) saturate(130%) !important;
+          }
+          .instr-modal-shell {
+            position: relative;
+            isolation: isolate;
+            max-width: 860px !important;
+            background:
+              linear-gradient(145deg, rgba(18, 14, 54, 0.92), rgba(13, 10, 37, 0.88) 48%, rgba(8, 8, 26, 0.95)),
+              rgba(10, 8, 30, 0.92) !important;
+            border: 1px solid rgba(123, 92, 255, 0.58) !important;
+            border-radius: 24px !important;
+            box-shadow:
+              0 34px 120px rgba(0, 0, 0, 0.78),
+              0 0 82px rgba(80, 70, 255, 0.27),
+              inset 0 0 0 1px rgba(255, 255, 255, 0.05) !important;
+          }
+          .instr-modal-shell::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            z-index: 0;
+            pointer-events: none;
+            background:
+              radial-gradient(circle at 22% 4%, rgba(45, 212, 191, 0.26), transparent 20%),
+              radial-gradient(circle at 92% 0%, rgba(168, 85, 247, 0.34), transparent 24%),
+              linear-gradient(90deg, rgba(34, 211, 238, 0.08), transparent 25%, rgba(168, 85, 247, 0.12));
+          }
+          .instr-modal-shell > * {
+            position: relative;
+            z-index: 1;
+          }
+          .instr-modal-header {
+            background: linear-gradient(180deg, rgba(35, 22, 86, 0.72), rgba(17, 12, 48, 0.36)) !important;
+            border-bottom: 1px solid rgba(121, 98, 255, 0.28) !important;
+            padding: 16px 20px !important;
+          }
+          .instr-close {
+            width: 34px !important;
+            height: 34px !important;
+            border-radius: 12px !important;
+            background: rgba(255, 255, 255, 0.06) !important;
+            border: 1px solid rgba(255, 255, 255, 0.16) !important;
+            color: rgba(255, 255, 255, 0.72) !important;
+            box-shadow: inset 0 0 18px rgba(139, 92, 246, 0.12) !important;
+          }
+          .instr-close:hover { background: rgba(248,113,113,0.13) !important; border-color: rgba(248,113,113,0.78) !important; color: #fecaca !important; }
+          .instr-modal-body {
+            background:
+              radial-gradient(circle at 78% 18%, rgba(168, 85, 247, 0.14), transparent 34%),
+              radial-gradient(circle at 34% 12%, rgba(14, 165, 233, 0.12), transparent 32%) !important;
+          }
+          .instr-nav {
+            width: 190px !important;
+            background: linear-gradient(180deg, rgba(18, 12, 54, 0.5), rgba(9, 8, 30, 0.32)) !important;
+            border-right: 1px solid rgba(111, 92, 255, 0.24) !important;
+            padding: 10px 0 !important;
+          }
+          .instr-nav-btn {
+            margin: 2px 0;
+            color: rgba(235, 230, 255, 0.64);
+            border-left: 2px solid transparent !important;
+          }
+          .instr-nav-btn:hover { background: rgba(99, 102, 241, 0.1) !important; }
+          .instr-nav-btn-active {
+            background: linear-gradient(90deg, rgba(59, 130, 246, 0.2), rgba(168, 85, 247, 0.08)) !important;
+            border-left-color: currentColor !important;
+            box-shadow: inset 10px 0 22px rgba(34, 211, 238, 0.08) !important;
+          }
+          .instr-content {
+            background: rgba(8, 7, 28, 0.18) !important;
+          }
+          .instr-content-icon,
+          .instr-list-icon {
+            box-shadow: 0 0 22px currentColor, inset 0 0 18px rgba(255,255,255,0.08) !important;
+          }
+          .instr-card,
+          .instr-example,
+          .instr-codeblock {
+            position: relative;
+            overflow: hidden;
+            background: linear-gradient(135deg, rgba(23, 17, 68, 0.74), rgba(25, 10, 58, 0.58)) !important;
+            border: 1px solid rgba(90, 118, 255, 0.32) !important;
+            border-radius: 14px !important;
+            box-shadow: inset 0 0 22px rgba(59, 130, 246, 0.08), 0 10px 24px rgba(0, 0, 0, 0.18) !important;
+          }
+          .instr-card::before,
+          .instr-example::before,
+          .instr-codeblock::before {
+            content: "";
+            position: absolute;
+            inset: 0 auto auto 0;
+            width: 54%;
+            height: 1px;
+            background: linear-gradient(90deg, rgba(34, 211, 238, 0.9), transparent);
+            opacity: 0.75;
+          }
+          .instr-inline-code {
+            background: rgba(34, 211, 238, 0.12) !important;
+            border: 1px solid rgba(34, 211, 238, 0.25);
+            color: #67e8f9 !important;
+          }
           .instr-scroll::-webkit-scrollbar { width: 5px; }
           .instr-scroll::-webkit-scrollbar-track { background: transparent; }
-          .instr-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
-          .instr-footer-btn:hover { opacity: 0.85; }
+          .instr-scroll::-webkit-scrollbar-thumb { background: rgba(123,92,255,0.38); border-radius: 3px; }
+          .instr-footer {
+            background: linear-gradient(180deg, rgba(11, 8, 33, 0.34), rgba(5, 4, 18, 0.66)) !important;
+            border-top: 1px solid rgba(121, 98, 255, 0.3) !important;
+          }
+          .instr-footer-btn {
+            border-radius: 10px !important;
+            background: rgba(72, 48, 170, 0.28) !important;
+            border: 1px solid rgba(99, 102, 241, 0.36) !important;
+            box-shadow: inset 0 0 18px rgba(99, 102, 241, 0.1) !important;
+          }
+          .instr-footer-btn-primary {
+            box-shadow: 0 0 24px rgba(34, 211, 238, 0.2), inset 0 0 18px rgba(255,255,255,0.06) !important;
+          }
+          .instr-footer-btn:hover { opacity: 0.92; transform: translateY(-1px); }
           @media (max-width: 640px) {
             .instr-modal-overlay { padding: 8px !important; align-items: stretch !important; }
-            .instr-modal-shell { height: calc(100dvh - 16px) !important; max-height: calc(100dvh - 16px) !important; border-radius: 12px !important; }
+            .instr-modal-shell { height: calc(100dvh - 16px) !important; max-height: calc(100dvh - 16px) !important; border-radius: 18px !important; }
             .instr-modal-header { padding: 12px 14px !important; }
             .instr-modal-body { flex-direction: column !important; overflow: hidden !important; }
-            .instr-nav { width: 100% !important; max-height: none !important; border-right: 0 !important; border-bottom: 1px solid rgba(255,255,255,0.06) !important; display: grid !important; grid-template-columns: repeat(4, minmax(0, 1fr)) !important; gap: 6px !important; padding: 10px !important; overflow: visible !important; }
+            .instr-nav { width: 100% !important; max-height: none !important; border-right: 0 !important; border-bottom: 1px solid rgba(111,92,255,0.24) !important; display: grid !important; grid-template-columns: repeat(4, minmax(0, 1fr)) !important; gap: 6px !important; padding: 10px !important; overflow: visible !important; }
             .instr-nav-btn { min-height: 54px !important; flex-direction: column !important; justify-content: center !important; gap: 4px !important; padding: 8px 4px !important; border-radius: 10px !important; text-align: center !important; }
             .instr-nav-btn > span:first-of-type { font-size: 18px !important; line-height: 1 !important; }
             .instr-nav-btn > span:last-of-type { font-size: 10.5px !important; line-height: 1.15 !important; max-width: 100%; overflow-wrap: anywhere; }
@@ -185,7 +303,7 @@ export default function InstructionsModal({ lang, onClose }) {
                 <button
                   key={sec.id}
                   type="button"
-                  className="instr-nav-btn"
+                  className={`instr-nav-btn ${isAct ? 'instr-nav-btn-active' : ''}`}
                   onClick={() => goTo(idx)}
                   style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 9, padding: '9px 13px', background: isAct ? 'rgba(255,255,255,0.05)' : 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', transition: 'background 0.15s', width: '100%' }}
                 >
@@ -228,7 +346,7 @@ export default function InstructionsModal({ lang, onClose }) {
           <span style={{ fontSize: 11, color: 'rgba(232,234,240,0.3)', fontFamily: 'monospace' }}>{active + 1} / {INSTR_SECTIONS.length}</span>
           <button
             type="button"
-            className="instr-footer-btn"
+            className="instr-footer-btn instr-footer-btn-primary"
             onClick={() => { if (active === INSTR_SECTIONS.length - 1) onClose(); else goTo(active + 1); }}
             style={{ padding: '6px 16px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', background: active === INSTR_SECTIONS.length - 1 ? s.color + '20' : 'rgba(255,255,255,0.05)', border: `1px solid ${active === INSTR_SECTIONS.length - 1 ? s.color + '60' : 'rgba(255,255,255,0.1)'}`, color: active === INSTR_SECTIONS.length - 1 ? s.color : 'rgba(232,234,240,0.7)', transition: 'all 0.15s', fontFamily: 'system-ui' }}
           >{active === INSTR_SECTIONS.length - 1 ? W.done : W.next}</button>
