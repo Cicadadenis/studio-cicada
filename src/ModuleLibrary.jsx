@@ -2677,7 +2677,7 @@ const styles = {
 // ─────────────────────────────────────────────────────────────────────────────
 // КОМПОНЕНТ МОДАЛЬНОЙ БИБЛИОТЕКИ
 // ─────────────────────────────────────────────────────────────────────────────
-function ModuleLibraryModal({ onClose, onInsert, onInsertAndRun, currentUser, t = getConstructorStrings('ru'), lang = 'ru' }) {
+function ModuleLibraryModal({ onClose, onInsert, currentUser, t = getConstructorStrings('ru'), lang = 'ru' }) {
   const [tab, setTab] = useState("builtin"); // "builtin" | "mine"
   const [activeCat, setActiveCat] = useState(MODULES[0].category);
   const [selected, setSelected] = useState(null);
@@ -3313,7 +3313,7 @@ function ModuleLibraryModal({ onClose, onInsert, onInsertAndRun, currentUser, t 
 //     // setStacks(prev => [...prev, ...parseDSL(code)])
 //   }} />
 // ─────────────────────────────────────────────────────────────────────────────
-export function ModuleLibraryButton({ onInsert, onInsertAndRun, currentUser, t = getConstructorStrings('ru'), lang = 'ru', dataTour }) {
+export function ModuleLibraryButton({ onInsert, currentUser, t = getConstructorStrings('ru'), lang = 'ru', dataTour }) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -3335,7 +3335,6 @@ export function ModuleLibraryButton({ onInsert, onInsertAndRun, currentUser, t =
           currentUser={currentUser}
           onClose={() => setOpen(false)}
           onInsert={onInsert}
-          onInsertAndRun={onInsertAndRun}
         />
       )}
     </>

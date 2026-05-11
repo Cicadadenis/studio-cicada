@@ -2003,9 +2003,7 @@ function PropsPanel({ block, onChange, stacks }) {
       {fields.map(f => {
         const pickerKind = getPropsFieldPickerKind(block.type, f.key);
         const pickerOptions = pickerKind ? pickerByKind[pickerKind] : [];
-        const cur = props[f.key] || '';
-        const matched = pickerOptions.find((o) => o.insert === cur);
-        const selectValue = matched ? JSON.stringify({ id: matched.id, ins: matched.insert }) : '';
+        const pickerListId = pickerOptions.length > 0 ? `props-picker-${block.id || block.type}-${f.key}` : undefined;
 
         return (
         <div key={f.key} style={{ marginBottom: 8 }}>
@@ -2033,34 +2031,22 @@ function PropsPanel({ block, onChange, stacks }) {
             </select>
           ) : (
             <>
-              {pickerKind && (
-                <select
-                  style={{ width: '100%', marginBottom: 6 }}
-                  value={selectValue}
-                  onChange={(e) => {
-                    const raw = e.target.value;
-                    if (!raw) return;
-                    try {
-                      const { ins } = JSON.parse(raw);
-                      if (ins != null) onChange(f.key, String(ins));
-                    } catch { /* ignore */ }
-                  }}
-                >
-                  <option value="">{ui.propsPickBlock || 'Выберите блок…'}</option>
-                  {pickerOptions.map((opt) => (
-                    <option
-                      key={`${pickerKind}:${opt.id}:${opt.insert}`}
-                      value={JSON.stringify({ id: opt.id, ins: opt.insert })}
-                    >
-                      {opt.panelLabel}
-                    </option>
-                  ))}
-                </select>
-              )}
               <input
+                list={pickerListId}
                 value={props[f.key] || ''}
                 onChange={e => onChange(f.key, e.target.value)}
               />
+              {pickerListId && (
+                <datalist id={pickerListId}>
+                  {pickerOptions.map((opt) => (
+                    <option
+                      key={`${pickerKind}:${opt.id}:${opt.insert}`}
+                      value={opt.insert}
+                      label={opt.panelLabel}
+                    />
+                  ))}
+                </datalist>
+              )}
             </>
           ))}
         </div>
@@ -2191,7 +2177,7 @@ function fixDslSchema(input) {
 }
 
 // ─── DSL PANEL ────────────────────────────────────────────────────────────
-function DSLPane({ stacks, isMobile, isExpanded = false, onToggleExpanded, onClose, onApplyCorrectedCode }) {
+function DSLPane({ stacks, isMobile, onClose, onApplyCorrectedCode }) {
   const ctx = React.useContext(BuilderUiContext);
   const blockTypes = ctx?.blockTypes || BLOCK_TYPES;
   const ui = ctx?.t || getConstructorStrings('ru');
@@ -2328,21 +2314,16 @@ function DSLPane({ stacks, isMobile, isExpanded = false, onToggleExpanded, onClo
 
   const displayCode = previewCorrected ?? dsl;
   const displayLines = displayCode.split('\n');
-  const canToggleExpanded = typeof onToggleExpanded === 'function';
   const canClose = typeof onClose === 'function';
-  const expandTitle = isExpanded
-    ? (isMobile ? 'Свернуть панель до половины экрана' : 'Свернуть панель обратно')
-    : (isMobile ? 'Открыть панель на весь экран' : 'Открыть панель на половину высоты');
 
   return (
     <div style={{
       display: 'flex', flexDirection: 'column',
       borderTop: '1px solid var(--border)',
-      flex: isMobile ? '1 1 auto' : `0 0 ${isExpanded ? '50%' : 'min(280px, 35%)'}`,
+      flex: isMobile ? '1 1 auto' : '0 0 min(280px, 35%)',
       height: isMobile ? '100%' : undefined,
       minHeight: 0,
       minWidth: 0,
-      transition: 'flex-basis 0.2s ease',
     }}>
       <div style={{
         padding: '5px 10px', display: 'flex', alignItems: 'center',
@@ -2355,30 +2336,8 @@ function DSLPane({ stacks, isMobile, isExpanded = false, onToggleExpanded, onClo
           display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'flex-start',
           alignItems: 'center', width: '100%', minWidth: 0,
         }}>
-          {(canToggleExpanded || canClose) && (
+          {canClose && (
             <div style={{ display: 'flex', gap: 6, flexShrink: 0, marginRight: 4 }}>
-              {canToggleExpanded && (
-                <button
-                  type="button"
-                  onClick={onToggleExpanded}
-                  title={expandTitle}
-                  style={{
-                    padding: '4px 8px',
-                    borderRadius: 6,
-                    fontSize: 10,
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                    fontFamily: 'inherit',
-                    lineHeight: 1.2,
-                    background: isExpanded ? 'rgba(99,102,241,0.22)' : 'rgba(255,255,255,0.04)',
-                    color: isExpanded ? '#c4b5fd' : 'var(--text3)',
-                    border: `1px solid ${isExpanded ? 'rgba(196,181,253,0.45)' : 'var(--border2)'}`,
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {isMobile ? (isExpanded ? '↧ 1/2' : '↥ На весь') : (isExpanded ? '↧ Свернуть' : '↕ 1/2')}
-                </button>
-              )}
               {canClose && (
                 <button
                   type="button"
@@ -2866,7 +2825,6 @@ export default function App() {
   const [isMobileView, setIsMobileView] = useState(() => isMobileBuilderViewport());
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [showFilesMenu, setShowFilesMenu] = useState(false);
-  const [dslPaneExpanded, setDslPaneExpanded] = useState(false);
   const [tourActive, setTourActive] = useState(false);
   const [tourStep, setTourStep] = useState(0);
 
@@ -3035,10 +2993,6 @@ export default function App() {
   useEffect(() => {
     if (!canSeeCode && mobileTab === 'dsl') setMobileTab('canvas');
   }, [canSeeCode, mobileTab]);
-
-  useEffect(() => {
-    if (isMobileView && mobileTab !== 'dsl') setDslPaneExpanded(false);
-  }, [isMobileView, mobileTab]);
 
   useEffect(() => {
     const handler = () => setIsMobileView(isMobileBuilderViewport());
@@ -4513,16 +4467,6 @@ const EXAMPLE_FULL = `версия "1.0"
   }, []);
 
   const loadExampleFromFile = useCallback((exampleName) => {
-    if (exampleName === 'modular') {
-      seq = 1;
-      const userTestToken = (currentUser?.test_token || '').trim();
-      setStacks(buildModularProjectStacks(userTestToken));
-      setSelectedBlockId(null);
-      setSelectedStackId(null);
-      setProjectName('Модульный проект');
-      return;
-    }
-
     const examples = {
       echo: EXAMPLE_ECHO,
       weather: EXAMPLE_WEATHER,
@@ -4563,7 +4507,7 @@ const EXAMPLE_FULL = `версия "1.0"
     setSelectedBlockId(null);
     setSelectedStackId(null);
     setProjectName(exampleName === 'echo' ? 'Эхо Бот' : exampleName === 'weather' ? 'Бот погода' : exampleName === 'shop' ? 'Магазин Бот' : exampleName === 'fullTest' ? 'Full Test' : 'Все Функции');
-  }, [parseDSL, showToast, currentUser, buildModularProjectStacks]);
+  }, [parseDSL, showToast, currentUser]);
 
   const startFirstWowFlow = useCallback(() => {
     loadExampleFromFile('echo');
@@ -5775,13 +5719,6 @@ const EXAMPLE_FULL = `версия "1.0"
                 setStacks(prev => mergeLibraryStacks(prev, parsed));
                 showToast(builderUi.libInsertSuccess, 'success');
               }
-            }} onInsertAndRun={(code) => {
-              const parsed = parseDSL(code);
-              if (parsed) {
-                setStacks(prev => mergeLibraryStacks(prev, parsed));
-                showToast(builderUi.libInsertSuccess, 'success');
-                setTimeout(() => { startBot(); }, 0);
-              }
             }} />
             <button
               className="tb-btn tb-btn-ai"
@@ -6120,15 +6057,6 @@ const EXAMPLE_FULL = `версия "1.0"
             if (parsed) {
               setStacks(prev => mergeLibraryStacks(prev, parsed));
               showToast(builderUi.libInsertSuccess, 'success');
-            }
-            setShowLibrary(false);
-          }}
-          onInsertAndRun={(code) => {
-            const parsed = parseDSL(code);
-            if (parsed) {
-              setStacks(prev => mergeLibraryStacks(prev, parsed));
-              showToast(builderUi.libInsertSuccess, 'success');
-              setTimeout(() => { startBot(); }, 0);
             }
             setShowLibrary(false);
           }}
@@ -6620,7 +6548,7 @@ const EXAMPLE_FULL = `версия "1.0"
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            {[['echo', builderUi.examplesEcho], ['weather', builderUi.examplesWeather], ['shop', builderUi.examplesShop], ['modular', builderUi.examplesModular], ['full', builderUi.examplesFull], ['fullTest', builderUi.examplesFullTest]].map(([key, label], i, arr) => (
+            {[['echo', builderUi.examplesEcho], ['weather', builderUi.examplesWeather], ['shop', builderUi.examplesShop], ['full', builderUi.examplesFull], ['fullTest', builderUi.examplesFullTest]].map(([key, label], i, arr) => (
               <button
                 key={key}
                 type="button"
@@ -6973,13 +6901,13 @@ const EXAMPLE_FULL = `версия "1.0"
           ...(isMobileView ? {
             gridColumn: '1',
             position: 'absolute',
-            top: mobileTab === 'dsl' && !dslPaneExpanded ? '50%' : 0,
+            top: 0,
             left: 0,
             right: 0,
             bottom: 56,
             zIndex: mobileTab === 'dsl' ? 80 : 6,
             borderTop: mobileTab === 'dsl' ? '1px solid rgba(99,102,241,0.3)' : undefined,
-            borderRadius: mobileTab === 'dsl' && !dslPaneExpanded ? '16px 16px 0 0' : 0,
+            borderRadius: 0,
             transition: 'top 0.22s ease, border-radius 0.22s ease',
           } : {}),
         }}
@@ -7001,8 +6929,6 @@ const EXAMPLE_FULL = `версия "1.0"
             <DSLPane
               stacks={stacks}
               isMobile={isMobileView}
-              isExpanded={dslPaneExpanded}
-              onToggleExpanded={() => setDslPaneExpanded(v => !v)}
               onClose={isMobileView ? () => setMobileTab('canvas') : undefined}
               onApplyCorrectedCode={applyCorrectedDSLCode}
             />
@@ -7034,7 +6960,6 @@ const EXAMPLE_FULL = `версия "1.0"
               data-tour={tab.key === 'canvas' ? 'mobile-tab-canvas' : tab.key === 'blocks' ? 'mobile-tab-blocks' : tab.key === 'props' ? 'mobile-tab-props' : tab.key === 'dsl' ? 'mobile-tab-dsl' : undefined}
               onClick={() => {
                 if (tab.key === 'dsl') {
-                  setDslPaneExpanded(false);
                   setMobileTab(prev => prev === 'dsl' ? 'canvas' : 'dsl');
                   return;
                 }
