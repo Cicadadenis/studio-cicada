@@ -10,7 +10,9 @@ const MAX_LOG_CHARS = Number(process.env.DSL_MAX_LOG_CHARS || 80_000);
 const DSL_CPU_SECONDS = Math.max(1, Number(process.env.DSL_CPU_SECONDS || 60));
 const DSL_MEMORY_BYTES = Math.max(64 * 1024 * 1024, Number(process.env.DSL_MEMORY_BYTES || 512 * 1024 * 1024));
 const DSL_MAX_PROCESSES = Math.max(8, Number(process.env.DSL_MAX_PROCESSES || 64));
-const DSL_SANDBOX_MODE = String(process.env.DSL_SANDBOX_MODE || 'auto').trim().toLowerCase();
+const DSL_SANDBOX_MODE = String(
+  process.env.DSL_SANDBOX_MODE || (process.env.APP_ENV === 'production' || process.env.NODE_ENV === 'production' ? 'enforced' : 'auto'),
+).trim().toLowerCase();
 const SAFE_EXECUTABLE = /^(?:[a-zA-Z0-9_./:-]+)$/;
 
 const runners = new Map(); // userId -> state

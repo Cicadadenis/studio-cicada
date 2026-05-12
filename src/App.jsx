@@ -201,6 +201,7 @@ function AdminRoute({ currentUser, onLoginClick }) {
 
   useEffect(() => {
     const handleAdminMessage = (event) => {
+      if (event.origin !== window.location.origin) return;
       if (event?.data?.type === 'cicada-admin:navigate-builder') {
         window.location.assign('/');
       }

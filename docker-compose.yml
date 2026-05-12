@@ -34,7 +34,10 @@ services:
       DB_USER: ${DB_USER:-cicada_user}
       DB_PASSWORD: ${DB_PASSWORD:-cicada_password}
       ADMIN_KEY: ${ADMIN_KEY}
-      CICADA_BIN: ${CICADA_BIN:-/usr/local/bin/cicada}
+      CICADA_BIN: ${CICADA_BIN:-/usr/bin/cicada}
+      APP_ENV: ${APP_ENV:-production}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set for production}
+      DSL_SANDBOX_MODE: ${DSL_SANDBOX_MODE:-enforced}
       CRYPTOBOT_TOKEN: ${CRYPTOBOT_TOKEN:-}
       TG_BOT_TOKEN: ${TG_BOT_TOKEN:-}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
@@ -52,6 +55,7 @@ services:
       DSL_MAX_CODE_BYTES: ${DSL_MAX_CODE_BYTES:-100000}
     volumes:
       - ./bots:/app/bots
+      - ./uploads:/app/uploads
 
 volumes:
   pgdata:
