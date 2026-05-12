@@ -452,17 +452,17 @@ if [ "$MODE" = "prod" ]; then
   VITE_API_URL="https://${DOMAIN}/api"
   VITE_API_TARGET="https://${DOMAIN}"
   APP_URL_VAL="https://${DOMAIN}"
-  NODE_ENV_VAL="production"
+  APP_ENV_VAL="production"
 else
   VITE_API_URL="https://localhost/api"
   VITE_API_TARGET="https://localhost"
   APP_URL_VAL="https://localhost"
-  NODE_ENV_VAL="development"
+  APP_ENV_VAL="development"
 fi
 
 cat > "$APP_DIR/.env" << ENV
 # ─── Server ──────────────────────────────────────────────────
-NODE_ENV=${NODE_ENV_VAL}
+APP_ENV=${APP_ENV_VAL}
 API_HOST=${DOMAIN}
 API_PORT=${API_PORT}
 CICADA_BIN=${CICADA_BIN_PATH}

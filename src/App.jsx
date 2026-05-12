@@ -3047,11 +3047,11 @@ function DSLPane({ stacks, isMobile, onClose, onApplyCorrectedCode }) {
         WebkitOverflowScrolling: 'touch',
       }}>
         <div style={{
-          display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'flex-start',
+          display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 6,
           alignItems: 'center', width: '100%', minWidth: 0,
         }}>
           {canClose && (
-            <div style={{ display: 'flex', gap: 6, flexShrink: 0, marginRight: 4 }}>
+            <div style={{ display: 'flex', gap: 6, gridColumn: '1 / -1' }}>
               <button
                 type="button"
                 onClick={onClose}
@@ -3068,6 +3068,8 @@ function DSLPane({ stacks, isMobile, onClose, onApplyCorrectedCode }) {
                   color: 'var(--text3)',
                   border: '1px solid var(--border2)',
                   whiteSpace: 'nowrap',
+                  width: '100%',
+                  minWidth: 0,
                 }}
               >
                 × Закрыть
@@ -3090,6 +3092,9 @@ function DSLPane({ stacks, isMobile, onClose, onApplyCorrectedCode }) {
                 ? (hasErrors ? '#ef4444' : hasWarnings ? '#f59e0b' : '#10b981')
                 : 'var(--bg3)',
               color: validationResult ? '#fff' : 'var(--text3)',
+              width: '100%',
+              minWidth: 0,
+              whiteSpace: 'nowrap',
             }}
             onMouseEnter={e => { if (!validationResult) e.currentTarget.style.background = 'var(--accent)'; }}
             onMouseLeave={e => { if (!validationResult) e.currentTarget.style.background = 'var(--bg3)'; }}
@@ -3109,6 +3114,9 @@ function DSLPane({ stacks, isMobile, onClose, onApplyCorrectedCode }) {
               color: copied ? '#fff' : 'var(--text3)',
               border: `1px solid ${copied ? 'var(--accent)' : 'var(--border2)'}`,
               transition: 'background 0.15s, color 0.15s, border-color 0.15s',
+              width: '100%',
+              minWidth: 0,
+              whiteSpace: 'nowrap',
             }}
             onMouseEnter={e => { if (!copied) { e.currentTarget.style.color = 'var(--text)'; } }}
             onMouseLeave={e => { if (!copied) { e.currentTarget.style.color = 'var(--text3)'; } }}
@@ -3127,6 +3135,9 @@ function DSLPane({ stacks, isMobile, onClose, onApplyCorrectedCode }) {
               background: 'var(--accent)',
               color: '#fff',
               border: '1px solid var(--accent)',
+              width: '100%',
+              minWidth: 0,
+              whiteSpace: 'nowrap',
             }}
             onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent2)'; e.currentTarget.style.borderColor = 'var(--accent2)'; }}
             onMouseLeave={e => { e.currentTarget.style.background = 'var(--accent)'; e.currentTarget.style.borderColor = 'var(--accent)'; }}
@@ -3146,6 +3157,9 @@ function DSLPane({ stacks, isMobile, onClose, onApplyCorrectedCode }) {
               color: (!validationResult || (!hasErrors && !hasFixes)) ? 'var(--text3)' : '#fff',
               border: '1px solid transparent',
               opacity: (!validationResult || (!hasErrors && !hasFixes)) ? 0.9 : 1,
+              width: '100%',
+              minWidth: 0,
+              whiteSpace: 'nowrap',
             }}
             title={!validationResult ? 'Проверить и применить автоисправления' : (!hasErrors && !hasFixes ? 'Нет ошибок для исправления' : 'Исправить DSL')}
           >
@@ -9646,6 +9660,10 @@ function translateServerError(msg) {
     'User already exists': 'Пользователь с таким email уже существует',
     'Account not found': 'Аккаунт не найден',
     'Account already exists': 'Аккаунт уже существует',
+    // Passkey / WebAuthn browser errors
+    'The operation either timed out or was not allowed': 'Операция отменена или истекло время ожидания. Попробуйте ещё раз',
+    'privacy-considerations-client': 'Операция отменена или истекло время ожидания. Попробуйте ещё раз',
+    'NotAllowedError': 'Операция отменена или истекло время ожидания. Попробуйте ещё раз',
     // Token / session errors
     'Invalid token': 'Недействительная ссылка',
     'Token expired': 'Срок действия ссылки истёк',
@@ -11743,7 +11761,7 @@ function ProfileModal({ user, projects, initialTab = 'profile', onClose, onLogou
       setPasskeyCount(passkeys.length);
       setActionNotice({ title: 'Успешно', message: 'Отпечаток/Passkey успешно добавлен и готов для входа.' });
     } catch (e) {
-      showToast('Ошибка passkey: ' + (e.message || 'не удалось добавить passkey'), 'error');
+      showToast('Ошибка passkey: ' + translateServerError(e.message || 'не удалось добавить passkey'), 'error');
     } finally {
       setPasskeySaving(false);
     }

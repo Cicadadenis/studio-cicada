@@ -279,7 +279,7 @@ cd cicada-studio
 # 2. Скопировать переменные окружения
 cp env.example .env
 
-# 3. Заполнить .env (см. раздел ниже): обязательно JWT_SECRET, ADMIN_KEY, БД, при production — NODE_ENV=production
+# 3. Заполнить .env (см. раздел ниже): обязательно JWT_SECRET, ADMIN_KEY, БД, при production — APP_ENV=production
 nano .env
 
 # 4. Установить CLI Cicada (рантайм для DSL)
@@ -329,7 +329,7 @@ DB_PASSWORD=strong_password_here
 API_HOST=0.0.0.0
 API_PORT=3001
 APP_URL=https://example.com
-NODE_ENV=production
+APP_ENV=production
 CICADA_BIN=/path/to/cicada
 ```
 

@@ -71,6 +71,10 @@ const { Pool } = pg;
 
 const app = express();
 
+function isProductionEnv() {
+  return (process.env.APP_ENV || process.env.NODE_ENV || '').trim() === 'production';
+}
+
 const AVATAR_UPLOAD_DIR = path.resolve('uploads/avatars');
 const AVATAR_URL_PREFIX = '/api/avatars';
 const AVATAR_MAX_BYTES = 5 * 1024 * 1024;
@@ -95,7 +99,7 @@ app.use(
 
 function corsAllowedOrigins() {
   if (CORS_ORIGINS.length > 0) return CORS_ORIGINS;
-  const isProduction = process.env.NODE_ENV === 'production';
+  const isProduction = isProductionEnv();
   if (!isProduction) {
     return [
       'http://localhost:5173',
@@ -369,7 +373,7 @@ const adminLoginRateLimit = rateLimit({
 
 const MIN_JWT_SECRET_LEN = 32;
 const _rawJwtSecret = (process.env.JWT_SECRET || '').trim();
-const _isProd = process.env.NODE_ENV === 'production';
+const _isProd = isProductionEnv();
 
 if (_isProd && !_rawJwtSecret) {
   console.error('FATAL: задайте JWT_SECRET в .env (не менее 32 символов) перед запуском в production.');
