@@ -53,6 +53,18 @@ function extractUsedVars(str) {
  * @param {{ astMode: 'safe' | 'advanced'; allowedMemoryKeys: string[] }} opts
  * @returns {string[]}
  */
+function collectGeneratedKvKeys(stacks) {
+  const keys = new Set();
+  for (const stack of stacks || []) {
+    for (const block of stack?.blocks || []) {
+      if (block?.type !== 'save' && block?.type !== 'save_global') continue;
+      const key = String(block?.props?.key ?? '').trim();
+      if (key) keys.add(key);
+    }
+  }
+  return keys;
+}
+
 export function semanticValidate(stacks, opts) {
   const errors = [];
   const astMode = opts?.astMode === 'advanced' ? 'advanced' : 'safe';
@@ -62,28 +74,33 @@ export function semanticValidate(stacks, opts) {
     return ['semantic: ожидался массив стеков'];
   }
 
+  const generatedKvKeys = collectGeneratedKvKeys(stacks);
+
   for (const stack of stacks) {
     const blocks = stack?.blocks || [];
     for (const block of blocks) {
       const t = block?.type;
       const p = block?.props || {};
       if (t === 'get') {
+        const key = String(p.key ?? '').trim();
         if (astMode === 'safe') {
-          errors.push(
-            `Блок get (стек ${stack?.id}): в режиме safe KV get запрещён. Убери get или перестрой на remember/ask.`,
-          );
+          if (!generatedKvKeys.has(key)) {
+            errors.push(
+              `Блок get (стек ${stack?.id}): в режиме safe можно читать только ключи, которые этот же AI-бот сохраняет через save/save_global. Ключ "${key}" не найден среди сохранённых.`,
+            );
+          }
           continue;
         }
+        if (generatedKvKeys.has(key)) continue;
         if (allowedKeys.size === 0) {
           errors.push(
-            `Блок get (стек ${stack?.id}): список разрешённых ключей пуст — get недоступен. Задайте AI_ALLOWED_MEMORY_KEYS или уберите get.`,
+            `Блок get (стек ${stack?.id}): список разрешённых ключей пуст — get доступен только для ключей, сохранённых этим же ботом.`,
           );
           continue;
         }
-        const key = String(p.key ?? '').trim();
         if (!allowedKeys.has(key)) {
           errors.push(
-            `Блок get (стек ${stack?.id}): ключ "${key}" не из разрешённого списка: ${[...allowedKeys].join(', ')}.`,
+            `Блок get (стек ${stack?.id}): ключ "${key}" не сохранён этим ботом и не входит в allowlist: ${[...allowedKeys].join(', ')}.`,
           );
         }
       }

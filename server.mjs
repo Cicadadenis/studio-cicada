@@ -548,6 +548,34 @@ const JWT_SECRET = _rawJwtSecret.length >= MIN_JWT_SECRET_LEN
       return gen;
     })();
 const JWT_EXPIRES_SEC = Number(process.env.JWT_EXPIRES_SEC || 30 * 24 * 60 * 60); // 30 дней по умолчанию
+const MIN_PASSWORD_LENGTH = 8;
+const MAX_PROFILE_NAME_LENGTH = 120;
+const MAX_EMAIL_LENGTH = 254;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function normalizeEmail(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isValidEmail(value) {
+  const email = normalizeEmail(value);
+  return email.length > 0 && email.length <= MAX_EMAIL_LENGTH && EMAIL_RE.test(email);
+}
+
+function isStrongEnoughPassword(value) {
+  return typeof value === 'string' && value.length >= MIN_PASSWORD_LENGTH && value.length <= 256;
+}
+
+function isSafeProfilePhotoUrl(value) {
+  if (typeof value !== 'string' || value.length > 2048) return false;
+  if (value.startsWith(`${AVATAR_URL_PREFIX}/`)) return Boolean(avatarFilePathFromUrl(value));
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
 
 /** Одноразовая передача JWT в SPA после OAuth-редиректа (httpOnly cookie). */
 const USER_SESSION_COOKIE = 'user_session';
@@ -1093,8 +1121,14 @@ app.use((req, res, next) => {
 // ================= AUTH =================
 
 app.post('/api/register', registerRateLimit, async (req, res) => {
-  const { name, email, password } = req.body;
+  const name = String(req.body?.name || '').trim().slice(0, MAX_PROFILE_NAME_LENGTH);
+  const email = normalizeEmail(req.body?.email);
+  const { password } = req.body || {};
   if (!name || !email || !password) return res.json({ error: 'Все поля обязательны' });
+  if (!isValidEmail(email)) return res.status(400).json({ error: 'Введите корректный email' });
+  if (!isStrongEnoughPassword(password)) {
+    return res.status(400).json({ error: `Пароль должен быть от ${MIN_PASSWORD_LENGTH} до 256 символов` });
+  }
 
   if (await findByEmail(email)) return res.json({ error: 'Email уже существует' });
 
@@ -1105,7 +1139,7 @@ app.post('/api/register', registerRateLimit, async (req, res) => {
     INSERT INTO users (id, name, email, password, verified, verify_token, verify_token_exp, plan, subscription_exp)
     VALUES ($1,$2,$3,$4,$5,$6,$7,'pro',$8)
   `, [
-    Date.now().toString(36), name, email, hashPassword(password),
+    crypto.randomUUID(), name, email, hashPassword(password),
     false, verifyToken, Date.now() + 24 * 60 * 60 * 1000, trialExp,
   ]);
 
@@ -1216,7 +1250,8 @@ app.get('/api/verify-email', verifyEmailRateLimit, async (req, res) => {
 });
 
 app.post('/api/login', loginRateLimit, async (req, res) => {
-  const { email, password } = req.body;
+  const email = normalizeEmail(req.body?.email);
+  const password = String(req.body?.password || '');
 
   const user = await findByEmail(email);
   if (!user || !checkPassword(password, user.password)) {
@@ -1557,14 +1592,22 @@ app.post('/api/update', requireUserAuth, async (req, res) => {
   const user = await findById(userId);
   if (!user) return res.json({ error: 'Пользователь не найден' });
 
+  if (Object.prototype.hasOwnProperty.call(updates, 'email') && normalizeEmail(updates.email) !== normalizeEmail(user.email)) {
+    return res.status(400).json({ error: 'Для смены email используйте подтверждение кодом' });
+  }
+
   if (updates.password) {
-    if (updates.currentPassword && !checkPassword(updates.currentPassword, user.password))
-      return res.json({ error: 'Текущий пароль неверный' });
+    if (!updates.currentPassword || !checkPassword(updates.currentPassword, user.password)) {
+      return res.status(400).json({ error: 'Текущий пароль неверный' });
+    }
+    if (!isStrongEnoughPassword(updates.password)) {
+      return res.status(400).json({ error: `Пароль должен быть от ${MIN_PASSWORD_LENGTH} до 256 символов` });
+    }
     await pool.query('UPDATE users SET password = $1 WHERE id = $2', [hashPassword(updates.password), userId]);
   }
 
-  const newName  = updates.name  ?? user.name;
-  const newEmail = updates.email ?? user.email;
+  const newName  = String(updates.name ?? user.name ?? '').trim().slice(0, MAX_PROFILE_NAME_LENGTH);
+  const newEmail = user.email;
   let newPhotoUrl = user.photo_url ?? null;
   if (Object.prototype.hasOwnProperty.call(updates, 'photo_url')) {
     const candidate = updates.photo_url;
@@ -1578,8 +1621,8 @@ app.post('/api/update', requireUserAuth, async (req, res) => {
         } catch (e) {
           return res.status(400).json({ error: e?.publicMessage || 'Неверный формат аватара' });
         }
-      } else if (candidate.length > 2048) {
-        return res.json({ error: 'Ссылка на аватар слишком длинная' });
+      } else if (!isSafeProfilePhotoUrl(candidate)) {
+        return res.status(400).json({ error: 'Ссылка на аватар должна быть HTTPS или локальным аватаром Cicada' });
       } else {
         newPhotoUrl = candidate;
       }
@@ -1617,14 +1660,16 @@ app.post('/api/update', requireUserAuth, async (req, res) => {
 // ================= EMAIL CHANGE =================
 
 app.post('/api/request-email-change', requireUserAuth, emailChangeRateLimit, async (req, res) => {
-  const { userId, currentEmail, newEmail } = req.body;
+  const { userId, currentEmail } = req.body;
+  const newEmail = normalizeEmail(req.body?.newEmail);
   if (!userId || !currentEmail || !newEmail) return res.json({ error: 'Неверный запрос' });
   if (req.authUserId !== userId) return res.status(403).json({ error: 'Forbidden' });
+  if (!isValidEmail(newEmail)) return res.status(400).json({ error: 'Введите корректный email' });
 
   const user = await findById(userId);
-  if (!user)                       return res.json({ error: 'Пользователь не найден' });
-  if (user.email !== currentEmail) return res.json({ error: 'Текущий email не совпадает' });
-  if (await findByEmail(newEmail)) return res.json({ error: 'Этот email уже используется' });
+  if (!user)                                 return res.json({ error: 'Пользователь не найден' });
+  if (normalizeEmail(user.email) !== normalizeEmail(currentEmail)) return res.json({ error: 'Текущий email не совпадает' });
+  if (await findByEmail(newEmail))           return res.json({ error: 'Этот email уже используется' });
 
   const code = String(Math.floor(100000 + Math.random() * 900000));
   await pool.query(
@@ -1638,16 +1683,19 @@ app.post('/api/request-email-change', requireUserAuth, emailChangeRateLimit, asy
   res.json({ success: true });
 });
 
-app.post('/api/confirm-email-change', confirmEmailChangeRateLimit, async (req, res) => {
-  const { userId, code, newEmail } = req.body;
+app.post('/api/confirm-email-change', requireUserAuth, confirmEmailChangeRateLimit, async (req, res) => {
+  const { userId, code } = req.body;
+  const newEmail = normalizeEmail(req.body?.newEmail);
   if (!userId || !code || !newEmail) return res.json({ error: 'Неверный запрос' });
+  if (req.authUserId !== userId) return res.status(403).json({ error: 'Forbidden' });
+  if (!isValidEmail(newEmail)) return res.status(400).json({ error: 'Введите корректный email' });
 
   const user = await findById(userId);
   if (!user)                                      return res.json({ error: 'Пользователь не найден' });
   if (!user.emailChangeCode)                      return res.json({ error: 'Код не был запрошен' });
   if (Date.now() > user.emailChangeCodeExp)       return res.json({ error: 'Код устарел' });
-  if (user.emailChangeCode !== code.trim())       return res.json({ error: 'Неверный код подтверждения' });
-  if (user.emailChangePending !== newEmail)       return res.json({ error: 'Email не совпадает с запрошенным' });
+  if (user.emailChangeCode !== String(code).trim()) return res.json({ error: 'Неверный код подтверждения' });
+  if (normalizeEmail(user.emailChangePending) !== newEmail) return res.json({ error: 'Email не совпадает с запрошенным' });
 
   await pool.query(
     'UPDATE users SET email=$1, email_change_code=NULL, email_change_code_exp=NULL, email_change_pending=NULL WHERE id=$2',
@@ -2488,9 +2536,13 @@ app.get('/api/subscription/purchases', requireUserAuth, async (req, res) => {
   res.json({ purchases: rows.map((row) => subscriptionReceiptRow(row, plans)).filter(Boolean) });
 });
 
-app.get('/api/subscription/status', async (req, res) => {
-  const { userId } = req.query;
-  const user = await findById(userId);
+app.get('/api/subscription/status', requireUserAuth, async (req, res) => {
+  const requestedUserId = String(req.query?.userId || req.authUserId);
+  if (requestedUserId !== req.authUserId) {
+    const actor = await findById(req.authUserId);
+    if (!actor || actor.role !== 'admin' || actor.banned) return res.status(403).json({ error: 'Forbidden' });
+  }
+  const user = await findById(requestedUserId);
   if (!user) return res.json({ error: 'Пользователь не найден' });
 
   const now    = Date.now();
@@ -4963,6 +5015,9 @@ const IR_FEW_SHOT_ASSISTANT = `{"irVersion":1,"targetCore":"0.3.5","compatibilit
 const IR_FEW_SHOT_USER_2 = `магазин: категории и товары через inline-кнопки из БД`;
 const IR_FEW_SHOT_ASSISTANT_2 = `{"irVersion":1,"targetCore":"0.3.5","compatibilityMode":"0.3.5 exact","intent":{"primary":"db_inline_catalog"},"state":{"globals":[{"name":"категории","value":"[\\"Пицца\\", \\"Напитки\\"]"}]},"uiStates":[{"id":"ui_menu","message":"🏠 Главное меню","buttons":"📦 Каталог"},{"id":"ui_categories","message":"📦 Выберите категорию:","inlineDb":{"key":"категории","callbackPrefix":"cat:","backText":"⬅️ Назад","backCallback":"back","columns":"2"}}],"handlers":[{"id":"h_start","type":"start","trigger":"","actions":[{"type":"ui_state","uiStateId":"ui_menu"},{"type":"stop"}]},{"id":"h_catalog","type":"callback","trigger":"📦 Каталог","actions":[{"type":"ui_state","uiStateId":"ui_categories"},{"type":"stop"}]},{"id":"h_inline","type":"callback","trigger":"","actions":[{"type":"condition","cond":"начинается_с(callback_data, \\"cat:\\")","then":[{"type":"remember","varname":"категория","value":"срез(callback_data, 4)"},{"type":"message","text":"Товары категории: {категория}"},{"type":"inline_db","key":"товары","callbackPrefix":"prod:","backText":"⬅️ Категории","backCallback":"back_categories","columns":"1"},{"type":"stop"}],"else":[{"type":"condition","cond":"начинается_с(callback_data, \\"prod:\\")","then":[{"type":"remember","varname":"товар","value":"срез(callback_data, 5)"},{"type":"message","text":"📦 Товар: {товар}\\nЦена и описание берутся из БД."},{"type":"stop"}],"else":[{"type":"ui_state","uiStateId":"ui_categories"},{"type":"stop"}]}]}]}],"blocks":[],"scenarios":[],"transitions":[{"from":"h_catalog","to":"ui_categories","type":"ui_state"},{"from":"h_inline","to":"ui_categories","type":"inline_router"}]}`;
 
+const IR_FEW_SHOT_USER_3 = `создай бот телеграм прием заявок с бд и статусом`;
+const IR_FEW_SHOT_ASSISTANT_3 = `{"irVersion":1,"targetCore":"0.3.5","compatibilityMode":"0.3.5 exact","intent":{"primary":"request_intake_with_status"},"state":{"globals":[]},"uiStates":[{"id":"ui_start","message":"👋 Добро пожаловать! Здесь вы можете оставить заявку и проверить её статус.","buttons":"📝 Оставить заявку, 📊 Статус заявки"}],"handlers":[{"id":"h_start","type":"start","trigger":"","actions":[{"type":"ui_state","uiStateId":"ui_start"},{"type":"stop"}]},{"id":"h_new_request","type":"callback","trigger":"📝 Оставить заявку","actions":[{"type":"message","text":"Заполните заявку — я сохраню её в базе."},{"type":"run_scenario","target":"прием_заявки"}]},{"id":"h_status","type":"callback","trigger":"📊 Статус заявки","actions":[{"type":"get","key":"заявка_{user_id}","varname":"заявка"},{"type":"message","text":"📌 Статус вашей последней заявки:\n{заявка}\n\nЕсли данных нет — сначала оставьте заявку."},{"type":"stop"}]}],"blocks":[],"scenarios":[{"id":"sc_request","name":"прием_заявки","steps":[{"id":"step_name","name":"имя","actions":[{"type":"ask","question":"Как вас зовут?","varname":"имя"}]},{"id":"step_contact","name":"контакт","actions":[{"type":"ask","question":"Оставьте телефон или @username:","varname":"контакт"}]},{"id":"step_text","name":"описание","actions":[{"type":"ask","question":"Опишите заявку:","varname":"описание"},{"type":"remember","varname":"статус","value":"новая"},{"type":"save_global","key":"заявка_{user_id}","value":"№ {user_id} | Имя: {имя} | Контакт: {контакт} | Заявка: {описание} | Статус: {статус}"},{"type":"message","text":"✅ Заявка сохранена в базе.\nНомер: {user_id}\nСтатус: {статус}.\nПроверить позже можно кнопкой «📊 Статус заявки»."},{"type":"stop"}]}]}],"transitions":[{"from":"h_new_request","to":"sc_request","type":"run_scenario"},{"from":"h_status","to":"заявка_{user_id}","type":"get_status"}]}`;
+
 function serverAiAstPolicyAppendix(astMode, allowedMemoryKeys) {
   const lines = [
     '',
@@ -4970,7 +5025,7 @@ function serverAiAstPolicyAppendix(astMode, allowedMemoryKeys) {
   ];
   if (astMode === 'safe') {
     lines.push(
-      'Режим SAFE: блок с type "get" ЗАПРЕЩЁН. KV-чтение недоступно. Используй ask + remember.',
+      'Режим SAFE: get разрешён только для ключей, которые этот же бот сохраняет через save/save_global (точно такая же строка key). Для внешних/старых ключей get запрещён; используй ask + remember.',
     );
   } else {
     lines.push(
@@ -6916,6 +6971,8 @@ app.post('/api/ai-generate', requireUserAuth, aiGenerateRateLimit, async (req, r
       { role: 'assistant', content: IR_FEW_SHOT_ASSISTANT },
       { role: 'user', content: IR_FEW_SHOT_USER_2 },
       { role: 'assistant', content: IR_FEW_SHOT_ASSISTANT_2 },
+      { role: 'user', content: IR_FEW_SHOT_USER_3 },
+      { role: 'assistant', content: IR_FEW_SHOT_ASSISTANT_3 },
       { role: 'user', content: buildIntentPlannedUserPrompt(promptText, intentPlan) },
     ];
 
@@ -7436,10 +7493,10 @@ app.post(
     } catch (e) {
       const kind = e?.llmKind;
       if (kind === 'NETWORK') {
-        return sendAiGenerateError(res, authUser, 503, e.message);
+        return sendAiGenerateError(res, req.appAdminUser, 503, e.message);
       }
       if (kind === 'RATE_LIMIT') {
-        return sendAiGenerateError(res, authUser, 429, e.message);
+        return sendAiGenerateError(res, req.appAdminUser, 429, e.message);
       }
       if (kind === 'API' || kind === 'BAD_RESPONSE') {
         return res.status(502).json({
