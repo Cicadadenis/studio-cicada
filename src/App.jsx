@@ -4628,13 +4628,6 @@ const EXAMPLE_FULL = `версия "1.0"
             </button>
           </div>
           <div className="editor-subbar-right">
-            <button
-              type="button"
-              className="editor-chip premium"
-              onClick={openPremiumPurchase}
-            >
-              + Premium
-            </button>
             <div className="editor-chip" title="Текущее время">
               ◷ {new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
             </div>

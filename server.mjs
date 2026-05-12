@@ -236,8 +236,19 @@ if (!fs.existsSync(BOTS_DIR)) {
   fs.mkdirSync(BOTS_DIR, { recursive: true });
 }
 
-const isHttps = isProductionEnv()
-  || (process.env.API_HOST && !['localhost', '127.0.0.1', '0.0.0.0'].includes(String(process.env.API_HOST).trim()));
+function isSecureRequest(req) {
+  const forwardedProto = String(req?.headers?.['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
+  return Boolean(req?.secure || forwardedProto === 'https');
+}
+
+function strictCookieOptions(req, options = {}) {
+  return {
+    sameSite: 'strict',
+    secure: isSecureRequest(req),
+    path: '/',
+    ...options,
+  };
+}
 
 function pushSystemError(source, err) {
   const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
@@ -261,6 +272,14 @@ function pushRing(list, item, max = 100) {
   if (list.length > max) list.shift();
 }
 
+function redactSecrets(value) {
+  return String(value || '')
+    .replace(/\b\d{6,12}:[A-Za-z0-9_-]{25,}\b/g, '[redacted:bot-token]')
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{12,}/gi, '$1 [redacted]')
+    .replace(/\b(token|secret|api[_-]?key|password|passwd|authorization|client_secret)\b(\s*[:=]\s*)(["']?)[^\s"',;]+/gi, '$1$2$3[redacted]')
+    .replace(/(бот\s+["'])[^"'\r\n]{8,}(["'])/giu, '$1[redacted]$2');
+}
+
 function recordApiError(req, statusCode, message) {
   if (!req?.path?.startsWith('/api/')) return;
   pushRing(recentApiErrors, {
@@ -269,7 +288,7 @@ function recordApiError(req, statusCode, message) {
     method: req.method,
     statusCode,
     message: String(message || ''),
-    userId: req.body?.userId || req.query?.userId || null,
+    userId: req.authUserId || null,
     ip: req.ip || null,
   }, 300);
 }
@@ -292,7 +311,7 @@ function recordSecurityEvent(type, req, details = {}) {
     path: req?.path || null,
     method: req?.method || null,
     ip: req?.ip || null,
-    userId: req?.authUserId || req?.body?.userId || null,
+    userId: req?.authUserId || null,
     details,
   }, 500);
 }
@@ -543,15 +562,12 @@ function issueUserJwt(userId) {
   return jwt.sign({ sub: userId, type: 'user' }, JWT_SECRET, { expiresIn: JWT_EXPIRES_SEC });
 }
 
-function issueUserSessionCookie(res, userId) {
+function issueUserSessionCookie(req, res, userId) {
   const jwtToken = issueUserJwt(userId);
-  res.cookie(USER_SESSION_COOKIE, jwtToken, {
+  res.cookie(USER_SESSION_COOKIE, jwtToken, strictCookieOptions(req, {
     httpOnly: true,
-    sameSite: 'strict',
-    secure: isHttps,
     maxAge: JWT_EXPIRES_SEC * 1000,
-    path: '/',
-  });
+  }));
   return jwtToken;
 }
 
@@ -581,34 +597,28 @@ function buildOauthRedirectUrl(code) {
   return target.toString();
 }
 
-function clearUserSessionCookies(res) {
-  const opts = { path: '/', httpOnly: true, sameSite: 'strict', secure: isHttps };
+function clearUserSessionCookies(req, res) {
+  const opts = strictCookieOptions(req, { httpOnly: true });
   res.clearCookie(USER_SESSION_COOKIE, opts);
   res.clearCookie(OAUTH_JWT_HANDOFF_COOKIE, opts);
 }
 
-function issueAdminSessionCookie(res) {
+function issueAdminSessionCookie(req, res) {
   const token = jwt.sign({ type: 'admin' }, JWT_SECRET, { expiresIn: ADMIN_JWT_EXPIRES_SEC });
-  res.cookie('admin_session', token, {
+  res.cookie('admin_session', token, strictCookieOptions(req, {
     httpOnly: true,
-    sameSite: 'strict',
-    secure: isHttps,
     maxAge: ADMIN_JWT_EXPIRES_SEC * 1000,
-    path: '/',
-  });
+  }));
 }
 
-function issueAdminRouteCookie(res, userId) {
+function issueAdminRouteCookie(req, res, userId) {
   const token = jwt.sign({ sub: String(userId), type: 'admin_route' }, JWT_SECRET, {
     expiresIn: ADMIN_ROUTE_EXPIRES_SEC,
   });
-  res.cookie(ADMIN_ROUTE_COOKIE, token, {
+  res.cookie(ADMIN_ROUTE_COOKIE, token, strictCookieOptions(req, {
     httpOnly: true,
-    sameSite: 'strict',
-    secure: isHttps,
     maxAge: ADMIN_ROUTE_EXPIRES_SEC * 1000,
-    path: '/',
-  });
+  }));
 }
 
 function getJwtUserId(req) {
@@ -1044,14 +1054,11 @@ const globalApiRateLimit = rateLimit({
   handler: rl429,
 });
 
-function setCsrfCookie(res, token) {
-  res.cookie(CSRF_COOKIE_NAME, token, {
+function setCsrfCookie(req, res, token) {
+  res.cookie(CSRF_COOKIE_NAME, token, strictCookieOptions(req, {
     httpOnly: false,
-    sameSite: 'strict',
-    secure: isHttps,
-    path: '/',
     maxAge: 12 * 60 * 60 * 1000,
-  });
+  }));
 }
 
 app.get('/api/csrf-token', (req, res) => {
@@ -1059,7 +1066,7 @@ app.get('/api/csrf-token', (req, res) => {
   if (!t || typeof t !== 'string' || t.length < 48) {
     t = crypto.randomBytes(32).toString('hex');
   }
-  setCsrfCookie(res, t);
+  setCsrfCookie(req, res, t);
   res.json({ csrfToken: t });
 });
 
@@ -1237,7 +1244,7 @@ app.post('/api/login', loginRateLimit, async (req, res) => {
     await pool.query('UPDATE users SET password = $1 WHERE id = $2', [hashPassword(password), user.id]);
   }
 
-  issueUserSessionCookie(res, user.id);
+  issueUserSessionCookie(req, res, user.id);
   recordUserLogin(user.id, req.ip, 'password');
   recordUserAction(user.id, 'login_success', { method: 'password' });
   res.json({ success: true, user: safeUser(user) });
@@ -1441,7 +1448,7 @@ app.post('/api/passkey/login', loginRateLimit, async (req, res) => {
     const user = await findById(credential.userId);
     if (!user || user.banned || !user.verified) throw new Error('Аккаунт недоступен');
     await pool.query('UPDATE user_passkeys SET sign_count=$1, last_used_at=NOW() WHERE credential_id=$2', [signCount, credential.credentialId]);
-    issueUserSessionCookie(res, user.id);
+    issueUserSessionCookie(req, res, user.id);
     recordUserLogin(user.id, req.ip, 'passkey');
     recordUserAction(user.id, 'login_success', { method: 'passkey' });
     res.json({ success: true, user: safeUser(user) });
@@ -1451,7 +1458,7 @@ app.post('/api/passkey/login', loginRateLimit, async (req, res) => {
   }
 });
 app.post('/api/logout', (req, res) => {
-  clearUserSessionCookies(res);
+  clearUserSessionCookies(req, res);
   res.clearCookie('session_token', { path: '/' });
   res.json({ ok: true });
 });
@@ -1961,9 +1968,11 @@ app.post('/api/bot/preview', previewJsonParser, botPreviewRateLimit, async (req,
 
 app.post('/api/run', requireUserAuth, botRunRateLimit, async (req, res) => {
   try {
-    const { code, userId } = req.body;
-    if (!userId) return res.json({ error: 'no userId' });
-    if (req.authUserId !== String(userId)) return res.status(403).json({ error: 'Forbidden' });
+    const { code } = req.body;
+    const requestedUserId = String(req.body?.userId || '');
+    if (!requestedUserId) return res.json({ error: 'no userId' });
+    if (req.authUserId !== requestedUserId) return res.status(403).json({ error: 'Forbidden' });
+    const userId = req.authUserId;
     if (!code)   return res.json({ error: 'no code' });
     const tokenMatch = String(code).match(/^\s*бот\s+"([^"]*)"/m);
     const token = tokenMatch?.[1]?.trim() || '';
@@ -2003,9 +2012,10 @@ app.post('/api/run', requireUserAuth, botRunRateLimit, async (req, res) => {
     if (!isRunnerActive(userId)) {
       const info = getRunnerLogs(userId, 80);
       const tail = String(info.logs || '').trim().split(/\r?\n/).slice(-8).join('\n');
+      const safeTail = redactSecrets(tail);
       const last = info.lastExit || {};
-      const humanError = tail
-        ? `Бот завершился сразу после запуска\n\nЛог:\n${tail}`
+      const humanError = safeTail
+        ? `Бот завершился сразу после запуска\n\nЛог:\n${safeTail}`
         : `Бот завершился сразу после запуска (reason=${last.reason || 'exit'}, code=${last.code ?? 'null'}, signal=${last.signal ?? 'null'})`;
       return res.status(422).json({
         error: humanError,
@@ -2013,7 +2023,7 @@ app.post('/api/run', requireUserAuth, botRunRateLimit, async (req, res) => {
           reason: last.reason || 'exit',
           code: last.code ?? null,
           signal: last.signal ?? null,
-          logTail: tail,
+          logTail: safeTail,
         },
       });
     }
@@ -2025,8 +2035,9 @@ app.post('/api/run', requireUserAuth, botRunRateLimit, async (req, res) => {
 });
 
 app.post('/api/stop', requireUserAuth, (req, res) => {
-  const { userId } = req.body;
-  if (!userId || req.authUserId !== String(userId)) return res.status(403).json({ error: 'Forbidden' });
+  const requestedUserId = String(req.body?.userId || '');
+  if (!requestedUserId || req.authUserId !== requestedUserId) return res.status(403).json({ error: 'Forbidden' });
+  const userId = req.authUserId;
   if (!isRunnerActive(userId)) return res.json({ error: 'no bot' });
   stopRunner(userId, { reason: 'manual' });
   recordUserAction(userId, 'bot_stop', {});
@@ -2040,11 +2051,12 @@ app.get('/api/bots', requireUserAuth, (req, res) => {
 /** Логи процесса cicada для песочницы «Запуск» (тот же userId, что в POST /api/run). */
 app.get('/api/bot/logs', requireUserAuth, (req, res) => {
   try {
-    const userId = req.query.userId;
-    if (!userId || typeof userId !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(userId)) {
+    const requestedUserId = String(req.query.userId || '');
+    if (!requestedUserId || !/^[a-zA-Z0-9_-]{1,64}$/.test(requestedUserId)) {
       return res.status(400).json({ error: 'invalid userId' });
     }
-    if (req.authUserId !== userId) return res.status(403).json({ error: 'Forbidden' });
+    if (req.authUserId !== requestedUserId) return res.status(403).json({ error: 'Forbidden' });
+    const userId = req.authUserId;
     const info = getRunnerLogs(userId, 280);
     res.json(info);
   } catch (e) {
@@ -2409,8 +2421,8 @@ app.get('/api/health', (_req, res) => {
 
 // OAuth/bootstrap now returns the user; JWT remains in HttpOnly SameSite cookie.
 app.get('/api/auth/oauth-bootstrap', async (req, res) => {
-  const handoffOpts = { path: '/', httpOnly: true, sameSite: 'strict', secure: isHttps };
-  const pendingOpts = { path: '/', httpOnly: true, sameSite: 'strict', secure: isHttps, maxAge: 10 * 60 * 1000 };
+  const handoffOpts = strictCookieOptions(req, { httpOnly: true });
+  const pendingOpts = strictCookieOptions(req, { httpOnly: true, maxAge: 10 * 60 * 1000 });
   const pendingRaw = req.cookies?.[OAUTH_2FA_PENDING_COOKIE];
   if (pendingRaw) {
     try {
@@ -2435,10 +2447,10 @@ app.get('/api/auth/oauth-bootstrap', async (req, res) => {
     if (!user || user.banned) return res.json({ ok: false });
     if (meta.type === 'oauth_2fa_pending') {
       const pending = jwt.sign({ sub: String(user.id), type: 'oauth_2fa_pending' }, JWT_SECRET, { expiresIn: '10m' });
-      res.cookie(OAUTH_2FA_PENDING_COOKIE, pending, { httpOnly: true, sameSite: 'strict', secure: isHttps, path: '/', maxAge: 10 * 60 * 1000 });
+      res.cookie(OAUTH_2FA_PENDING_COOKIE, pending, strictCookieOptions(req, { httpOnly: true, maxAge: 10 * 60 * 1000 }));
       return res.json({ ok: false, twofaRequired: true, user: safeUser(user) });
     }
-    issueUserSessionCookie(res, user.id);
+    issueUserSessionCookie(req, res, user.id);
     return res.json({ ok: true, user: safeUser(user) });
   }
   const cookieUserId = getJwtUserId(req);
@@ -2452,7 +2464,7 @@ app.get('/api/auth/oauth-bootstrap', async (req, res) => {
       if (!d || d.type !== 'user' || !d.sub) return res.json({ ok: false });
       const user = await findById(String(d.sub));
       if (!user || user.banned) return res.json({ ok: false });
-      issueUserSessionCookie(res, user.id);
+      issueUserSessionCookie(req, res, user.id);
       return res.json({ ok: true, user: safeUser(user) });
     } catch {
       return res.json({ ok: false });
@@ -2462,7 +2474,7 @@ app.get('/api/auth/oauth-bootstrap', async (req, res) => {
 });
 
 app.post('/api/auth/oauth-2fa/complete', async (req, res) => {
-  const pendingOpts = { path: '/', httpOnly: true, sameSite: 'strict', secure: isHttps, maxAge: 10 * 60 * 1000 };
+  const pendingOpts = strictCookieOptions(req, { httpOnly: true, maxAge: 10 * 60 * 1000 });
   const raw = req.cookies?.[OAUTH_2FA_PENDING_COOKIE];
   if (!raw) return res.status(401).json({ error: 'Сессия 2FA истекла. Войдите снова через OAuth.' });
   let userId = null;
@@ -2481,7 +2493,7 @@ app.post('/api/auth/oauth-2fa/complete', async (req, res) => {
   if (!verifyTotp(user.twofaSecret, totp, 1)) return res.status(401).json({ error: 'Неверный код 2FA', twofaRequired: true });
 
   res.clearCookie(OAUTH_2FA_PENDING_COOKIE, pendingOpts);
-  issueUserSessionCookie(res, user.id);
+  issueUserSessionCookie(req, res, user.id);
   recordUserLogin(user.id, req.ip, 'oauth_2fa');
   recordUserAction(user.id, 'login_success', { method: 'oauth_2fa' });
   return res.json({ success: true, user: safeUser(user) });
@@ -2697,7 +2709,7 @@ function fromB64url(value) {
 
 function resolveAdminWebAuthnOrigin(req) {
   if (ADMIN_WEBAUTHN_ORIGIN) return ADMIN_WEBAUTHN_ORIGIN;
-  const proto = req.get('x-forwarded-proto') || req.protocol || (isHttps ? 'https' : 'http');
+  const proto = req.get('x-forwarded-proto') || (isSecureRequest(req) ? 'https' : req.protocol || 'http');
   const host = req.get('x-forwarded-host') || req.get('host') || API_HOST || 'localhost';
   return `${String(proto).split(',')[0]}://${String(host).split(',')[0]}`.replace(/\/$/, '');
 }
@@ -2890,7 +2902,7 @@ function isAdminAuthed(req) {
 app.use('/api/admin', requireAdminApi);
 
 app.post('/api/admin/enter', (req, res) => {
-  issueAdminRouteCookie(res, req.authUserId);
+  issueAdminRouteCookie(req, res, req.authUserId);
   recordAdminAction(req, 'admin_route_enter', req.authUserId, {});
   res.json({ ok: true });
 });
@@ -2936,7 +2948,7 @@ app.post('/api/admin/passkey/login', adminLoginRateLimit, (req, res) => {
         : c
     ));
     saveAdminPasskeys(credentials);
-    issueAdminSessionCookie(res);
+    issueAdminSessionCookie(req, res);
     recordAdminAction(req, 'admin_passkey_login', null, { credentialId: credential.credentialId.slice(0, 12) });
     res.json({ ok: true });
   } catch (err) {
@@ -3013,7 +3025,7 @@ app.post('/api/admin/login', adminLoginRateLimit, (req, res) => {
       return res.status(403).json({ error: 'Forbidden' });
     }
   }
-  issueAdminSessionCookie(res);
+  issueAdminSessionCookie(req, res);
   recordAdminAction(req, 'admin_login', null, {});
   res.json({ ok: true });
 });
@@ -3024,8 +3036,8 @@ app.get('/api/admin/session', (req, res) => {
 });
 
 app.post('/api/admin/logout', (req, res) => {
-  res.clearCookie('admin_session', { path: '/', httpOnly: true, sameSite: 'strict', secure: isHttps });
-  res.clearCookie(ADMIN_ROUTE_COOKIE, { path: '/', httpOnly: true, sameSite: 'strict', secure: isHttps });
+  res.clearCookie('admin_session', strictCookieOptions(req, { httpOnly: true }));
+  res.clearCookie(ADMIN_ROUTE_COOKIE, strictCookieOptions(req, { httpOnly: true }));
   recordAdminAction(req, 'admin_logout', null, {});
   res.json({ ok: true });
 });
@@ -3509,7 +3521,7 @@ app.get('/api/admin/security', (req, res) => {
     cookieSecurity: {
       httpOnly: true,
       sameSite: 'strict',
-      secure: Boolean(isHttps),
+      secure: isSecureRequest(req),
     },
     controls: {
       rateLimitMiddleware: 'express-rate-limit',
@@ -3940,7 +3952,7 @@ app.post('/api/auth/telegram', async (req, res) => {
       return res.status(403).json({ error: 'Аккаунт заблокирован администратором' });
     }
 
-    issueUserSessionCookie(res, result.user.id);
+    issueUserSessionCookie(req, res, result.user.id);
     res.json({ success: true, user: safeUser(result.user) });
   } catch (e) {
     console.error('telegram POST auth error:', e);
