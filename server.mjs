@@ -1260,6 +1260,10 @@ function cleanupLocalAvatar(photoUrl) {
   try { fs.unlinkSync(filePath); } catch {}
 }
 
+function isLocalAvatarUrl(photoUrl) {
+  return Boolean(avatarFilePathFromUrl(photoUrl));
+}
+
 function saveAvatarDataUrl(dataUrl, oldPhotoUrl = null) {
   const { buffer, ext } = parseAvatarDataUrl(dataUrl);
   fs.mkdirSync(AVATAR_UPLOAD_DIR, { recursive: true });
@@ -2889,6 +2893,15 @@ app.get('/api/admin/support-requests', async (req, res) => {
   res.json({ requests: rows.map(supportRequestRow) });
 });
 
+app.get('/api/admin/support-count', requireUserAuth, requireAppAdmin, async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS open_count
+     FROM support_requests
+     WHERE status = 'open'`
+  );
+  res.json({ open: Number(rows[0]?.open_count || 0) });
+});
+
 app.post('/api/admin/support-requests/:id/reply', async (req, res) => {
   if (!isAdminAuthed(req)) return res.status(403).json({ error: 'Forbidden' });
   const id = String(req.params.id || '');
@@ -3305,9 +3318,12 @@ async function upsertUserFromTelegramPayload(body, req) {
   } else {
     if (user.banned) return { banned: true };
     const name = [first_name, last_name].filter(Boolean).join(' ') || username || user.name;
+    const nextPhotoUrl = isLocalAvatarUrl(user.photo_url)
+      ? user.photo_url
+      : (photo_url ?? user.photo_url);
     await pool.query('UPDATE users SET name=$1, photo_url=$2 WHERE id=$3', [
       name,
-      photo_url ?? user.photo_url,
+      nextPhotoUrl,
       user.id,
     ]);
     user = await findByTgId(tgId);

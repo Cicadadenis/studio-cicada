@@ -596,6 +596,55 @@
       color: var(--accent);
     }
     .filter-tab:active { opacity: 0.7; }
+    .admin-section-tabs {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .admin-section-tabs .filter-tab {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 42px;
+      text-align: center;
+      white-space: normal;
+    }
+    .user-avatar,
+    .user-card .card-avatar {
+      overflow: hidden;
+      position: relative;
+    }
+    .user-avatar img,
+    .user-card .card-avatar img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .admin-user-row {
+      background: linear-gradient(90deg, rgba(251,191,36,0.16), rgba(124,58,237,0.1)) !important;
+      box-shadow: inset 3px 0 0 rgba(251,191,36,0.9);
+    }
+    .admin-user-card {
+      border-color: rgba(251,191,36,0.72) !important;
+      background: linear-gradient(135deg, rgba(251,191,36,0.16), rgba(124,58,237,0.12)), var(--bg2) !important;
+      box-shadow: inset 3px 0 0 rgba(251,191,36,0.9), 0 0 24px rgba(251,191,36,0.14);
+    }
+    .admin-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      margin-top: 5px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(251,191,36,0.45);
+      background: rgba(251,191,36,0.13);
+      color: #fde68a;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
 
     /* ── Grant Sub Modal ── */
     .sub-modal-overlay {
@@ -901,6 +950,13 @@
       gap: 9px;
       margin-bottom: 16px;
     }
+    #admin-panel .admin-section-tabs {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      overflow: visible;
+      padding-bottom: 0;
+    }
     #admin-panel .filter-tab {
       border-radius: 999px;
       padding: 8px 16px;
@@ -1117,17 +1173,26 @@
       #admin-panel .stat-card .value {
         font-size: 25px;
       }
-      #admin-panel .filter-tabs {
+      #admin-panel .filter-tabs:not(.admin-section-tabs) {
         flex-wrap: nowrap;
         overflow-x: auto;
         padding-bottom: 4px;
         scrollbar-width: none;
       }
-      #admin-panel .filter-tabs::-webkit-scrollbar {
+      #admin-panel .filter-tabs:not(.admin-section-tabs)::-webkit-scrollbar {
         display: none;
       }
-      #admin-panel .filter-tab {
+      #admin-panel .filter-tabs:not(.admin-section-tabs) .filter-tab {
         flex: 0 0 auto;
+      }
+      #admin-panel .admin-section-tabs {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+      }
+      #admin-panel .admin-section-tabs .filter-tab {
+        min-height: 42px;
+        padding: 8px 6px;
+        font-size: 11px;
       }
       #admin-panel .section-header {
         gap: 10px;
@@ -1425,6 +1490,7 @@
     <span class="topbar-badge">Admin</span>
     <div class="topbar-spacer"></div>
     <span id="last-updated"></span>
+    <button class="topbar-btn" onclick="window.location.href='/'">Конструктор</button>
     <button class="topbar-btn" onclick="loadUsers()">↻</button>
     <button class="topbar-btn danger" onclick="logout()">Выйти</button>
   </div>
@@ -1461,7 +1527,7 @@
       </div>
     </div>
 
-    <div class="filter-tabs" style="margin-bottom:14px">
+    <div class="filter-tabs admin-section-tabs" style="margin-bottom:14px">
       <div class="filter-tab active" data-section="money" onclick="setSection('money', this)">💰 Деньги</div>
       <div class="filter-tab" data-section="users" onclick="setSection('users', this)">👥 Пользователи</div>
       <div class="filter-tab" data-section="support" onclick="setSection('support', this)">🛟 Обращения</div>
@@ -1650,6 +1716,7 @@
   let loginPasskeyEnabled = false;
   let adminLogs = { apiErrors: [], authErrors: [], adminActions: [] };
   let supportRequests = [];
+  const PRIMARY_ADMIN_EMAIL = 'denisbednakov@gmail.com';
 
   const AVATAR_COLORS = [
     'linear-gradient(135deg,#ffd700,#ff8c00)',
@@ -1662,6 +1729,42 @@
 
   function avatarColor(name) {
     return AVATAR_COLORS[name.charCodeAt(0) % AVATAR_COLORS.length];
+  }
+
+  function isPrimaryAdmin(user) {
+    return String(user && user.email || '').trim().toLowerCase() === PRIMARY_ADMIN_EMAIL;
+  }
+
+  function resolveAssetUrl(url) {
+    if (!url || typeof url !== 'string') return '';
+    if (/^(?:data:|blob:|https?:\/\/)/i.test(url)) return url;
+    if (!url.startsWith('/api/')) return url;
+    try {
+      var base = API || window.location.origin;
+      return new URL(url, new URL(base, window.location.origin).origin).toString();
+    } catch (e) {
+      return url;
+    }
+  }
+
+  function avatarHtml(user, className) {
+    var label = (user && (user.name || user.email) || '?');
+    var letter = label[0].toUpperCase();
+    var photo = resolveAssetUrl(user && (user.photo_url || user.photoUrl));
+    var color = avatarColor(label);
+    if (photo) {
+      return '<div class="' + className + '" style="background:' + color + '"><img src="' + escHtml(photo) + '" alt="" loading="lazy" onerror="this.remove();this.parentElement.textContent=\'' + escJs(letter) + '\'"></div>';
+    }
+    return '<div class="' + className + '" style="background:' + color + '">' + escHtml(letter) + '</div>';
+  }
+
+  function sortUsersForAdmin(users) {
+    return users.slice().sort(function(a, b) {
+      var ap = isPrimaryAdmin(a) ? 0 : 1;
+      var bp = isPrimaryAdmin(b) ? 0 : 1;
+      if (ap !== bp) return ap - bp;
+      return String(a.name || a.email || '').localeCompare(String(b.name || b.email || ''), 'ru');
+    });
   }
 
   async function apiPostJson(url, body) {
@@ -1914,7 +2017,9 @@
       document.getElementById('login-screen').style.display = 'none';
       document.getElementById('admin-panel').style.display = 'block';
       document.getElementById('login-error').style.display = 'none';
-      var activeSectionTab = document.querySelector('[data-section].active');
+      var hashSection = String(window.location.hash || '').replace(/^#/, '');
+      var hashSectionTab = hashSection ? document.querySelector('[data-section="' + hashSection.replace(/"/g, '') + '"]') : null;
+      var activeSectionTab = hashSectionTab || document.querySelector('[data-section].active');
       if (activeSectionTab) {
         setSection(activeSectionTab.getAttribute('data-section'), activeSectionTab);
       }
@@ -2353,12 +2458,13 @@
   function renderTable() {
     const query = (document.getElementById('search') ? document.getElementById('search').value : '').toLowerCase();
     let filtered = allUsers.filter(u =>
-      u.name.toLowerCase().includes(query) ||
-      u.email.toLowerCase().includes(query) ||
-      u.id.toLowerCase().includes(query)
+      String(u.name || '').toLowerCase().includes(query) ||
+      String(u.email || '').toLowerCase().includes(query) ||
+      String(u.id || '').toLowerCase().includes(query)
     );
     if (currentFilter === 'sub')   filtered = filtered.filter(u => subStatus(u).active);
     if (currentFilter === 'nosub') filtered = filtered.filter(u => !subStatus(u).active);
+    filtered = sortUsersForAdmin(filtered);
 
     const tbody = document.getElementById('users-tbody');
     const table = document.getElementById('users-table');
@@ -2377,50 +2483,50 @@
     if (isMobile()) {
       table.style.display = 'none'; cards.style.display = 'flex';
       cards.innerHTML = filtered.map(function(user) {
-        const letter = (user.name || user.email || '?')[0].toUpperCase();
-        const color = avatarColor(user.name || user.email || '?');
         const badge = user.botRunning
           ? '<span class="badge-bot-on">Запущен</span>'
           : '<span class="badge-bot-off">Не активен</span>';
         const time = user.botStartedAt
           ? '<span class="card-time">с ' + startedAtStr(user.botStartedAt) + '</span>' : '';
         const subBadge = subBadgeHtml(user);
-        return '<div class="user-card">' +
-          '<div class="card-avatar" style="background:' + color + '">' + letter + '</div>' +
+        const adminBadge = isPrimaryAdmin(user) ? '<span class="admin-badge">Администратор</span>' : '';
+        return '<div class="user-card' + (isPrimaryAdmin(user) ? ' admin-user-card' : '') + '">' +
+          avatarHtml(user, 'card-avatar') +
           '<div class="card-body">' +
-            '<div class="card-name"><button style="all:unset;cursor:pointer;color:var(--accent)" onclick="openUserDetails(\'' + user.id + '\')">' + escHtml(user.name) + '</button></div>' +
-            '<div class="card-email">' + escHtml(user.email) + '</div>' +
+            '<div class="card-name"><button style="all:unset;cursor:pointer;color:var(--accent)" onclick="openUserDetails(\'' + user.id + '\')">' + escHtml(user.name || user.email || 'Без имени') + '</button></div>' +
+            adminBadge +
+            '<div class="card-email">' + escHtml(user.email || 'email не указан') + '</div>' +
             '<div class="card-meta">' + badge + subBadge + time + '</div>' +
           '</div>' +
           '<div class="card-actions" style="display:flex;flex-direction:column;gap:6px">' +
-            '<button class="btn-sub-card" onclick="openGrantSub(\'' + user.id + '\',\'' + escJs(user.name) + '\')" title="Выдать подписку">★</button>' +
-            '<button class="btn-delete-card" onclick="confirmDelete(\'' + user.id + '\',\'' + escJs(user.name) + '\')" title="Удалить">×</button>' +
+            '<button class="btn-sub-card" onclick="openGrantSub(\'' + user.id + '\',\'' + escJs(user.name || user.email || 'Пользователь') + '\')" title="Выдать подписку">★</button>' +
+            '<button class="btn-delete-card" onclick="confirmDelete(\'' + user.id + '\',\'' + escJs(user.name || user.email || 'Пользователь') + '\')" title="Удалить">×</button>' +
           '</div>' +
         '</div>';
       }).join('');
     } else {
       cards.style.display = 'none'; table.style.display = 'table';
       tbody.innerHTML = filtered.map(function(user) {
-        const letter = (user.name || user.email || '?')[0].toUpperCase();
-        const color = avatarColor(user.name || user.email || '?');
         const botBadge = user.botRunning
           ? '<span class="badge-bot-on">Запущен</span>'
           : '<span class="badge-bot-off">Не активен</span>';
         const subBadge = subBadgeHtml(user);
-        return '<tr>' +
+        const adminBadge = isPrimaryAdmin(user) ? '<span class="admin-badge">Администратор</span>' : '';
+        return '<tr class="' + (isPrimaryAdmin(user) ? 'admin-user-row' : '') + '">' +
           '<td><div class="user-info">' +
-            '<div class="user-avatar" style="background:' + color + '">' + letter + '</div>' +
-            '<div><div class="user-name"><button style="all:unset;cursor:pointer;color:var(--accent)" onclick="openUserDetails(\'' + user.id + '\')">' + escHtml(user.name) + '</button></div>' +
+            avatarHtml(user, 'user-avatar') +
+            '<div><div class="user-name"><button style="all:unset;cursor:pointer;color:var(--accent)" onclick="openUserDetails(\'' + user.id + '\')">' + escHtml(user.name || user.email || 'Без имени') + '</button></div>' +
+            adminBadge +
             '<div class="user-id">#' + user.id + '</div></div>' +
           '</div></td>' +
-          '<td class="email-cell">' + escHtml(user.email) + '</td>' +
+          '<td class="email-cell">' + escHtml(user.email || 'email не указан') + '</td>' +
           '<td><code style="font-size:11px;color:var(--text3);font-family:var(--mono)">' + user.id + '</code></td>' +
           '<td>' + subBadge + '</td>' +
           '<td>' + botBadge + '</td>' +
           '<td style="font-size:12px;color:var(--text3);font-family:var(--mono)">' + startedAtStr(user.botStartedAt) + '</td>' +
           '<td><div class="row-actions">' +
-            '<button class="btn-sub" onclick="openGrantSub(\'' + user.id + '\',\'' + escJs(user.name) + '\')">★ Подписка</button>' +
-            '<button class="btn-delete" onclick="confirmDelete(\'' + user.id + '\',\'' + escJs(user.name) + '\')">Удалить</button>' +
+            '<button class="btn-sub" onclick="openGrantSub(\'' + user.id + '\',\'' + escJs(user.name || user.email || 'Пользователь') + '\')">★ Подписка</button>' +
+            '<button class="btn-delete" onclick="confirmDelete(\'' + user.id + '\',\'' + escJs(user.name || user.email || 'Пользователь') + '\')">Удалить</button>' +
           '</div></td>' +
         '</tr>';
       }).join('');

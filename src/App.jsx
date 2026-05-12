@@ -667,6 +667,7 @@ export default function App() {
 
   // Toast notification state
   const [toast, setToast] = useState(null); // { message, type, visible }
+  const [adminOpenSupportCount, setAdminOpenSupportCount] = useState(0);
 
   // ─── ADMIN / TRIAL ───────────────────────────────────────────────────────
   
@@ -699,6 +700,13 @@ export default function App() {
     setProfileInitialTab('subscription');
     setShowProfileModal(true);
   }, [currentUser]);
+
+  const openAdminMenu = useCallback((section = '') => {
+    const target = section ? `/satana#${section}` : '/satana';
+    const opened = window.open(target, '_blank');
+    if (opened) opened.opener = null;
+    if (!opened) window.location.href = target;
+  }, []);
 
   // Mobile state
   const [mobileTab, setMobileTab] = useState('canvas'); // 'canvas' | 'blocks' | 'props' | 'dsl'
@@ -885,43 +893,6 @@ export default function App() {
       window.removeEventListener('resize', setAppHeight);
       window.removeEventListener('orientationchange', setAppHeight);
       window.visualViewport?.removeEventListener('resize', setAppHeight);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (typeof document === 'undefined') return undefined;
-    const root = document.documentElement;
-    const requestFullscreen = root.requestFullscreen || root.webkitRequestFullscreen || root.msRequestFullscreen;
-    const fullscreenEnabled = document.fullscreenEnabled !== false ||
-      document.webkitFullscreenEnabled === true ||
-      document.msFullscreenEnabled === true;
-    if (!requestFullscreen || !fullscreenEnabled) return undefined;
-
-    let cancelled = false;
-    const enterFullscreen = () => {
-      const fullscreenElement = document.fullscreenElement ||
-        document.webkitFullscreenElement ||
-        document.msFullscreenElement;
-      if (cancelled || fullscreenElement) return;
-      try {
-        const request = root.requestFullscreen
-          ? root.requestFullscreen({ navigationUI: 'hide' })
-          : requestFullscreen.call(root);
-        if (request?.catch) request.catch(() => {});
-      } catch {
-        // Browser may require a user gesture; the one-shot listeners below retry on first input.
-      }
-    };
-
-    enterFullscreen();
-    window.addEventListener('pointerdown', enterFullscreen, { once: true, capture: true });
-    window.addEventListener('touchstart', enterFullscreen, { once: true, capture: true });
-    window.addEventListener('keydown', enterFullscreen, { once: true, capture: true });
-    return () => {
-      cancelled = true;
-      window.removeEventListener('pointerdown', enterFullscreen, { capture: true });
-      window.removeEventListener('touchstart', enterFullscreen, { capture: true });
-      window.removeEventListener('keydown', enterFullscreen, { capture: true });
     };
   }, []);
 
@@ -2983,6 +2954,31 @@ const EXAMPLE_FULL = `версия "1.0"
     return () => { cancelled = true; };
   }, [showProfileModal, currentUser?.id]);
 
+  useEffect(() => {
+    if (!isAdmin || !currentUser?.id || !getStoredJwt()) {
+      setAdminOpenSupportCount(0);
+      return undefined;
+    }
+    let cancelled = false;
+    const loadSupportCount = () => {
+      apiFetch('/api/admin/support-count')
+        .then((data) => {
+          if (!cancelled) setAdminOpenSupportCount(Number(data?.open || 0));
+        })
+        .catch(() => {
+          if (!cancelled) setAdminOpenSupportCount(0);
+        });
+    };
+    loadSupportCount();
+    const interval = setInterval(loadSupportCount, 30_000);
+    window.addEventListener('focus', loadSupportCount);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      window.removeEventListener('focus', loadSupportCount);
+    };
+  }, [isAdmin, currentUser?.id]);
+
   // Poll every 5s — syncs bot status across browsers/tabs
   useEffect(() => {
     const id = setInterval(checkBotStatus, 5000);
@@ -4270,6 +4266,75 @@ const EXAMPLE_FULL = `версия "1.0"
                 </span>
               </button>
             )}
+            {isAdmin && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => openAdminMenu()}
+                  title="Открыть админ-панель"
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                    padding: isMobileView ? '7px 9px' : '7px 14px',
+                    background: 'linear-gradient(135deg,rgba(251,191,36,0.16),rgba(124,58,237,0.12))',
+                    border: '1px solid rgba(251,191,36,0.42)',
+                    borderRadius: 20,
+                    color: '#fde68a',
+                    fontSize: isMobileView ? 11 : 12,
+                    fontWeight: 800,
+                    fontFamily: 'Syne, system-ui',
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                    flexShrink: 0,
+                    boxShadow: '0 0 16px rgba(251,191,36,0.14)',
+                  }}
+                >
+                  <span>⚙</span>
+                  {!isMobileView && <span>Админ меню</span>}
+                  {isMobileView && <span>Admin</span>}
+                </button>
+                {adminOpenSupportCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => openAdminMenu('support')}
+                    title={`Новые обращения: ${adminOpenSupportCount}`}
+                    style={{
+                      position: 'relative',
+                      width: isMobileView ? 34 : 38,
+                      height: isMobileView ? 34 : 36,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderRadius: '50%',
+                      border: '1px solid rgba(248,113,113,0.45)',
+                      background: 'rgba(248,113,113,0.1)',
+                      color: '#fecaca',
+                      cursor: 'pointer',
+                      flexShrink: 0,
+                      boxShadow: '0 0 18px rgba(248,113,113,0.2)',
+                    }}
+                  >
+                    🔔
+                    <span style={{
+                      position: 'absolute',
+                      top: -4,
+                      right: -4,
+                      minWidth: 17,
+                      height: 17,
+                      padding: '0 5px',
+                      borderRadius: 999,
+                      background: '#ef4444',
+                      color: '#fff',
+                      fontSize: 10,
+                      fontWeight: 900,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      border: '1px solid rgba(255,255,255,0.55)',
+                    }}>{adminOpenSupportCount > 99 ? '99+' : adminOpenSupportCount}</span>
+                  </button>
+                )}
+              </>
+            )}
             {/* User button */}
             <button
               data-tour="profile-button"
@@ -5165,6 +5230,25 @@ const EXAMPLE_FULL = `версия "1.0"
             }}
             onClick={(e) => e.stopPropagation()}
           >
+            {isAdmin && (
+              <>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => { openAdminMenu(); setMobileMoreOpen(false); }}
+                  style={{ width:'100%', padding:'10px 16px', textAlign:'left', background:'rgba(251,191,36,0.08)', color:'#fde68a', border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui', display:'flex', alignItems:'center', gap:8, fontWeight:800 }}
+                >⚙ Админ меню</button>
+                {adminOpenSupportCount > 0 && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => { openAdminMenu('support'); setMobileMoreOpen(false); }}
+                    style={{ width:'100%', padding:'10px 16px', textAlign:'left', background:'rgba(248,113,113,0.08)', color:'#fecaca', border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui', display:'flex', alignItems:'center', gap:8, fontWeight:800 }}
+                  >🔔 Обращения: {adminOpenSupportCount}</button>
+                )}
+                <div style={{ height:1, background:'var(--border)', margin:'4px 0' }} />
+              </>
+            )}
             <button
               type="button"
               role="menuitem"

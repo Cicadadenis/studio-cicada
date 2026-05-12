@@ -681,7 +681,8 @@ export default function ProfileModal({ user, projects, initialTab = 'profile', o
     img.src = dataUrl;
   });
 
-  const handleAvatarPick = async (file) => {
+  const handleAvatarPick = async (file, inputEl = null) => {
+    if (inputEl) inputEl.value = '';
     if (avatarInputRef.current) avatarInputRef.current.value = '';
     if (!file) return;
     if (!file.type.startsWith('image/')) {
@@ -692,13 +693,13 @@ export default function ProfileModal({ user, projects, initialTab = 'profile', o
       showToast('Файл слишком большой (макс. 15MB)', 'error');
       return;
     }
+    setSaveSuccess(false);
+    setAvatarSaving(true);
     const reader = new FileReader();
     reader.onload = async () => {
-      const optimized = await optimizeAvatar(String(reader.result || ''));
-      setNewAvatar(optimized);
-      setSaveSuccess(false);
-      setAvatarSaving(true);
       try {
+        const optimized = await optimizeAvatar(String(reader.result || ''));
+        setNewAvatar(optimized);
         const updated = await onUploadAvatar(optimized);
         setNewAvatar(updated?.photo_url || optimized || '');
         setSaveSuccess(true);
@@ -713,6 +714,10 @@ export default function ProfileModal({ user, projects, initialTab = 'profile', o
       } finally {
         setAvatarSaving(false);
       }
+    };
+    reader.onerror = () => {
+      setAvatarSaving(false);
+      showToast('Не удалось прочитать файл аватара', 'error');
     };
     reader.readAsDataURL(file);
   };
@@ -907,8 +912,6 @@ export default function ProfileModal({ user, projects, initialTab = 'profile', o
         .pm-tab-mobile-inactive { background:rgba(255,255,255,0.02); color:rgba(255,255,255,0.45); border:1px solid rgba(255,255,255,0.08); }
         .pm-tab-mobile-inactive:hover { background:rgba(255,255,255,0.06); color:rgba(255,255,255,0.8); }
       `}</style>
-
-      <input ref={avatarInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => handleAvatarPick(e.target.files?.[0])} />
 
       <div
         className="pm-modal-shell"
@@ -1178,14 +1181,21 @@ export default function ProfileModal({ user, projects, initialTab = 'profile', o
                             <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.42)' }}>{t.maxFile}</div>
                           </div>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => avatarInputRef.current?.click()}
-                          disabled={avatarSaving}
-                          style={{ width: '100%', padding: '9px 14px', borderRadius: 8, border: '1px solid rgba(25,216,255,0.58)', background: 'linear-gradient(135deg, rgba(25,216,255,.22), rgba(111,70,255,.4))', color: '#fff', fontSize: 12, fontWeight: 800, cursor: 'pointer', fontFamily: 'Syne,system-ui', marginBottom: newAvatar ? 8 : 0, transition: 'all .15s', opacity: avatarSaving ? 0.6 : 1, boxShadow: '0 0 18px rgba(25,216,255,.18)' }}
+                        <label
+                          style={{ width: '100%', padding: '9px 14px', borderRadius: 8, border: '1px solid rgba(25,216,255,0.58)', background: 'linear-gradient(135deg, rgba(25,216,255,.22), rgba(111,70,255,.4))', color: '#fff', fontSize: 12, fontWeight: 800, cursor: avatarSaving ? 'not-allowed' : 'pointer', fontFamily: 'Syne,system-ui', marginBottom: newAvatar ? 8 : 0, transition: 'all .15s', opacity: avatarSaving ? 0.6 : 1, boxShadow: '0 0 18px rgba(25,216,255,.18)', display: 'block', textAlign: 'center', position: 'relative', overflow: 'hidden', boxSizing: 'border-box' }}
                           onMouseEnter={e => { e.currentTarget.style.background = 'linear-gradient(135deg, rgba(25,216,255,.32), rgba(111,70,255,.52))'; e.currentTarget.style.borderColor = 'rgba(25,216,255,0.84)'; }}
                           onMouseLeave={e => { e.currentTarget.style.background = 'linear-gradient(135deg, rgba(25,216,255,.22), rgba(111,70,255,.4))'; e.currentTarget.style.borderColor = 'rgba(25,216,255,0.58)'; }}
-                        >{avatarSaving ? t.saving : t.uploadPhoto}</button>
+                        >
+                          {avatarSaving ? t.saving : t.uploadPhoto}
+                          <input
+                            ref={avatarInputRef}
+                            type="file"
+                            accept="image/jpeg,image/png,image/webp"
+                            disabled={avatarSaving}
+                            onChange={(e) => handleAvatarPick(e.target.files?.[0], e.currentTarget)}
+                            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0, cursor: avatarSaving ? 'not-allowed' : 'pointer' }}
+                          />
+                        </label>
                         {newAvatar && (
                           <button
                             type="button"
