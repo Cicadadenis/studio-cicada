@@ -345,10 +345,11 @@
     /* ── Table (desktop) ── */
     .table-wrap {
       background: var(--bg2); border: 1px solid var(--border);
-      border-radius: 14px; overflow: hidden;
+      border-radius: 14px; overflow-x: auto; overflow-y: hidden;
     }
 
     table { width: 100%; border-collapse: collapse; }
+    #users-table { min-width: 1040px; }
 
     thead tr { background: var(--bg3); border-bottom: 1px solid var(--border); }
     thead th {
@@ -363,6 +364,12 @@
     tbody tr:hover { background: rgba(255,255,255,0.02); }
 
     tbody td { padding: 13px 16px; font-size: 13px; color: var(--text); vertical-align: middle; }
+    #users-table thead th:last-child,
+    #users-table tbody td:last-child {
+      width: 134px;
+      min-width: 134px;
+      padding-right: 18px;
+    }
 
     .user-avatar {
       width: 34px; height: 34px; border-radius: 10px;
@@ -570,7 +577,7 @@
       display: flex;
       flex-direction: column;
       gap: 6px;
-      min-width: 110px;
+      min-width: 118px;
     }
     .row-actions .btn-sub,
     .row-actions .btn-delete {
@@ -743,6 +750,9 @@
       /* Search full width */
       .section-header { flex-direction: column; align-items: stretch; }
       .search-box { min-width: unset; }
+      .um-grid { grid-template-columns: 1fr; }
+      .um-card-wide,
+      .um-card-full { grid-column: 1 / -1; }
     }
 
     @media (max-width: 380px) {
@@ -769,12 +779,23 @@
       display: flex; align-items: center; justify-content: center; padding: 16px;
     }
     .user-modal {
-      width: min(900px, 100%); max-height: 90vh; overflow: auto;
+      width: min(1040px, 100%); max-height: 90vh; overflow: auto;
       background: var(--bg2); border: 1px solid var(--border); border-radius: 14px; padding: 14px;
     }
-    .um-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .um-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
     .um-card { background: var(--bg3); border: 1px solid var(--border2); border-radius: 10px; padding: 10px; }
+    .um-card-wide { grid-column: span 2; }
+    .um-card-full { grid-column: 1 / -1; }
     .um-title { font-size: 11px; color: var(--text3); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 6px; }
+    .um-list { display: grid; gap: 6px; font-size: 12px; color: var(--text2); line-height: 1.45; }
+    .um-list b { color: var(--text); font-weight: 700; }
+    .um-muted { color: var(--text3); }
+    .um-table { width: 100%; min-width: 0; border-collapse: collapse; font-size: 12px; }
+    .um-table th,
+    .um-table td { padding: 7px 8px; border-bottom: 1px solid rgba(255,255,255,0.07); text-align: left; vertical-align: top; }
+    .um-table th { color: var(--text3); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
+    .um-table td { color: var(--text2); }
+    .um-pre { max-height: 180px; overflow: auto; white-space: pre-wrap; color: var(--text2); margin: 0; font-family: var(--mono); font-size: 11px; line-height: 1.45; }
     .um-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
     .um-actions button { padding: 8px 10px; border-radius: 8px; border:1px solid var(--border2); background:var(--bg2); color:var(--text); cursor:pointer; }
 
@@ -1490,7 +1511,7 @@
     <span class="topbar-badge">Admin</span>
     <div class="topbar-spacer"></div>
     <span id="last-updated"></span>
-    <button class="topbar-btn" onclick="window.top.location.href='/'">Конструктор</button>
+    <button class="topbar-btn" onclick="return goToConstructor()">Конструктор</button>
     <button class="topbar-btn" onclick="loadUsers()">↻</button>
     <button class="topbar-btn danger" onclick="logout()">Выйти</button>
   </div>
@@ -1706,7 +1727,6 @@
 
 <script>
   const API = '__API_TARGET__';
-  const ADMIN_JWT = __ADMIN_JWT_JSON__;
   let adminKey = '';
   let allUsers = [];
   let currentFilter = 'all';
@@ -1769,23 +1789,22 @@
   }
 
   function adminAuthHeaders() {
-    return ADMIN_JWT ? { Authorization: 'Bearer ' + ADMIN_JWT } : {};
+    return {};
   }
 
-  (function patchAdminFetchAuth() {
-    var nativeFetch = window.fetch.bind(window);
-    window.fetch = function(input, init) {
-      var url = typeof input === 'string' ? input : (input && input.url) || '';
-      var path = '';
-      try { path = new URL(url, window.location.origin).pathname; } catch (e) { path = String(url || ''); }
-      if (!ADMIN_JWT || !path.startsWith('/api/admin')) return nativeFetch(input, init);
-      var nextInit = Object.assign({}, init || {});
-      var headers = new Headers(nextInit.headers || (input && input.headers) || {});
-      if (!headers.has('Authorization')) headers.set('Authorization', 'Bearer ' + ADMIN_JWT);
-      nextInit.headers = headers;
-      return nativeFetch(input, nextInit);
-    };
-  })();
+  function goToConstructor() {
+    try {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({ type: 'cicada-admin:navigate-builder' }, '*');
+      }
+    } catch (e) {}
+    try {
+      window.top.location.assign('/');
+    } catch (e) {
+      window.location.href = '/';
+    }
+    return false;
+  }
 
   async function apiPostJson(url, body) {
     var cr = await fetch(API + '/api/csrf-token', { credentials: 'include' });
@@ -2325,6 +2344,41 @@
     return '<span style="display:inline-flex;padding:4px 8px;border-radius:999px;border:1px solid ' + color + '55;color:' + color + ';font-size:11px;font-weight:700">' + label + '</span>';
   }
 
+  function supportMessagesForRequest(r) {
+    if (Array.isArray(r.messages) && r.messages.length) return r.messages;
+    var out = [];
+    if (r.message) out.push({ id: r.id + '-user', author: 'user', text: r.message, attachments: r.attachments || [], createdAt: r.createdAt });
+    if (r.replyText) out.push({ id: r.id + '-admin', author: 'admin', text: r.replyText, attachments: [], createdAt: r.repliedAt });
+    return out;
+  }
+
+  function supportAttachmentsHtml(attachments) {
+    if (!Array.isArray(attachments) || !attachments.length) return '';
+    return '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">' + attachments.map(function(a) {
+      var src = escHtml(a.dataUrl || '');
+      var name = escHtml(a.name || 'screenshot');
+      if (!src) return '';
+      return '<a href="' + src + '" target="_blank" rel="noreferrer" title="' + name + '" style="display:block;width:126px;border:1px solid var(--border2);border-radius:10px;overflow:hidden;background:var(--bg3);text-decoration:none">' +
+        '<img src="' + src + '" alt="' + name + '" loading="lazy" style="display:block;width:100%;height:82px;object-fit:cover" />' +
+        '<div style="padding:5px 7px;font-size:10px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + name + '</div>' +
+      '</a>';
+    }).join('') + '</div>';
+  }
+
+  function supportThreadHtml(r) {
+    var messages = supportMessagesForRequest(r);
+    if (!messages.length) return '<div class="empty" style="display:block;padding:12px">Нет сообщений</div>';
+    return '<div style="display:flex;flex-direction:column;gap:8px;margin:0 0 10px">' + messages.map(function(m) {
+      var isAdmin = m.author === 'admin';
+      var at = m.createdAt ? new Date(m.createdAt).toLocaleString('ru-RU') : '—';
+      return '<div style="align-self:' + (isAdmin ? 'flex-start' : 'flex-end') + ';max-width:88%;padding:10px 12px;border-radius:' + (isAdmin ? '13px 13px 13px 4px' : '13px 13px 4px 13px') + ';background:' + (isAdmin ? 'rgba(62,207,142,0.10)' : 'rgba(96,165,250,0.10)') + ';border:1px solid ' + (isAdmin ? 'rgba(62,207,142,0.24)' : 'rgba(96,165,250,0.22)') + '">' +
+        '<div style="font-size:10px;font-weight:800;color:' + (isAdmin ? 'var(--green)' : 'var(--blue)') + ';margin-bottom:5px">' + (isAdmin ? 'Поддержка' : 'Пользователь') + ' · ' + escHtml(at) + '</div>' +
+        '<div style="white-space:pre-wrap;font-size:13px;line-height:1.5;color:var(--text2)">' + escHtml(m.text || '') + '</div>' +
+        supportAttachmentsHtml(m.attachments) +
+      '</div>';
+    }).join('') + '</div>';
+  }
+
   function renderSupportRequests() {
     var box = document.getElementById('support-list');
     if (!box) return;
@@ -2341,9 +2395,8 @@
           '<div style="font-size:12px;color:var(--text3);margin-top:4px">' + escHtml(r.from || '-') + ' · ' + escHtml(r.email || r.userEmail || 'email не указан') + ' · ' + escHtml(date) + '</div></div>' +
           supportStatusBadge(r.status) +
         '</div>' +
-        '<pre style="white-space:pre-wrap;font-family:system-ui,sans-serif;font-size:13px;line-height:1.55;color:var(--text2);background:var(--bg3);border-radius:10px;padding:10px;margin:0 0 10px">' + escHtml(r.message || '') + '</pre>' +
-        (r.replyText ? '<div style="font-size:12px;color:var(--green);margin-bottom:8px"><b>Ответ:</b><br><span style="white-space:pre-wrap">' + escHtml(r.replyText) + '</span></div>' : '') +
-        '<textarea id="support-reply-' + escHtml(r.id) + '" placeholder="Ответ пользователю в профиль" style="width:100%;min-height:84px;box-sizing:border-box;margin-bottom:8px;padding:10px;border-radius:10px;background:var(--bg3);border:1px solid var(--border2);color:var(--text);resize:vertical"></textarea>' +
+        supportThreadHtml(r) +
+        '<textarea id="support-reply-' + escHtml(r.id) + '" placeholder="Ответ пользователю в этот тикет" style="width:100%;min-height:84px;box-sizing:border-box;margin-bottom:8px;padding:10px;border-radius:10px;background:var(--bg3);border:1px solid var(--border2);color:var(--text);resize:vertical"></textarea>' +
         '<div style="display:flex;flex-wrap:wrap;gap:8px">' +
           '<button class="btn-primary" onclick="replySupportRequest(\'' + escJs(r.id) + '\')">💬 Ответить в профиль</button>' +
           '<button class="topbar-btn" onclick="setSupportRequestStatus(\'' + escJs(r.id) + '\',\'closed\')">Закрыть</button>' +
@@ -2527,17 +2580,17 @@
           ? '<span class="card-time">с ' + startedAtStr(user.botStartedAt) + '</span>' : '';
         const subBadge = subBadgeHtml(user);
         const adminBadge = isPrimaryAdmin(user) ? '<span class="admin-badge">Администратор</span>' : '';
-        return '<div class="user-card' + (isPrimaryAdmin(user) ? ' admin-user-card' : '') + '">' +
+        return '<div class="user-card' + (isPrimaryAdmin(user) ? ' admin-user-card' : '') + '" onclick="openUserDetails(\'' + user.id + '\')" style="cursor:pointer">' +
           avatarHtml(user, 'card-avatar') +
           '<div class="card-body">' +
-            '<div class="card-name"><button style="all:unset;cursor:pointer;color:var(--accent)" onclick="openUserDetails(\'' + user.id + '\')">' + escHtml(user.name || user.email || 'Без имени') + '</button></div>' +
+            '<div class="card-name"><button style="all:unset;cursor:pointer;color:var(--accent)" onclick="event.stopPropagation();openUserDetails(\'' + user.id + '\')">' + escHtml(user.name || user.email || 'Без имени') + '</button></div>' +
             adminBadge +
             '<div class="card-email">' + escHtml(user.email || 'email не указан') + '</div>' +
             '<div class="card-meta">' + badge + subBadge + time + '</div>' +
           '</div>' +
           '<div class="card-actions" style="display:flex;flex-direction:column;gap:6px">' +
-            '<button class="btn-sub-card" onclick="openGrantSub(\'' + user.id + '\',\'' + escJs(user.name || user.email || 'Пользователь') + '\')" title="Выдать подписку">★</button>' +
-            '<button class="btn-delete-card" onclick="confirmDelete(\'' + user.id + '\',\'' + escJs(user.name || user.email || 'Пользователь') + '\')" title="Удалить">×</button>' +
+            '<button class="btn-sub-card" onclick="event.stopPropagation();openGrantSub(\'' + user.id + '\',\'' + escJs(user.name || user.email || 'Пользователь') + '\')" title="Выдать подписку">★</button>' +
+            '<button class="btn-delete-card" onclick="event.stopPropagation();confirmDelete(\'' + user.id + '\',\'' + escJs(user.name || user.email || 'Пользователь') + '\')" title="Удалить">×</button>' +
           '</div>' +
         '</div>';
       }).join('');
@@ -2549,10 +2602,10 @@
           : '<span class="badge-bot-off">Не активен</span>';
         const subBadge = subBadgeHtml(user);
         const adminBadge = isPrimaryAdmin(user) ? '<span class="admin-badge">Администратор</span>' : '';
-        return '<tr class="' + (isPrimaryAdmin(user) ? 'admin-user-row' : '') + '">' +
+        return '<tr class="' + (isPrimaryAdmin(user) ? 'admin-user-row' : '') + '" onclick="openUserDetails(\'' + user.id + '\')" style="cursor:pointer">' +
           '<td><div class="user-info">' +
             avatarHtml(user, 'user-avatar') +
-            '<div><div class="user-name"><button style="all:unset;cursor:pointer;color:var(--accent)" onclick="openUserDetails(\'' + user.id + '\')">' + escHtml(user.name || user.email || 'Без имени') + '</button></div>' +
+            '<div><div class="user-name"><button style="all:unset;cursor:pointer;color:var(--accent)" onclick="event.stopPropagation();openUserDetails(\'' + user.id + '\')">' + escHtml(user.name || user.email || 'Без имени') + '</button></div>' +
             adminBadge +
             '<div class="user-id">#' + user.id + '</div></div>' +
           '</div></td>' +
@@ -2562,8 +2615,8 @@
           '<td>' + botBadge + '</td>' +
           '<td style="font-size:12px;color:var(--text3);font-family:var(--mono)">' + startedAtStr(user.botStartedAt) + '</td>' +
           '<td><div class="row-actions">' +
-            '<button class="btn-sub" onclick="openGrantSub(\'' + user.id + '\',\'' + escJs(user.name || user.email || 'Пользователь') + '\')">★ Подписка</button>' +
-            '<button class="btn-delete" onclick="confirmDelete(\'' + user.id + '\',\'' + escJs(user.name || user.email || 'Пользователь') + '\')">Удалить</button>' +
+            '<button class="btn-sub" onclick="event.stopPropagation();openGrantSub(\'' + user.id + '\',\'' + escJs(user.name || user.email || 'Пользователь') + '\')">★ Подписка</button>' +
+            '<button class="btn-delete" onclick="event.stopPropagation();confirmDelete(\'' + user.id + '\',\'' + escJs(user.name || user.email || 'Пользователь') + '\')">Удалить</button>' +
           '</div></td>' +
         '</tr>';
       }).join('');
@@ -2736,6 +2789,43 @@
     return items.slice().reverse().slice(0, 12).map(mapFn).join('\n');
   }
 
+  function fmtDateTime(value) {
+    if (value == null || value === '') return '—';
+    var numeric = Number(value);
+    var date = Number.isFinite(numeric) && numeric > 1000000000 ? new Date(numeric) : new Date(value);
+    if (!date || Number.isNaN(date.getTime())) return '—';
+    return date.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+
+  function yesNo(value) {
+    return value ? 'Да' : 'Нет';
+  }
+
+  function detailItem(label, value) {
+    return '<div><b>' + escHtml(label) + ':</b> ' + escHtml(value == null || value === '' ? '—' : value) + '</div>';
+  }
+
+  function detailsHtml(items) {
+    return '<div class="um-list">' + items.map(function(item) {
+      return detailItem(item[0], item[1]);
+    }).join('') + '</div>';
+  }
+
+  function tableHtml(headers, rows) {
+    if (!Array.isArray(rows) || !rows.length) return '<div class="um-muted">—</div>';
+    return '<table class="um-table"><thead><tr>' +
+      headers.map(function(h) { return '<th>' + escHtml(h) + '</th>'; }).join('') +
+      '</tr></thead><tbody>' +
+      rows.map(function(row) {
+        return '<tr>' + row.map(function(cell) { return '<td>' + escHtml(cell == null || cell === '' ? '—' : cell) + '</td>'; }).join('') + '</tr>';
+      }).join('') +
+      '</tbody></table>';
+  }
+
+  function preHtml(value, tone) {
+    return '<pre class="um-pre" style="' + (tone ? 'color:' + tone : '') + '">' + escHtml(value || '—') + '</pre>';
+  }
+
   async function openUserDetails(userId) {
     try {
       var [infoRes, logsRes] = await Promise.all([
@@ -2750,6 +2840,33 @@
       }
 
       var u = info.user;
+      var purchases = info.purchases || [];
+      var projects = info.projects || [];
+      var passkeys = info.passkeys || [];
+      var supportRequests = info.supportRequests || [];
+      var activeSub = u.plan === 'pro' && u.subscriptionExp && Number(u.subscriptionExp) > Date.now();
+      var daysLeft = activeSub ? Math.ceil((Number(u.subscriptionExp) - Date.now()) / 86400000) : 0;
+      var paidPurchases = purchases.filter(function(p) { return p.status === 'paid' || p.processedAt; });
+      var uniqueIps = (info.uniqueIps || []).join(', ') || '—';
+      var tokenHint = u.test_token ? String(u.test_token).slice(0, 8) + '...' + String(u.test_token).slice(-5) : '—';
+      var botStarted = info.status && info.status.botStartedAt ? fmtDateTime(info.status.botStartedAt) : '—';
+      var botLogText = (botLogs && botLogs.logs) || '—';
+      var adminActionLines = arrToLines(info.adminActions, function(x) {
+        return '[' + (x.at || '-') + '] ' + (x.action || '-') + ' ip=' + (x.ip || '-');
+      });
+      var actionLines = arrToLines(info.actions, function(x) {
+        return '[' + (x.at || '-') + '] ' + (x.action || '-');
+      });
+      var subLines = arrToLines(info.subscriptions, function(x) {
+        if (x.source === 'admin_revoke') return '[' + (x.at || '-') + '] ' + (x.source || '-') + ' — PRO снят';
+        return '[' + (x.at || '-') + '] ' + (x.source || '-') + ' до ' + fmtDateTime(x.subscriptionExp || 0);
+      });
+      var loginLines = arrToLines(info.loginHistory, function(x) {
+        return '[' + fmtDateTime(x.at || '-') + '] ' + (x.method || '-') + ' ' + (x.ip || '-');
+      });
+      var errorLines = arrToLines((info.authErrors || []).concat(info.apiErrors || []), function(x) {
+        return '[' + fmtDateTime(x.at || '-') + '] ' + (x.message || x.path || '-');
+      });
       var overlay = document.createElement('div');
       overlay.className = 'user-modal-overlay';
       overlay.id = 'user-modal-overlay';
@@ -2757,12 +2874,85 @@
         '<div class="user-modal">' +
           '<div class="section-header"><div class="section-title">Пользователь: ' + escHtml(u.name || u.id) + '</div><button class="topbar-btn" onclick="document.getElementById(&quot;user-modal-overlay&quot;).remove()">Закрыть</button></div>' +
           '<div class="um-grid">' +
-            '<div class="um-card"><div class="um-title">Статус</div>Online: ' + (info.status && info.status.online ? 'Да' : 'Нет') + '<br/>Bot: ' + (info.status && info.status.botRunning ? 'online' : 'offline') + '<br/>Role: ' + escHtml(u.role || 'user') + '<br/>Access: ' + escHtml(u.accessLevel || 'basic') + '<br/>Banned: ' + (u.banned ? 'Да' : 'Нет') + '</div>' +
-            '<div class="um-card"><div class="um-title">IP / входы</div>' + escHtml((info.uniqueIps || []).join(', ') || '—') + '<pre style="margin-top:6px;white-space:pre-wrap;color:var(--text2)">' + escHtml(arrToLines(info.loginHistory, function(x){ return '[' + (x.at || '-') + '] ' + (x.method || '-') + ' ' + (x.ip || '-'); })) + '</pre></div>' +
-            '<div class="um-card"><div class="um-title">Действия</div><pre style="white-space:pre-wrap;color:var(--text2)">' + escHtml(arrToLines(info.actions, function(x){ return '[' + x.at + '] ' + x.action; })) + '</pre></div>' +
-            '<div class="um-card"><div class="um-title">Подписки</div><pre style="white-space:pre-wrap;color:var(--text2)">' + escHtml(arrToLines(info.subscriptions, function(x){ if (x.source === 'admin_revoke') return '[' + x.at + '] ' + (x.source || '-') + ' — PRO снят'; return '[' + x.at + '] ' + (x.source || '-') + ' до ' + new Date(x.subscriptionExp || 0).toLocaleString('ru-RU'); })) + '</pre></div>' +
-            '<div class="um-card"><div class="um-title">Ошибки auth/API</div><pre style="white-space:pre-wrap;color:#fca5a5">' + escHtml(arrToLines((info.authErrors || []).concat(info.apiErrors || []), function(x){ return '[' + (x.at || '-') + '] ' + (x.message || x.path || '-'); })) + '</pre></div>' +
-            '<div class="um-card"><div class="um-title">Логи бота</div><pre style="max-height:180px;overflow:auto;white-space:pre-wrap;color:var(--text2)">' + escHtml((botLogs && botLogs.logs) || '—') + '</pre></div>' +
+            '<div class="um-card">' +
+              '<div class="um-title">Профиль / регистрация</div>' +
+              detailsHtml([
+                ['ID', u.id],
+                ['Имя', u.name],
+                ['Email', u.email || 'email не указан'],
+                ['Зарегистрирован', fmtDateTime(u.createdAt)],
+                ['Верифицирован', yesNo(u.verified)],
+                ['Метод входа', u.authMethod || 'password'],
+                ['Язык', u.uiLanguage || 'ru']
+              ]) +
+            '</div>' +
+            '<div class="um-card">' +
+              '<div class="um-title">Статус / доступ</div>' +
+              detailsHtml([
+                ['Online', yesNo(info.status && info.status.online)],
+                ['Бот', info.status && info.status.botRunning ? 'online' : 'offline'],
+                ['Бот запущен', botStarted],
+                ['Role', u.role || 'user'],
+                ['Access', u.accessLevel || 'basic'],
+                ['Banned', yesNo(u.banned)]
+              ]) +
+            '</div>' +
+            '<div class="um-card">' +
+              '<div class="um-title">Подписка / деньги</div>' +
+              detailsHtml([
+                ['План', u.plan || 'trial'],
+                ['Активна', yesNo(activeSub)],
+                ['До', fmtDateTime(u.subscriptionExp)],
+                ['Осталось дней', activeSub ? daysLeft : 0],
+                ['Платежей', purchases.length],
+                ['Оплаченных', paidPurchases.length]
+              ]) +
+            '</div>' +
+            '<div class="um-card">' +
+              '<div class="um-title">Telegram / OAuth / безопасность</div>' +
+              detailsHtml([
+                ['Telegram ID', u.tgId || '—'],
+                ['Username', u.username || '—'],
+                ['Google ID', u.googleId || '—'],
+                ['2FA', yesNo(u.twofaEnabled)],
+                ['Passkey', passkeys.length],
+                ['Test token', tokenHint]
+              ]) +
+            '</div>' +
+            '<div class="um-card um-card-wide">' +
+              '<div class="um-title">IP / входы</div>' +
+              detailsHtml([['Уникальные IP', uniqueIps]]) +
+              preHtml(loginLines) +
+            '</div>' +
+            '<div class="um-card um-card-full">' +
+              '<div class="um-title">Платежи CryptoBot / счета</div>' +
+              tableHtml(['Счёт', 'План', 'Сумма', 'Статус', 'Создан', 'Оплачен', 'Проведён'], purchases.map(function(p) {
+                return [p.invoiceId, p.planLabel || p.plan, ((p.amount || '—') + ' ' + (p.asset || '')).trim(), p.status, fmtDateTime(p.createdAt), fmtDateTime(p.paidAt), fmtDateTime(p.processedAt)];
+              })) +
+            '</div>' +
+            '<div class="um-card um-card-full">' +
+              '<div class="um-title">Проекты</div>' +
+              tableHtml(['ID', 'Название', 'Создан', 'Изменён'], projects.map(function(p) {
+                return [p.id, p.name, fmtDateTime(p.createdAt), fmtDateTime(p.updatedAt)];
+              })) +
+            '</div>' +
+            '<div class="um-card um-card-wide">' +
+              '<div class="um-title">Обращения в поддержку</div>' +
+              tableHtml(['ID', 'Тема', 'Статус', 'Создано', 'Ответ', 'Seen'], supportRequests.map(function(r) {
+                return [r.id, r.subject, r.status, fmtDateTime(r.createdAt), fmtDateTime(r.repliedAt), fmtDateTime(r.userSeenAt)];
+              })) +
+            '</div>' +
+            '<div class="um-card">' +
+              '<div class="um-title">Passkey</div>' +
+              tableHtml(['Имя', 'Создан', 'Последний вход', 'Счётчик'], passkeys.map(function(p) {
+                return [p.name, fmtDateTime(p.createdAt), fmtDateTime(p.lastUsedAt), p.signCount];
+              })) +
+            '</div>' +
+            '<div class="um-card"><div class="um-title">Действия пользователя</div>' + preHtml(actionLines) + '</div>' +
+            '<div class="um-card"><div class="um-title">Действия админа</div>' + preHtml(adminActionLines) + '</div>' +
+            '<div class="um-card"><div class="um-title">История подписок</div>' + preHtml(subLines) + '</div>' +
+            '<div class="um-card um-card-wide"><div class="um-title">Ошибки auth/API</div>' + preHtml(errorLines, '#fca5a5') + '</div>' +
+            '<div class="um-card"><div class="um-title">Логи бота</div>' + preHtml(botLogText) + '</div>' +
           '</div>' +
           '<div class="um-actions">' +
             '<button onclick="adminUserBan(\'' + u.id + '\',' + (u.banned ? 'false' : 'true') + ')">' + (u.banned ? 'Разбан' : 'Бан') + '</button>' +

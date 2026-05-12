@@ -599,6 +599,11 @@ export default function ProfileModal({ user, projects, initialTab = 'profile', o
     try {
       const data = await apiFetch('/api/support/requests');
       setSupportRequests(Array.isArray(data.requests) ? data.requests : []);
+      postJsonWithCsrf('/api/support/requests/seen', {})
+        .then(() => {
+          window.dispatchEvent(new CustomEvent('cicada:support-unread-updated', { detail: { count: 0 } }));
+        })
+        .catch(() => {});
     } catch (e) {
       showToast('Не удалось загрузить обращения: ' + (e.message || 'ошибка'), 'error');
     } finally {
@@ -619,6 +624,9 @@ export default function ProfileModal({ user, projects, initialTab = 'profile', o
   const [supportFrom, setSupportFrom] = useState(user.email || user.name || '');
   const [supportSubject, setSupportSubject] = useState('');
   const [supportMessage, setSupportMessage] = useState('');
+  const [supportAttachments, setSupportAttachments] = useState([]);
+  const [supportDrafts, setSupportDrafts] = useState({});
+  const [supportDraftAttachments, setSupportDraftAttachments] = useState({});
   const [supportSending, setSupportSending] = useState(false);
   const [purchases, setPurchases] = useState([]);
   const [purchasesLoading, setPurchasesLoading] = useState(false);
@@ -722,6 +730,82 @@ export default function ProfileModal({ user, projects, initialTab = 'profile', o
     reader.readAsDataURL(file);
   };
 
+  const optimizeSupportScreenshot = (dataUrl) => new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const maxSide = 1600;
+      const ratio = Math.min(1, maxSide / Math.max(img.width, img.height));
+      const w = Math.max(1, Math.round(img.width * ratio));
+      const h = Math.max(1, Math.round(img.height * ratio));
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#0b1020';
+      ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(img, 0, 0, w, h);
+      resolve(canvas.toDataURL('image/jpeg', 0.78));
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+
+  const readSupportScreenshot = async (file) => {
+    if (!file) return null;
+    if (!file.type.startsWith('image/')) throw new Error('Выберите изображение (jpg/png/webp)');
+    if (file.size > 15 * 1024 * 1024) throw new Error('Файл слишком большой (макс. 15MB)');
+    const raw = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('Не удалось прочитать скриншот'));
+      reader.readAsDataURL(file);
+    });
+    const dataUrl = await optimizeSupportScreenshot(raw);
+    const size = Math.round((dataUrl.length * 3) / 4);
+    if (size > 2 * 1024 * 1024) throw new Error('После сжатия скриншот всё ещё больше 2MB');
+    return {
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      name: file.name || 'screenshot.jpg',
+      type: 'image/jpeg',
+      size,
+      dataUrl,
+    };
+  };
+
+  const handleSupportAttachmentPick = async (file, requestId = null, inputEl = null) => {
+    if (inputEl) inputEl.value = '';
+    if (!file) return;
+    try {
+      const attachment = await readSupportScreenshot(file);
+      if (!attachment) return;
+      const append = (prev) => {
+        if (prev.length >= 3) {
+          showToast('Можно прикрепить до 3 скриншотов', 'error');
+          return prev;
+        }
+        return [...prev, attachment].slice(0, 3);
+      };
+      if (requestId) {
+        setSupportDraftAttachments((prev) => ({ ...prev, [requestId]: append(prev[requestId] || []) }));
+      } else {
+        setSupportAttachments((prev) => append(prev));
+      }
+    } catch (e) {
+      showToast(e.message || 'Не удалось прикрепить скриншот', 'error');
+    }
+  };
+
+  const removeSupportAttachment = (attachmentId, requestId = null) => {
+    if (requestId) {
+      setSupportDraftAttachments((prev) => ({
+        ...prev,
+        [requestId]: (prev[requestId] || []).filter((item) => item.id !== attachmentId),
+      }));
+      return;
+    }
+    setSupportAttachments((prev) => prev.filter((item) => item.id !== attachmentId));
+  };
+
   const handleConfirmEmailCode = async () => {
     if (!emailChangeCode.trim()) { setEmailChangeError('Введите код из письма'); return; }
     setEmailChangeStep('confirming');
@@ -764,8 +848,8 @@ export default function ProfileModal({ user, projects, initialTab = 'profile', o
   };
 
   const handleSupportSubmit = async () => {
-    if (!supportFrom.trim() || !supportSubject.trim() || !supportMessage.trim()) {
-      showToast('Заполните поля: кто, тема и суть вопроса', 'error');
+    if (!supportFrom.trim() || !supportSubject.trim() || (!supportMessage.trim() && supportAttachments.length === 0)) {
+      showToast('Заполните поля: кто, тема и сообщение или скриншот', 'error');
       return;
     }
     setSupportSending(true);
@@ -775,15 +859,45 @@ export default function ProfileModal({ user, projects, initialTab = 'profile', o
         email: user.email || supportFrom.trim(),
         subject: supportSubject.trim(),
         message: supportMessage.trim(),
+        attachments: supportAttachments,
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data.error) throw new Error(data.error || 'Не удалось отправить обращение');
       if (data.request) setSupportRequests((prev) => [data.request, ...prev]);
       setSupportSubject('');
       setSupportMessage('');
+      setSupportAttachments([]);
       setActionNotice({ title: 'Готово', message: 'Обращение успешно отправлено в поддержку. Мы ответим вам в ближайшее время.' });
     } catch (e) {
       showToast('Ошибка: ' + (e.message || 'не удалось отправить обращение'), 'error');
+    } finally {
+      setSupportSending(false);
+    }
+  };
+
+  const handleSupportReply = async (requestId) => {
+    const message = String(supportDrafts[requestId] || '').trim();
+    const attachments = supportDraftAttachments[requestId] || [];
+    if (!message && attachments.length === 0) {
+      showToast('Введите сообщение или прикрепите скриншот', 'error');
+      return;
+    }
+    setSupportSending(true);
+    try {
+      const res = await postJsonWithCsrf(`/api/support/requests/${encodeURIComponent(requestId)}/messages`, {
+        message,
+        attachments,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) throw new Error(data.error || 'Не удалось отправить сообщение');
+      if (data.request) {
+        setSupportRequests((prev) => prev.map((item) => (item.id === requestId ? data.request : item)));
+      }
+      setSupportDrafts((prev) => ({ ...prev, [requestId]: '' }));
+      setSupportDraftAttachments((prev) => ({ ...prev, [requestId]: [] }));
+      showToast('Сообщение отправлено в поддержку', 'success');
+    } catch (e) {
+      showToast('Ошибка: ' + (e.message || 'не удалось отправить сообщение'), 'error');
     } finally {
       setSupportSending(false);
     }
@@ -816,6 +930,38 @@ export default function ProfileModal({ user, projects, initialTab = 'profile', o
     answered: 'Ответили',
     closed: 'Закрыто',
   }[status] || status || 'Открыто');
+  const supportMessagesForItem = (item) => {
+    if (Array.isArray(item.messages) && item.messages.length) return item.messages;
+    const messages = [];
+    if (item.message) messages.push({ id: `${item.id}-user`, author: 'user', text: item.message, attachments: item.attachments || [], createdAt: item.createdAt });
+    if (item.replyText) messages.push({ id: `${item.id}-admin`, author: 'admin', text: item.replyText, attachments: [], createdAt: item.repliedAt });
+    return messages;
+  };
+  const renderSupportAttachments = (attachments = [], requestId = null, removable = false) => {
+    if (!attachments.length) return null;
+    return (
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+        {attachments.map((att) => (
+          <div key={att.id || att.dataUrl} style={{ position: 'relative', width: 118, borderRadius: 10, border: '1px solid rgba(255,255,255,0.12)', overflow: 'hidden', background: 'rgba(255,255,255,0.04)' }}>
+            <a href={att.dataUrl} target="_blank" rel="noreferrer" title={att.name || 'Скриншот'}>
+              <img src={att.dataUrl} alt={att.name || 'Скриншот'} style={{ display: 'block', width: '100%', height: 78, objectFit: 'cover' }} />
+            </a>
+            <div style={{ padding: '5px 7px', fontSize: 10, color: 'rgba(255,255,255,0.55)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{att.name || 'screenshot'}</div>
+            {removable && (
+              <button
+                type="button"
+                onClick={() => removeSupportAttachment(att.id, requestId)}
+                style={{ position: 'absolute', top: 4, right: 4, width: 20, height: 20, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.25)', background: 'rgba(0,0,0,0.62)', color: '#fff', cursor: 'pointer', fontSize: 11 }}
+                aria-label="Убрать скриншот"
+              >
+                ×
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+    );
+  };
   const purchaseStatusLabel = (status) => ({
     paid: 'Оплачено',
     created: 'Создан',
@@ -827,6 +973,13 @@ export default function ProfileModal({ user, projects, initialTab = 'profile', o
   const avatarColors = ['#ffd700,#ff8c00', '#3ecf8e,#0ea5e9', '#a78bfa,#ec4899', '#f87171,#fb923c'];
   const avatarColor = avatarColors[(user.name || user.email || '?').charCodeAt(0) % avatarColors.length];
   const avatarSrc = resolveApiAssetUrl(newAvatar);
+  const avatarImgStyle = {
+    width: '100%',
+    height: '100%',
+    objectFit: 'contain',
+    display: 'block',
+    background: 'rgba(0,0,0,0.14)',
+  };
   const showProfileSidebar = !isMobile;
 
   const inputBase = (field) => ({
@@ -878,6 +1031,10 @@ export default function ProfileModal({ user, projects, initialTab = 'profile', o
         .pm-content-scroll::-webkit-scrollbar { width: 6px; }
         .pm-content-scroll::-webkit-scrollbar-track { background: transparent; }
         .pm-content-scroll::-webkit-scrollbar-thumb { background: linear-gradient(#6f46ff,#ff7a35); border-radius: 999px; }
+        .pm-sidebar-scroll { scrollbar-width: thin; scrollbar-color: rgba(139,92,246,.48) transparent; }
+        .pm-sidebar-scroll::-webkit-scrollbar { width: 4px; }
+        .pm-sidebar-scroll::-webkit-scrollbar-track { background: transparent; }
+        .pm-sidebar-scroll::-webkit-scrollbar-thumb { background: rgba(139,92,246,.55); border-radius: 999px; }
         .pm-stat-card {
           position:relative; overflow:hidden;
           background: linear-gradient(145deg, rgba(25,216,255,.12), rgba(111,70,255,.16) 54%, rgba(6,2,32,.78)) !important;
@@ -940,7 +1097,7 @@ export default function ProfileModal({ user, projects, initialTab = 'profile', o
         ))}
         {/* ── LEFT SIDEBAR ── */}
         {showProfileSidebar && !isMobile && (
-          <div style={{ width: 236, background: 'linear-gradient(180deg,rgba(13,7,42,0.94),rgba(7,4,28,0.98) 48%,rgba(4,2,16,1))', borderRight: '1px solid rgba(178,128,255,0.28)', display: 'flex', flexDirection: 'column', flexShrink: 0, position: 'relative', boxShadow: '12px 0 34px rgba(4,1,20,.32), inset -1px 0 0 rgba(25,216,255,.08)' }}>
+          <div style={{ width: 236, height: '100%', minHeight: 0, overflow: 'hidden', background: 'linear-gradient(180deg,rgba(13,7,42,0.94),rgba(7,4,28,0.98) 48%,rgba(4,2,16,1))', borderRight: '1px solid rgba(178,128,255,0.28)', display: 'flex', flexDirection: 'column', flexShrink: 0, position: 'relative', boxShadow: '12px 0 34px rgba(4,1,20,.32), inset -1px 0 0 rgba(25,216,255,.08)' }}>
             {/* subtle grid bg */}
             <div style={{ position:'absolute', inset:0, backgroundImage:'radial-gradient(circle at 50% 0%,rgba(25,216,255,.18),transparent 38%),linear-gradient(rgba(139,92,246,0.055) 1px,transparent 1px),linear-gradient(90deg,rgba(139,92,246,0.055) 1px,transparent 1px)', backgroundSize:'auto,24px 24px,24px 24px', pointerEvents:'none' }} />
 
@@ -961,6 +1118,7 @@ export default function ProfileModal({ user, projects, initialTab = 'profile', o
               </button>
             </div>
 
+            <div className="pm-sidebar-scroll" style={{ flex: 1, minHeight: 0, overflowY: 'auto', position: 'relative', paddingBottom: 6 }}>
             {/* Primary nav */}
             <nav style={{ padding: '4px 8px', display: 'flex', flexDirection: 'column', gap: 2, position: 'relative' }}>
               {[
@@ -1004,11 +1162,12 @@ export default function ProfileModal({ user, projects, initialTab = 'profile', o
                 >{t.upgradePro}</button>
               </div>
             )}
+            </div>
 
             {/* Bottom user info */}
-            <div style={{ padding: '10px 12px', borderTop: '1px solid rgba(178,128,255,0.2)', display: 'flex', alignItems: 'center', gap: 8, position: 'relative', background: 'rgba(255,255,255,0.018)' }}>
-              <div style={{ width: 34, height: 34, borderRadius: 10, overflow: 'hidden', background: `linear-gradient(135deg,${avatarColor})`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 800, color: 'rgba(0,0,0,0.7)', fontFamily: 'Syne,system-ui', flexShrink: 0, boxShadow: '0 0 0 1.5px rgba(25,216,255,0.55), 0 0 14px rgba(25,216,255,.2)' }}>
-                {newAvatar ? <img src={avatarSrc} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : avatarLetter}
+            <div style={{ padding: '10px 12px', borderTop: '1px solid rgba(178,128,255,0.2)', display: 'flex', alignItems: 'center', gap: 8, position: 'relative', background: 'rgba(255,255,255,0.018)', flexShrink: 0, minHeight: 55, boxSizing: 'border-box' }}>
+              <div style={{ width: 34, height: 34, borderRadius: 10, overflow: 'hidden', background: `linear-gradient(135deg,${avatarColor})`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 800, lineHeight: 1, color: 'rgba(0,0,0,0.7)', fontFamily: 'Syne,system-ui', flexShrink: 0, boxShadow: '0 0 0 1.5px rgba(25,216,255,0.55), 0 0 14px rgba(25,216,255,.2)' }}>
+                {newAvatar ? <img src={avatarSrc} alt="" style={avatarImgStyle} /> : avatarLetter}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: '#fff', fontFamily: 'Syne,system-ui', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.name}</div>
@@ -1033,8 +1192,8 @@ export default function ProfileModal({ user, projects, initialTab = 'profile', o
             {/* Neon line accent bottom */}
             <div style={{ position:'absolute', bottom:0, left:0, right:0, height:1, background:'linear-gradient(90deg,transparent,rgba(25,216,255,0.45),rgba(139,92,246,0.5),rgba(255,122,53,0.38),transparent)', pointerEvents:'none' }} />
             <div style={{ position: 'relative', width: isMobile ? 50 : 58, height: isMobile ? 50 : 58, flexShrink: 0 }}>
-              <div style={{ width: '100%', height: '100%', borderRadius: '50%', overflow: 'hidden', background: `linear-gradient(135deg,${avatarColor})`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: isMobile ? 20 : 24, fontWeight: 800, color: 'rgba(0,0,0,0.7)', fontFamily: 'Syne,system-ui', animation: 'pmAvatarPulse 3s ease-in-out infinite', border: '2px solid rgba(255,255,255,.12)' }}>
-                {newAvatar ? <img src={avatarSrc} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : avatarLetter}
+              <div style={{ width: '100%', height: '100%', borderRadius: '50%', overflow: 'hidden', background: `linear-gradient(135deg,${avatarColor})`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: isMobile ? 20 : 24, fontWeight: 800, lineHeight: 1, color: 'rgba(0,0,0,0.7)', fontFamily: 'Syne,system-ui', animation: 'pmAvatarPulse 3s ease-in-out infinite', border: '2px solid rgba(255,255,255,.12)' }}>
+                {newAvatar ? <img src={avatarSrc} alt="" style={avatarImgStyle} /> : avatarLetter}
               </div>
             </div>
 
@@ -1173,8 +1332,8 @@ export default function ProfileModal({ user, projects, initialTab = 'profile', o
                       <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', fontFamily: 'Syne,system-ui', marginBottom: 10 }}>{t.avatar}</div>
                       <div className="pm-panel-card" style={{ padding: '14px', borderRadius: 10 }}>
                         <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', marginBottom: 14 }}>
-                          <div style={{ width: 88, height: 88, borderRadius: '50%', overflow: 'hidden', background: `linear-gradient(135deg,${avatarColor})`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 32, fontWeight: 800, color: 'rgba(0,0,0,0.7)', fontFamily: 'Syne,system-ui', flexShrink: 0, border: '3px solid rgba(25,216,255,.75)', boxShadow: '0 0 24px rgba(25,216,255,.38), 0 0 34px rgba(139,92,246,.3)' }}>
-                            {newAvatar ? <img src={avatarSrc} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : avatarLetter}
+                          <div style={{ width: 88, height: 88, borderRadius: '50%', overflow: 'hidden', background: `linear-gradient(135deg,${avatarColor})`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 32, fontWeight: 800, lineHeight: 1, color: 'rgba(0,0,0,0.7)', fontFamily: 'Syne,system-ui', flexShrink: 0, border: '3px solid rgba(25,216,255,.75)', boxShadow: '0 0 24px rgba(25,216,255,.38), 0 0 34px rgba(139,92,246,.3)' }}>
+                            {newAvatar ? <img src={avatarSrc} alt="" style={avatarImgStyle} /> : avatarLetter}
                           </div>
                           <div style={{ paddingTop: 18 }}>
                             <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.74)', marginBottom: 4 }}>JPG/PNG/WebP</div>
@@ -1471,7 +1630,7 @@ export default function ProfileModal({ user, projects, initialTab = 'profile', o
                 <div style={{ background: 'rgba(16,185,129,0.05)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: 14, padding: 16 }}>
                   <div style={{ fontSize: 16, fontWeight: 800, color: '#e5e7eb', fontFamily: 'Syne, system-ui', marginBottom: 6 }}>Обращения в поддержку</div>
                   <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)', lineHeight: 1.6 }}>
-                    Ниже история ваших обращений и ответы поддержки. Новое сообщение создаёт отдельный тикет в админ-панели.
+                    Ниже история ваших обращений и ответы поддержки. В существующем тикете можно продолжить беседу и прикрепить скриншот.
                   </div>
                 </div>
 
@@ -1492,26 +1651,49 @@ export default function ProfileModal({ user, projects, initialTab = 'profile', o
                     </div>
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxHeight: 420, overflowY: 'auto', paddingRight: 4 }}>
-                      {supportRequests.map((item) => (
-                        <div key={item.id} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                            <span style={{ fontSize: 12, fontWeight: 800, color: '#e5e7eb', fontFamily: 'Syne, system-ui' }}>{item.subject}</span>
-                            <span style={{ padding: '2px 8px', borderRadius: 999, background: item.status === 'answered' ? 'rgba(62,207,142,0.12)' : 'rgba(255,255,255,0.06)', border: `1px solid ${item.status === 'answered' ? 'rgba(62,207,142,0.26)' : 'rgba(255,255,255,0.11)'}`, color: item.status === 'answered' ? '#86efac' : 'rgba(255,255,255,0.55)', fontSize: 10, fontWeight: 800 }}>{supportStatusLabel(item.status)}</span>
-                            <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.28)', fontFamily: 'var(--mono)' }}>{formatDateTime(item.createdAt)}</span>
-                          </div>
-                          <div style={{ alignSelf: 'flex-end', maxWidth: '86%', padding: '11px 13px', borderRadius: '14px 14px 4px 14px', background: 'linear-gradient(135deg,rgba(14,165,233,0.18),rgba(99,102,241,0.16))', border: '1px solid rgba(14,165,233,0.24)', color: 'rgba(255,255,255,0.82)', fontSize: 12, lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>
-                            {item.message}
-                          </div>
-                          {item.replyText ? (
-                            <div style={{ alignSelf: 'flex-start', maxWidth: '86%', padding: '11px 13px', borderRadius: '14px 14px 14px 4px', background: 'linear-gradient(135deg,rgba(62,207,142,0.16),rgba(14,165,233,0.10))', border: '1px solid rgba(62,207,142,0.22)', color: 'rgba(255,255,255,0.86)', fontSize: 12, lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>
-                              <div style={{ fontSize: 10, color: '#86efac', fontWeight: 800, marginBottom: 6, fontFamily: 'Syne, system-ui' }}>Поддержка · {formatDateTime(item.repliedAt)}</div>
-                              {item.replyText}
+                      {supportRequests.map((item) => {
+                        const draftAttachments = supportDraftAttachments[item.id] || [];
+                        const itemMessages = supportMessagesForItem(item);
+                        const lastMessage = itemMessages[itemMessages.length - 1];
+                        return (
+                          <div key={item.id} style={{ display: 'flex', flexDirection: 'column', gap: 10, paddingBottom: 12, borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: 12, fontWeight: 800, color: '#e5e7eb', fontFamily: 'Syne, system-ui' }}>{item.subject}</span>
+                              <span style={{ padding: '2px 8px', borderRadius: 999, background: item.status === 'answered' ? 'rgba(62,207,142,0.12)' : 'rgba(255,255,255,0.06)', border: `1px solid ${item.status === 'answered' ? 'rgba(62,207,142,0.26)' : 'rgba(255,255,255,0.11)'}`, color: item.status === 'answered' ? '#86efac' : 'rgba(255,255,255,0.55)', fontSize: 10, fontWeight: 800 }}>{supportStatusLabel(item.status)}</span>
+                              <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.28)', fontFamily: 'var(--mono)' }}>{formatDateTime(item.createdAt)}</span>
                             </div>
-                          ) : (
-                            <div style={{ alignSelf: 'flex-start', fontSize: 11, color: 'rgba(255,255,255,0.32)', paddingLeft: 4 }}>Ожидает ответа поддержки</div>
-                          )}
-                        </div>
-                      ))}
+                            {itemMessages.map((msg) => {
+                              const isAdminMessage = msg.author === 'admin';
+                              return (
+                                <div key={msg.id || `${msg.author}-${msg.createdAt}`} style={{ alignSelf: isAdminMessage ? 'flex-start' : 'flex-end', maxWidth: '86%', padding: '11px 13px', borderRadius: isAdminMessage ? '14px 14px 14px 4px' : '14px 14px 4px 14px', background: isAdminMessage ? 'linear-gradient(135deg,rgba(62,207,142,0.16),rgba(14,165,233,0.10))' : 'linear-gradient(135deg,rgba(14,165,233,0.18),rgba(99,102,241,0.16))', border: `1px solid ${isAdminMessage ? 'rgba(62,207,142,0.22)' : 'rgba(14,165,233,0.24)'}`, color: 'rgba(255,255,255,0.86)', fontSize: 12, lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>
+                                  <div style={{ fontSize: 10, color: isAdminMessage ? '#86efac' : '#93c5fd', fontWeight: 800, marginBottom: 6, fontFamily: 'Syne, system-ui' }}>{isAdminMessage ? 'Поддержка' : 'Вы'} · {formatDateTime(msg.createdAt)}</div>
+                                  {msg.text}
+                                  {renderSupportAttachments(msg.attachments || [])}
+                                </div>
+                              );
+                            })}
+                            {item.status !== 'closed' && lastMessage?.author !== 'admin' && (
+                              <div style={{ alignSelf: 'flex-start', fontSize: 11, color: 'rgba(255,255,255,0.32)', paddingLeft: 4 }}>Ожидает ответа поддержки</div>
+                            )}
+                            <div style={{ padding: 10, borderRadius: 12, border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.025)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                              <textarea
+                                value={supportDrafts[item.id] || ''}
+                                onChange={e => setSupportDrafts((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                                style={{ ...inputBase(`supportReply-${item.id}`), minHeight: 74, resize: 'vertical' }}
+                                placeholder="Продолжить беседу..."
+                              />
+                              {renderSupportAttachments(draftAttachments, item.id, true)}
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                                <label style={{ padding: '9px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.14)', background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.72)', fontSize: 12, fontWeight: 700, fontFamily: 'Syne, system-ui', cursor: 'pointer' }}>
+                                  📎 Скриншот
+                                  <input type="file" accept="image/jpeg,image/png,image/webp" onChange={e => handleSupportAttachmentPick(e.target.files?.[0], item.id, e.currentTarget)} style={{ display: 'none' }} />
+                                </label>
+                                <button type="button" onClick={() => handleSupportReply(item.id)} disabled={supportSending} style={{ padding: '9px 12px', borderRadius: 10, border: 'none', background: 'linear-gradient(135deg,#3ecf8e,#0ea5e9)', color: '#111', fontSize: 12, fontWeight: 800, fontFamily: 'Syne, system-ui', cursor: supportSending ? 'not-allowed' : 'pointer', opacity: supportSending ? 0.65 : 1 }}>Отправить</button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -1553,6 +1735,11 @@ export default function ProfileModal({ user, projects, initialTab = 'profile', o
                       placeholder="Опишите проблему или вопрос"
                     />
                   </div>
+                  {renderSupportAttachments(supportAttachments, null, true)}
+                  <label style={{ alignSelf: 'flex-start', padding: '9px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.14)', background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.72)', fontSize: 12, fontWeight: 700, fontFamily: 'Syne, system-ui', cursor: 'pointer' }}>
+                    📎 Прикрепить скриншот
+                    <input type="file" accept="image/jpeg,image/png,image/webp" onChange={e => handleSupportAttachmentPick(e.target.files?.[0], null, e.currentTarget)} style={{ display: 'none' }} />
+                  </label>
                   <button
                     onClick={handleSupportSubmit}
                     disabled={supportSending}

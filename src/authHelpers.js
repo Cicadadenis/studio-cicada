@@ -1,6 +1,6 @@
 import React from 'react';
 import confetti from 'canvas-confetti';
-import { postJsonWithCsrf, storeJwt } from './apiClient.js';
+import { postJsonWithCsrf } from './apiClient.js';
 
 export function fireRegistrationConfetti() {
   const opts = { origin: { y: 0.72 }, zIndex: 10050 };
@@ -214,7 +214,6 @@ export async function telegramAuth(tgData) {
   const res = await postJsonWithCsrf('/api/auth/telegram', tgData);
   const data = await res.json();
   if (data.error) throw new Error(data.error);
-  if (data.token) storeJwt(data.token);
   return data.user;
 }
 
@@ -264,7 +263,6 @@ export async function loginWithPasskey(email = '') {
   const verifyRes = await postJsonWithCsrf('/api/passkey/login', serializeWebauthnCredential(credential, options.challenge));
   const data = await verifyRes.json().catch(() => ({}));
   if (!verifyRes.ok || data.error) throw new Error(data.error || 'Не удалось войти по passkey');
-  if (data.token) storeJwt(data.token);
   return data.user;
 }
 

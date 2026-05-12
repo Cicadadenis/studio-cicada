@@ -10,7 +10,7 @@ export const CICADA_TG_ROOT = (process.env.CICADA_TG_ROOT || '').trim();
 export const RESEND_API_KEY = process.env.RESEND_API_KEY;
 export const EMAIL_FROM     = process.env.EMAIL_FROM     || `Cicada Studio <noreply@${API_HOST}>`;
 
-export const APP_URL = `https://${API_HOST}`;
+export const APP_URL = (process.env.APP_URL || `https://${API_HOST}`).replace(/\/$/, '');
 
 export const CRYPTOBOT_TOKEN = process.env.CRYPTOBOT_TOKEN;
 

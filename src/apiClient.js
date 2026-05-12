@@ -31,11 +31,11 @@ export function resolveApiAssetUrl(url) {
 }
 
 export function getStoredJwt() {
-  return localStorage.getItem(JWT_KEY) || null;
+  return null;
 }
 
 export function storeJwt(token) {
-  if (token) localStorage.setItem(JWT_KEY, token);
+  localStorage.removeItem(JWT_KEY);
 }
 
 export function clearJwt() {
@@ -45,12 +45,10 @@ export function clearJwt() {
 
 export async function apiFetch(url, options = {}, retryCsrf = true) {
   const method = (options.method || 'GET').toUpperCase();
-  const jwt = getStoredJwt();
-  const authHeaders = jwt ? { Authorization: `Bearer ${jwt}` } : {};
   const csrfHeaders = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)
     ? { 'x-csrf-token': await getCsrfTokenForRequest(url) }
     : {};
-  const mergedHeaders = { ...authHeaders, ...csrfHeaders, ...(options.headers || {}) };
+  const mergedHeaders = { ...csrfHeaders, ...(options.headers || {}) };
   let res;
   try {
     res = await fetch(url, { credentials: 'include', ...options, headers: mergedHeaders });
@@ -86,14 +84,12 @@ export async function apiFetch(url, options = {}, retryCsrf = true) {
 
 export async function postJsonWithCsrf(url, body, retryCsrf = true) {
   const token = await getCsrfTokenForRequest(url);
-  const jwt = getStoredJwt();
   const res = await fetch(url, {
     method: 'POST',
     credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
       'x-csrf-token': token,
-      ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
     },
     body: JSON.stringify(body ?? {}),
   });
@@ -108,7 +104,13 @@ export async function postJsonWithCsrf(url, body, retryCsrf = true) {
 }
 
 export async function fetchOauthBootstrapUser() {
-  const r = await fetch('/api/auth/oauth-bootstrap', { credentials: 'include' });
+  const params = new URLSearchParams();
+  if (typeof window !== 'undefined') {
+    const code = new URLSearchParams(window.location.search).get('oauth_login');
+    if (code) params.set('code', code);
+  }
+  const qs = params.toString();
+  const r = await fetch(`${API_URL}/auth/oauth-bootstrap${qs ? `?${qs}` : ''}`, { credentials: 'include' });
   const data = await r.json().catch(() => ({}));
   if (data?.twofaRequired && data?.user) {
     const e = new Error('Требуется код 2FA');
@@ -116,8 +118,14 @@ export async function fetchOauthBootstrapUser() {
     e.user = data.user;
     throw e;
   }
-  if (data?.ok && data.token && data.user) {
-    storeJwt(data.token);
+  if (data?.ok && data.user) {
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has('oauth_login')) {
+        url.searchParams.delete('oauth_login');
+        window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+      }
+    }
     return data.user;
   }
   return null;
@@ -132,7 +140,6 @@ export async function completeOauth2FA(totp = '') {
     throw e;
   }
   if (data?.error) throw new Error(data.error);
-  if (data.token) storeJwt(data.token);
   return data.user;
 }
 
@@ -153,7 +160,6 @@ export async function loginUser(email, password, totp = '') {
     throw e;
   }
   if (data?.error) throw new Error(data.error);
-  if (data.token) storeJwt(data.token);
   return data.user;
 }
 
@@ -263,7 +269,6 @@ export function clearSession() {
 }
 
 export async function fetchSessionUserFromServer() {
-  if (!getStoredJwt()) return null;
   try {
     const data = await apiFetch(`${API_URL}/me`);
     return data?.user ?? null;

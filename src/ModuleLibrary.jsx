@@ -30,13 +30,10 @@ function localizeBuiltinItem(mod, lang) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
-const JWT_KEY = 'cicada_jwt';
 
 async function libFetch(path, opts = {}) {
   const method = (opts.method || 'GET').toUpperCase();
-  const jwt = localStorage.getItem(JWT_KEY);
   const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
-  if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
   const requestUrl = API_URL + path;
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
     headers['x-csrf-token'] = await getCsrfTokenForRequest(requestUrl);

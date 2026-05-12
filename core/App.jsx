@@ -61,8 +61,8 @@ const API_URL = import.meta.env.VITE_API_URL ?? "/api";
 
 // ─── JWT helpers ────────────────────────────────────────────────────────────
 const JWT_KEY = 'cicada_jwt';
-function getStoredJwt() { return localStorage.getItem(JWT_KEY) || null; }
-function storeJwt(token) { if (token) localStorage.setItem(JWT_KEY, token); }
+function getStoredJwt() { return null; }
+function storeJwt(token) { localStorage.removeItem(JWT_KEY); }
 function clearJwt() {
   resetCsrfPrefetch();
   localStorage.removeItem(JWT_KEY);
@@ -71,12 +71,10 @@ function clearJwt() {
 // ─── Универсальный fetch с человекочитаемыми ошибками ───────────────────────
 async function apiFetch(url, options = {}, retryCsrf = true) {
   const method = (options.method || 'GET').toUpperCase();
-  const jwt = getStoredJwt();
-  const authHeaders = jwt ? { Authorization: `Bearer ${jwt}` } : {};
   const csrfHeaders = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)
     ? { 'x-csrf-token': await getCsrfTokenForRequest() }
     : {};
-  const mergedHeaders = { ...authHeaders, ...csrfHeaders, ...(options.headers || {}) };
+  const mergedHeaders = { ...csrfHeaders, ...(options.headers || {}) };
   let res;
   try {
     res = await fetch(url, { credentials: 'include', ...options, headers: mergedHeaders });
@@ -127,7 +125,13 @@ async function postJsonWithCsrf(url, body) {
 }
 
 async function fetchOauthBootstrapUser() {
-  const r = await fetch('/api/auth/oauth-bootstrap', { credentials: 'include' });
+  const params = new URLSearchParams();
+  if (typeof window !== 'undefined') {
+    const code = new URLSearchParams(window.location.search).get('oauth_login');
+    if (code) params.set('code', code);
+  }
+  const qs = params.toString();
+  const r = await fetch(`${API_URL}/auth/oauth-bootstrap${qs ? `?${qs}` : ''}`, { credentials: 'include' });
   const data = await r.json().catch(() => ({}));
   if (data?.twofaRequired) {
     const e = new Error('Требуется код 2FA');
@@ -135,8 +139,14 @@ async function fetchOauthBootstrapUser() {
     e.oauth2fa = true;
     throw e;
   }
-  if (data?.ok && data.token && data.user) {
-    storeJwt(data.token);
+  if (data?.ok && data.user) {
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has('oauth_login')) {
+        url.searchParams.delete('oauth_login');
+        window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+      }
+    }
     return data.user;
   }
   return null;
@@ -290,7 +300,6 @@ function clearSession() {
 
 /** Свежие plan/subscription из БД (после выдачи подписки в админке и т.д.). */
 async function fetchSessionUserFromServer() {
-  if (!getStoredJwt()) return null;
   try {
     const data = await apiFetch(`${API_URL}/me`);
     return data?.user ?? null;
@@ -3865,28 +3874,24 @@ const EXAMPLE_FULL = `версия "1.0"
     if (user) {
       setCurrentUser(user);
       setShowAuthModal(false);
-      if (!getStoredJwt()) {
-        fetchOauthBootstrapUser()
-          .then((u) => {
-            if (u) {
-              saveSession(u);
-              setCurrentUser(u);
-              loadUserProjects(u.id);
-            } else {
-              clearSession();
-              setCurrentUser(null);
-              setShowAuthModal(true);
-            }
-          })
-          .catch((e) => {
+      fetchOauthBootstrapUser()
+        .then((u) => {
+          if (u) {
+            saveSession(u);
+            setCurrentUser(u);
+            loadUserProjects(u.id);
+          } else {
             clearSession();
             setCurrentUser(null);
-            if (e?.oauth2fa || e?.twofaRequired) setOauth2faPending(true);
             setShowAuthModal(true);
-          });
-      } else {
-        loadUserProjects(user.id);
-      }
+          }
+        })
+        .catch((e) => {
+          clearSession();
+          setCurrentUser(null);
+          if (e?.oauth2fa || e?.twofaRequired) setOauth2faPending(true);
+          setShowAuthModal(true);
+        });
     } else {
       fetchOauthBootstrapUser()
         .then((u) => {
@@ -3928,7 +3933,7 @@ const EXAMPLE_FULL = `версия "1.0"
 
   // Подтягиваем план/подписку с сервера: админ изменил профиль → без выхода из аккаунта
   useEffect(() => {
-    if (!currentUser?.id || !getStoredJwt()) return undefined;
+    if (!currentUser?.id) return undefined;
     let cancelled = false;
     const sync = () => {
       fetchSessionUserFromServer().then((u) => {
@@ -3959,7 +3964,7 @@ const EXAMPLE_FULL = `версия "1.0"
   }, [currentUser?.id]);
 
   useEffect(() => {
-    if (!showProfileModal || !currentUser?.id || !getStoredJwt()) return undefined;
+    if (!showProfileModal || !currentUser?.id) return undefined;
     let cancelled = false;
     fetchSessionUserFromServer().then((u) => {
       if (cancelled || !u) return;
@@ -5267,14 +5272,12 @@ const EXAMPLE_FULL = `версия "1.0"
                   setAiError('');
                   try {
                     const token = await getCsrfTokenForRequest();
-                    const jwt = getStoredJwt();
                     const res = await fetch(`${API_URL}/ai-generate`, {
                       method: 'POST',
                       credentials: 'include',
                       headers: {
                         'Content-Type': 'application/json',
                         'x-csrf-token': token,
-                        ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
                       },
                       body: JSON.stringify({ prompt: aiPrompt.trim() }),
                     });

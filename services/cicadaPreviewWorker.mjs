@@ -21,7 +21,8 @@ function spawnWorker(pkgRoot) {
   const py = pythonCmd();
   const sep = process.platform === 'win32' ? ';' : ':';
   const env = {
-    ...process.env,
+    PATH: process.env.PATH,
+    HOME: process.env.HOME,
     PYTHONUTF8: '1',
     PYTHONIOENCODING: 'utf-8',
     PYTHONUNBUFFERED: '1',
@@ -33,6 +34,7 @@ function spawnWorker(pkgRoot) {
   const proc = spawn(py, ['-u', '-m', 'cicada.preview_worker'], {
     cwd: pkgRoot || process.cwd(),
     env,
+    shell: false,
     windowsHide: true,
   });
 

@@ -70,9 +70,15 @@ import { isPlaceholderBotToken } from './core/botTokenPlaceholders.mjs';
 const { Pool } = pg;
 
 const app = express();
+app.disable('x-powered-by');
+app.set('trust proxy', 1);
 
 function isProductionEnv() {
   return (process.env.APP_ENV || process.env.NODE_ENV || '').trim() === 'production';
+}
+
+function cspNonce(req, res) {
+  return `'nonce-${res.locals.cspNonce}'`;
 }
 
 const AVATAR_UPLOAD_DIR = path.resolve('uploads/avatars');
@@ -89,11 +95,44 @@ app.use(AVATAR_URL_PREFIX, express.static(AVATAR_UPLOAD_DIR, {
   fallthrough: false,
   immutable: true,
   maxAge: '30d',
+  setHeaders(res) {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self'; style-src 'none'; script-src 'none'; sandbox");
+  },
 }));
 
+app.use((req, res, next) => {
+  res.locals.cspNonce = crypto.randomBytes(16).toString('base64');
+  next();
+});
 app.use(
   helmet({
-    contentSecurityPolicy: false,
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        defaultSrc: ["'self'"],
+        baseUri: ["'self'"],
+        objectSrc: ["'none'"],
+        scriptSrc: ["'self'", cspNonce, 'https://telegram.org'],
+        scriptSrcAttr: ["'none'"],
+        styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+        fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
+        imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+        connectSrc: ["'self'"],
+        frameSrc: ["'self'", 'https://oauth.telegram.org', 'https://telegram.org'],
+        frameAncestors: ["'self'"],
+        formAction: ["'self'"],
+        upgradeInsecureRequests: isProductionEnv() ? [] : null,
+      },
+    },
+    crossOriginEmbedderPolicy: false,
+    crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
+    hsts: {
+      maxAge: 31536000,
+      includeSubDomains: true,
+      preload: true,
+    },
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
   }),
 );
 
@@ -127,8 +166,32 @@ app.use(
     credentials: true,
   }),
 );
-app.use(express.json({ limit: '30mb' }));
+const jsonParser = express.json({ limit: '1mb' });
+const avatarJsonParser = express.json({ limit: process.env.AVATAR_JSON_LIMIT || '7mb' });
+const previewJsonParser = express.json({ limit: process.env.PREVIEW_JSON_LIMIT || '16mb' });
+const supportJsonParser = express.json({ limit: process.env.SUPPORT_JSON_LIMIT || '8mb' });
+const LARGE_JSON_ROUTE_PATHS = new Set(['/api/avatar', '/api/bot/preview']);
+
+app.use((req, res, next) => {
+  if (
+    req.method === 'POST' &&
+    (req.path === '/api/support/requests' || /^\/api\/support\/requests\/[^/]+\/messages$/.test(req.path))
+  ) return next();
+  if (LARGE_JSON_ROUTE_PATHS.has(req.path)) return next();
+  return jsonParser(req, res, next);
+});
 app.use(cookieParser());
+app.use((err, req, res, next) => {
+  if (err?.type === 'entity.too.large') {
+    recordSecurityEvent('json_body_rejected', req, { reason: 'too_large', limit: LARGE_JSON_ROUTE_PATHS.has(req.path) ? 'upload' : '1mb' });
+    return res.status(413).json({ error: 'Слишком большой запрос' });
+  }
+  if (err instanceof SyntaxError && 'body' in err) {
+    recordSecurityEvent('json_body_rejected', req, { reason: 'invalid_json' });
+    return res.status(400).json({ error: 'Некорректный JSON' });
+  }
+  return next(err);
+});
 app.use((req, res, next) => {
   const origJson = res.json.bind(res);
   res.json = (payload) => {
@@ -160,17 +223,21 @@ const BOTS_DIR = 'bots';
 const recentSystemErrors = [];
 const recentApiErrors = [];
 const recentAuthErrors = [];
+const recentSecurityEvents = [];
 const recentAdminActions = [];
 const recentUserActions = [];
 const userLoginHistory = new Map(); // userId -> [{ at, ip, method }]
 const recentSubscriptions = [];
 const googleAuthStates = new Map(); // state -> { exp }
+const oauthLoginHandoffs = new Map(); // code -> { userId, exp }
+const authFailureBuckets = new Map(); // key -> timestamps
 
 if (!fs.existsSync(BOTS_DIR)) {
   fs.mkdirSync(BOTS_DIR, { recursive: true });
 }
 
-const isHttps = process.env.API_HOST && process.env.API_HOST !== 'localhost';
+const isHttps = isProductionEnv()
+  || (process.env.API_HOST && !['localhost', '127.0.0.1', '0.0.0.0'].includes(String(process.env.API_HOST).trim()));
 
 function pushSystemError(source, err) {
   const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
@@ -215,6 +282,36 @@ function recordAuthError(type, req, identifier, message) {
     message: String(message || ''),
     ip: req?.ip || null,
   }, 300);
+  recordBruteForceSignal(type, req, identifier);
+}
+
+function recordSecurityEvent(type, req, details = {}) {
+  pushRing(recentSecurityEvents, {
+    at: new Date().toISOString(),
+    type,
+    path: req?.path || null,
+    method: req?.method || null,
+    ip: req?.ip || null,
+    userId: req?.authUserId || req?.body?.userId || null,
+    details,
+  }, 500);
+}
+
+function recordBruteForceSignal(type, req, identifier) {
+  const now = Date.now();
+  const key = `${type}|${String(identifier || '').toLowerCase()}|${rlIpSegment(req)}`;
+  const windowMs = 15 * 60 * 1000;
+  const curr = (authFailureBuckets.get(key) || []).filter((ts) => now - ts <= windowMs);
+  curr.push(now);
+  authFailureBuckets.set(key, curr);
+  if (curr.length === 5 || curr.length === 10) {
+    recordSecurityEvent('brute_force_suspected', req, {
+      type,
+      identifier: identifier || null,
+      attempts: curr.length,
+      windowSec: Math.floor(windowMs / 1000),
+    });
+  }
 }
 
 function recordAdminAction(req, action, targetUserId, details = {}) {
@@ -255,7 +352,8 @@ process.on('unhandledRejection', (reason) => {
   console.error('[unhandledRejection]', reason);
 });
 
-function rl429(_, res) {
+function rl429(req, res) {
+  recordSecurityEvent('rate_limit_exceeded', req, { route: req?.route?.path || req?.path || null });
   res.status(429).json({ error: 'Слишком много попыток. Попробуйте позже.' });
 }
 
@@ -330,6 +428,42 @@ const botPreviewRateLimit = rateLimit({
   handler: rl429,
 });
 
+const uploadRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `upload_${req.authUserId || rlIpSegment(req)}`,
+  handler: rl429,
+});
+
+const dslLintRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `dsl_lint_${req.authUserId || rlIpSegment(req)}`,
+  handler: rl429,
+});
+
+const botRunRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `bot_run_${req.authUserId || String(req.body?.userId || '') || rlIpSegment(req)}`,
+  handler: rl429,
+});
+
+const aiGenerateRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 25,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `ai_generate_${req.authUserId || rlIpSegment(req)}`,
+  handler: rl429,
+});
+
 /** Подтверждение смены email по коду (защита от перебора кода). */
 const confirmEmailChangeRateLimit = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -397,6 +531,7 @@ const JWT_SECRET = _rawJwtSecret.length >= MIN_JWT_SECRET_LEN
 const JWT_EXPIRES_SEC = Number(process.env.JWT_EXPIRES_SEC || 30 * 24 * 60 * 60); // 30 дней по умолчанию
 
 /** Одноразовая передача JWT в SPA после OAuth-редиректа (httpOnly cookie). */
+const USER_SESSION_COOKIE = 'user_session';
 const OAUTH_JWT_HANDOFF_COOKIE = 'oauth_jwt_handoff';
 const OAUTH_2FA_PENDING_COOKIE = 'oauth_2fa_pending';
 const ADMIN_ROUTE_COOKIE = 'admin_route_session';
@@ -408,15 +543,48 @@ function issueUserJwt(userId) {
   return jwt.sign({ sub: userId, type: 'user' }, JWT_SECRET, { expiresIn: JWT_EXPIRES_SEC });
 }
 
-function issueOauthJwtHandoffCookie(res, userId) {
+function issueUserSessionCookie(res, userId) {
   const jwtToken = issueUserJwt(userId);
-  res.cookie(OAUTH_JWT_HANDOFF_COOKIE, jwtToken, {
+  res.cookie(USER_SESSION_COOKIE, jwtToken, {
     httpOnly: true,
     sameSite: 'strict',
     secure: isHttps,
-    maxAge: 3 * 60 * 1000,
+    maxAge: JWT_EXPIRES_SEC * 1000,
     path: '/',
   });
+  return jwtToken;
+}
+
+function issueOauthJwtHandoffCookie(res, userId) {
+  const code = crypto.randomBytes(32).toString('base64url');
+  oauthLoginHandoffs.set(code, {
+    userId: String(userId),
+    type: 'login',
+    exp: Date.now() + 3 * 60 * 1000,
+  });
+  return code;
+}
+
+function issueOauth2faHandoffCode(userId) {
+  const code = crypto.randomBytes(32).toString('base64url');
+  oauthLoginHandoffs.set(code, {
+    userId: String(userId),
+    type: 'oauth_2fa_pending',
+    exp: Date.now() + 3 * 60 * 1000,
+  });
+  return code;
+}
+
+function buildOauthRedirectUrl(code) {
+  const target = new URL(APP_URL || '/');
+  target.searchParams.set('oauth_login', code);
+  return target.toString();
+}
+
+function clearUserSessionCookies(res) {
+  const opts = { path: '/', httpOnly: true, sameSite: 'strict', secure: isHttps };
+  res.clearCookie(USER_SESSION_COOKIE, opts);
+  res.clearCookie(OAUTH_JWT_HANDOFF_COOKIE, opts);
 }
 
 function issueAdminSessionCookie(res) {
@@ -445,9 +613,7 @@ function issueAdminRouteCookie(res, userId) {
 
 function getJwtUserId(req) {
   try {
-    const header = String(req.headers?.authorization || '');
-    if (!header.startsWith('Bearer ')) return null;
-    const token = header.slice('Bearer '.length).trim();
+    const token = String(req.cookies?.[USER_SESSION_COOKIE] || '').trim();
     if (!token) return null;
     const decoded = jwt.verify(token, JWT_SECRET);
     if (!decoded || decoded.type !== 'user' || !decoded.sub) return null;
@@ -519,10 +685,38 @@ function timingSafeEqualLoose(a, b) {
   }
 }
 
+const CHILD_PROCESS_ALLOWLIST = new Set(['git', 'npm', 'pm2', 'gzip', 'tar', 'pg_dump']);
+
+function assertSafeChildProcessArgs(command, args) {
+  if (!CHILD_PROCESS_ALLOWLIST.has(command)) {
+    throw new Error(`Command is not allowlisted: ${command}`);
+  }
+  if (!Array.isArray(args) || !args.every((arg) => typeof arg === 'string')) {
+    throw new Error('Child process args must be a string array');
+  }
+  for (const arg of args) {
+    if (arg.includes('\0')) throw new Error('Child process argument contains NUL byte');
+  }
+}
+
+function safeSpawnSync(command, args = [], options = {}) {
+  assertSafeChildProcessArgs(command, args);
+  return spawnSync(command, args, {
+    shell: false,
+    windowsHide: true,
+    timeout: 30_000,
+    maxBuffer: 16 * 1024 * 1024,
+    ...options,
+  });
+}
+
 setInterval(() => {
   const now = Date.now();
   for (const [state, meta] of googleAuthStates.entries()) {
     if (!meta || meta.exp <= now) googleAuthStates.delete(state);
+  }
+  for (const [code, meta] of oauthLoginHandoffs.entries()) {
+    if (!meta || meta.exp <= now) oauthLoginHandoffs.delete(code);
   }
 }, 5 * 60 * 1000).unref();
 
@@ -603,9 +797,13 @@ async function initDB() {
       status     TEXT NOT NULL DEFAULT 'open',
       reply_text TEXT,
       replied_at TIMESTAMPTZ,
+      messages   JSONB NOT NULL DEFAULT '[]'::jsonb,
+      user_seen_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  await pool.query(`ALTER TABLE support_requests ADD COLUMN IF NOT EXISTS messages JSONB NOT NULL DEFAULT '[]'::jsonb`);
+  await pool.query(`ALTER TABLE support_requests ADD COLUMN IF NOT EXISTS user_seen_at TIMESTAMPTZ`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_support_requests_created_at ON support_requests(created_at DESC)`);
 
   // ── Paid subscriptions / CryptoBot invoices ────────────────────────────────
@@ -909,7 +1107,7 @@ app.post('/api/register', registerRateLimit, async (req, res) => {
   res.json({ success: true, needVerify: true });
 });
 
-function verifyEmailPage({ success, title, message, emoji }) {
+function verifyEmailPage({ success, title, message, emoji, nonce = '' }) {
   const color = success ? '#3ecf8e' : '#f87171';
   const glow  = success ? 'rgba(62,207,142,0.15)' : 'rgba(248,113,113,0.12)';
   return `<!DOCTYPE html>
@@ -965,7 +1163,7 @@ function verifyEmailPage({ success, title, message, emoji }) {
     <p>${message}</p>
     <a href="/">→ Открыть Cicada Studio</a>
   </div>
-  <script>
+  <script nonce="${nonce}">
     const d=document.getElementById('dots'),c='${color}';
     for(let i=0;i<18;i++){const el=document.createElement('div');el.className='dot';
       const s=Math.random()*4+2;
@@ -986,12 +1184,14 @@ app.get('/api/verify-email', verifyEmailRateLimit, async (req, res) => {
     success: false, emoji: '🔗',
     title: 'Ссылка недействительна',
     message: 'Эта ссылка для подтверждения email не найдена.<br/>Попробуйте зарегистрироваться снова.',
+    nonce: res.locals.cspNonce,
   }));
 
   if (Date.now() > user.verifyTokenExp) return res.send(verifyEmailPage({
     success: false, emoji: '⏰',
     title: 'Ссылка устарела',
     message: 'Срок действия ссылки истёк (24 часа).<br/>Пожалуйста, зарегистрируйтесь снова.',
+    nonce: res.locals.cspNonce,
   }));
 
   await pool.query(
@@ -1003,6 +1203,7 @@ app.get('/api/verify-email', verifyEmailRateLimit, async (req, res) => {
     success: true, emoji: '✅',
     title: 'Email подтверждён!',
     message: 'Ваш аккаунт активирован.<br/>Теперь вы можете войти в Cicada Studio.',
+    nonce: res.locals.cspNonce,
   }));
 });
 
@@ -1036,10 +1237,10 @@ app.post('/api/login', loginRateLimit, async (req, res) => {
     await pool.query('UPDATE users SET password = $1 WHERE id = $2', [hashPassword(password), user.id]);
   }
 
-  const authToken = issueUserJwt(user.id);
+  issueUserSessionCookie(res, user.id);
   recordUserLogin(user.id, req.ip, 'password');
   recordUserAction(user.id, 'login_success', { method: 'password' });
-  res.json({ success: true, user: safeUser(user), token: authToken });
+  res.json({ success: true, user: safeUser(user) });
 });
 
 /** Свежие данные пользователя из БД (план, подписка после выдачи в админке и т.д.) — клиент синхронизирует cicada_session. */
@@ -1240,19 +1441,17 @@ app.post('/api/passkey/login', loginRateLimit, async (req, res) => {
     const user = await findById(credential.userId);
     if (!user || user.banned || !user.verified) throw new Error('Аккаунт недоступен');
     await pool.query('UPDATE user_passkeys SET sign_count=$1, last_used_at=NOW() WHERE credential_id=$2', [signCount, credential.credentialId]);
-    const authToken = issueUserJwt(user.id);
+    issueUserSessionCookie(res, user.id);
     recordUserLogin(user.id, req.ip, 'passkey');
     recordUserAction(user.id, 'login_success', { method: 'passkey' });
-    res.json({ success: true, user: safeUser(user), token: authToken });
+    res.json({ success: true, user: safeUser(user) });
   } catch (err) {
     recordAuthError('user_passkey_login', req, null, err.message);
     res.status(400).json({ error: err.message || 'Не удалось войти по passkey' });
   }
 });
 app.post('/api/logout', (req, res) => {
-  res.clearCookie(OAUTH_JWT_HANDOFF_COOKIE, {
-    path: '/', httpOnly: true, sameSite: 'strict', secure: isHttps,
-  });
+  clearUserSessionCookies(res);
   res.clearCookie('session_token', { path: '/' });
   res.json({ ok: true });
 });
@@ -1330,7 +1529,7 @@ async function updateUserAvatar(userId, dataUrl) {
 }
 
 
-app.post('/api/avatar', requireUserAuth, async (req, res) => {
+app.post('/api/avatar', avatarJsonParser, requireUserAuth, uploadRateLimit, async (req, res) => {
   const { userId, dataUrl } = req.body || {};
   if (!userId || req.authUserId !== userId) return res.status(403).json({ error: 'Forbidden' });
   try {
@@ -1492,7 +1691,7 @@ app.post('/api/reset-password', resetPasswordSubmitRateLimit, async (req, res) =
 // ================= BOT API =================
 
 /** Проверка DSL: схема (schema + плейсхолдер токена) + Python-парсер Cicada. */
-app.post('/api/dsl/lint', (req, res) => {
+app.post('/api/dsl/lint', dslLintRateLimit, (req, res) => {
   try {
     const code = req.body?.code;
     if (typeof code !== 'string') {
@@ -1529,9 +1728,89 @@ const PREVIEW_MAX_CODE_BYTES = Number(process.env.DSL_MAX_CODE_BYTES || 100_000)
 const PREVIEW_MAX_FILE_BYTES = Number(process.env.PREVIEW_MAX_FILE_BYTES || 12 * 1024 * 1024);
 const SAFE_PREVIEW_SESSION = /^[a-zA-Z0-9._:-]{8,128}$/;
 const SAFE_CHAT_ID = /^\d{1,16}$/;
+const PREVIEW_DOCUMENT_EXT_WHITELIST = new Set(['pdf', 'txt', 'json', 'csv', 'zip']);
+const PREVIEW_IMAGE_EXT_WHITELIST = new Set(['jpg', 'jpeg', 'png', 'webp']);
+const BLOCKED_UPLOAD_EXTENSIONS = new Set(['svg', 'html', 'htm', 'xhtml']);
+const BLOCKED_UPLOAD_MIME = new Set(['image/svg+xml', 'text/html', 'application/xhtml+xml']);
+
+function fileExtFromName(fileName) {
+  const ext = path.extname(String(fileName || '')).replace(/^\./, '').toLowerCase();
+  return /^[a-z0-9]{1,12}$/.test(ext) ? ext : '';
+}
+
+function detectUploadKind(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length === 0) return null;
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return { ext: 'jpg', mimeType: 'image/jpeg', kind: 'image' };
+  if (buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return { ext: 'png', mimeType: 'image/png', kind: 'image' };
+  if (buffer.length >= 12 && buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP') return { ext: 'webp', mimeType: 'image/webp', kind: 'image' };
+  if (buffer.length >= 5 && buffer.subarray(0, 5).toString('ascii') === '%PDF-') return { ext: 'pdf', mimeType: 'application/pdf', kind: 'document' };
+  if (buffer.length >= 4 && buffer.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]))) return { ext: 'zip', mimeType: 'application/zip', kind: 'document' };
+  return null;
+}
+
+function looksLikeTextUpload(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length === 0) return false;
+  const sample = buffer.subarray(0, Math.min(buffer.length, 4096));
+  if (sample.includes(0)) return false;
+  return sample.every((b) => b === 0x09 || b === 0x0a || b === 0x0d || (b >= 0x20 && b <= 0x7e) || b >= 0xc2);
+}
+
+function rejectDangerousUpload({ buffer, ext, mimeType }) {
+  const normalizedExt = String(ext || '').toLowerCase();
+  const normalizedMime = String(mimeType || '').toLowerCase();
+  const sniff = buffer.subarray(0, Math.min(buffer.length, 512)).toString('utf8').trimStart().toLowerCase();
+  if (BLOCKED_UPLOAD_EXTENSIONS.has(normalizedExt) || BLOCKED_UPLOAD_MIME.has(normalizedMime)) {
+    throw new Error('SVG и HTML файлы запрещены');
+  }
+  if (sniff.startsWith('<svg') || sniff.startsWith('<!doctype html') || sniff.startsWith('<html') || sniff.includes('<script')) {
+    throw new Error('Файл похож на SVG/HTML и отклонён');
+  }
+}
+
+function validatePreviewUpload({ buffer, fileName, mimeType, imageOnly = false }) {
+  const originalExt = fileExtFromName(fileName);
+  const normalizedMime = String(mimeType || 'application/octet-stream').trim().toLowerCase();
+  rejectDangerousUpload({ buffer, ext: originalExt, mimeType: normalizedMime });
+  const detected = detectUploadKind(buffer);
+
+  if (imageOnly) {
+    if (!detected || detected.kind !== 'image' || !PREVIEW_IMAGE_EXT_WHITELIST.has(detected.ext)) {
+      throw new Error('photo поддерживает только JPG, PNG или WebP');
+    }
+    return {
+      safeFileName: `preview-${crypto.randomUUID()}.${detected.ext}`,
+      mimeType: detected.mimeType,
+      ext: detected.ext,
+    };
+  }
+
+  if (detected) {
+    const allowed = detected.kind === 'image'
+      ? PREVIEW_IMAGE_EXT_WHITELIST.has(detected.ext)
+      : PREVIEW_DOCUMENT_EXT_WHITELIST.has(detected.ext);
+    if (!allowed) throw new Error('Тип файла не разрешён');
+    if (originalExt && originalExt !== detected.ext && !(detected.ext === 'jpg' && originalExt === 'jpeg')) {
+      throw new Error('Расширение файла не совпадает с содержимым');
+    }
+    return {
+      safeFileName: `preview-${crypto.randomUUID()}.${detected.ext}`,
+      mimeType: detected.mimeType,
+      ext: detected.ext,
+    };
+  }
+
+  if (looksLikeTextUpload(buffer) && ['txt', 'json', 'csv'].includes(originalExt)) {
+    return {
+      safeFileName: `preview-${crypto.randomUUID()}.${originalExt}`,
+      mimeType: originalExt === 'json' ? 'application/json' : (originalExt === 'csv' ? 'text/csv' : 'text/plain'),
+      ext: originalExt,
+    };
+  }
+  throw new Error('Формат файла не разрешён или не распознан по magic bytes');
+}
 
 /** Симуляция Telegram один шаг за запрос (состояние сценария хранится в сессии на стороне воркера). */
-app.post('/api/bot/preview', botPreviewRateLimit, async (req, res) => {
+app.post('/api/bot/preview', previewJsonParser, botPreviewRateLimit, async (req, res) => {
   try {
     const sessionId = req.body?.sessionId;
     const code = req.body?.code;
@@ -1596,10 +1875,17 @@ app.post('/api/bot/preview', botPreviewRateLimit, async (req, res) => {
           error: `Файл слишком большой для превью (>${PREVIEW_MAX_FILE_BYTES} байт)`,
         });
       }
+      let safeUpload;
+      try {
+        safeUpload = validatePreviewUpload({ buffer: buf, fileName, mimeType });
+      } catch (err) {
+        recordSecurityEvent('upload_rejected', req, { reason: err.message, fileName, mimeType });
+        return res.status(400).json({ error: err.message });
+      }
       const fileId = `pv_${crypto.createHash('sha256').update(buf).digest('hex').slice(0, 40)}`;
       documentPayload = {
-        fileName,
-        mimeType,
+        fileName: safeUpload.safeFileName,
+        mimeType: safeUpload.mimeType,
         fileId,
         fileSize: buf.length,
       };
@@ -1632,8 +1918,15 @@ app.post('/api/bot/preview', botPreviewRateLimit, async (req, res) => {
           error: `Файл слишком большой для превью (>${PREVIEW_MAX_FILE_BYTES} байт)`,
         });
       }
+      let safeUpload;
+      try {
+        safeUpload = validatePreviewUpload({ buffer: buf, fileName: 'photo.jpg', mimeType, imageOnly: true });
+      } catch (err) {
+        recordSecurityEvent('upload_rejected', req, { reason: err.message, fileName: 'photo', mimeType });
+        return res.status(400).json({ error: err.message });
+      }
       const fileId = `pvimg_${crypto.createHash('sha256').update(buf).digest('hex').slice(0, 40)}`;
-      photoPayload = { mimeType, fileId, fileSize: buf.length };
+      photoPayload = { mimeType: safeUpload.mimeType, fileId, fileSize: buf.length };
     }
 
     let chatId = '990000001';
@@ -1666,10 +1959,11 @@ app.post('/api/bot/preview', botPreviewRateLimit, async (req, res) => {
   }
 });
 
-app.post('/api/run', async (req, res) => {
+app.post('/api/run', requireUserAuth, botRunRateLimit, async (req, res) => {
   try {
     const { code, userId } = req.body;
     if (!userId) return res.json({ error: 'no userId' });
+    if (req.authUserId !== String(userId)) return res.status(403).json({ error: 'Forbidden' });
     if (!code)   return res.json({ error: 'no code' });
     const tokenMatch = String(code).match(/^\s*бот\s+"([^"]*)"/m);
     const token = tokenMatch?.[1]?.trim() || '';
@@ -1695,6 +1989,10 @@ app.post('/api/run', async (req, res) => {
           pushSystemError('dsl_runner', `output_limit:${data.outputBytes}`);
         }
         if (event === 'error') pushSystemError('dsl_runner', data.message || 'runner error');
+        if (event === 'sandbox_fallback') {
+          recordSecurityEvent('dsl_sandbox_fallback', req, { userId: data.userId, message: data.message });
+          pushSystemError('dsl_runner', data.message || 'sandbox fallback');
+        }
         if (event === 'exit' && (data.code !== 0 || data.signal)) {
           recordUserAction(data.userId, 'bot_exit', { code: data.code, signal: data.signal });
         }
@@ -1726,25 +2024,27 @@ app.post('/api/run', async (req, res) => {
   }
 });
 
-app.post('/api/stop', (req, res) => {
+app.post('/api/stop', requireUserAuth, (req, res) => {
   const { userId } = req.body;
+  if (!userId || req.authUserId !== String(userId)) return res.status(403).json({ error: 'Forbidden' });
   if (!isRunnerActive(userId)) return res.json({ error: 'no bot' });
   stopRunner(userId, { reason: 'manual' });
   recordUserAction(userId, 'bot_stop', {});
   res.json({ status: 'stopped' });
 });
 
-app.get('/api/bots', (req, res) => {
-  res.json(listRunners());
+app.get('/api/bots', requireUserAuth, (req, res) => {
+  res.json(listRunners().filter((bot) => bot.userId === req.authUserId));
 });
 
 /** Логи процесса cicada для песочницы «Запуск» (тот же userId, что в POST /api/run). */
-app.get('/api/bot/logs', (req, res) => {
+app.get('/api/bot/logs', requireUserAuth, (req, res) => {
   try {
     const userId = req.query.userId;
     if (!userId || typeof userId !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(userId)) {
       return res.status(400).json({ error: 'invalid userId' });
     }
+    if (req.authUserId !== userId) return res.status(403).json({ error: 'Forbidden' });
     const info = getRunnerLogs(userId, 280);
     res.json(info);
   } catch (e) {
@@ -2107,7 +2407,7 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
-// Одноразовый обмен cookie → JWT в localStorage после Google OAuth
+// OAuth/bootstrap now returns the user; JWT remains in HttpOnly SameSite cookie.
 app.get('/api/auth/oauth-bootstrap', async (req, res) => {
   const handoffOpts = { path: '/', httpOnly: true, sameSite: 'strict', secure: isHttps };
   const pendingOpts = { path: '/', httpOnly: true, sameSite: 'strict', secure: isHttps, maxAge: 10 * 60 * 1000 };
@@ -2126,16 +2426,39 @@ app.get('/api/auth/oauth-bootstrap', async (req, res) => {
   }
   const raw = req.cookies?.[OAUTH_JWT_HANDOFF_COOKIE];
   res.clearCookie(OAUTH_JWT_HANDOFF_COOKIE, handoffOpts);
-  if (!raw) return res.json({ ok: false });
-  try {
-    const d = jwt.verify(raw, JWT_SECRET);
-    if (!d || d.type !== 'user' || !d.sub) return res.json({ ok: false });
-    const user = await findById(String(d.sub));
+  const handoffCode = String(req.query?.code || '').trim();
+  if (handoffCode) {
+    const meta = oauthLoginHandoffs.get(handoffCode);
+    oauthLoginHandoffs.delete(handoffCode);
+    if (!meta || meta.exp <= Date.now()) return res.json({ ok: false });
+    const user = await findById(String(meta.userId));
     if (!user || user.banned) return res.json({ ok: false });
-    return res.json({ ok: true, token: raw, user: safeUser(user) });
-  } catch {
-    return res.json({ ok: false });
+    if (meta.type === 'oauth_2fa_pending') {
+      const pending = jwt.sign({ sub: String(user.id), type: 'oauth_2fa_pending' }, JWT_SECRET, { expiresIn: '10m' });
+      res.cookie(OAUTH_2FA_PENDING_COOKIE, pending, { httpOnly: true, sameSite: 'strict', secure: isHttps, path: '/', maxAge: 10 * 60 * 1000 });
+      return res.json({ ok: false, twofaRequired: true, user: safeUser(user) });
+    }
+    issueUserSessionCookie(res, user.id);
+    return res.json({ ok: true, user: safeUser(user) });
   }
+  const cookieUserId = getJwtUserId(req);
+  if (cookieUserId) {
+    const user = await findById(cookieUserId);
+    if (user && !user.banned) return res.json({ ok: true, user: safeUser(user) });
+  }
+  if (raw) {
+    try {
+      const d = jwt.verify(raw, JWT_SECRET);
+      if (!d || d.type !== 'user' || !d.sub) return res.json({ ok: false });
+      const user = await findById(String(d.sub));
+      if (!user || user.banned) return res.json({ ok: false });
+      issueUserSessionCookie(res, user.id);
+      return res.json({ ok: true, user: safeUser(user) });
+    } catch {
+      return res.json({ ok: false });
+    }
+  }
+  return res.json({ ok: false });
 });
 
 app.post('/api/auth/oauth-2fa/complete', async (req, res) => {
@@ -2158,8 +2481,10 @@ app.post('/api/auth/oauth-2fa/complete', async (req, res) => {
   if (!verifyTotp(user.twofaSecret, totp, 1)) return res.status(401).json({ error: 'Неверный код 2FA', twofaRequired: true });
 
   res.clearCookie(OAUTH_2FA_PENDING_COOKIE, pendingOpts);
-  const authToken = issueUserJwt(user.id);
-  return res.json({ success: true, token: authToken, user: safeUser(user) });
+  issueUserSessionCookie(res, user.id);
+  recordUserLogin(user.id, req.ip, 'oauth_2fa');
+  recordUserAction(user.id, 'login_success', { method: 'oauth_2fa' });
+  return res.json({ success: true, user: safeUser(user) });
 });
 
 // ================= PROJECTS (PostgreSQL) =================
@@ -2798,6 +3123,54 @@ app.get('/api/admin/user/:userId', async (req, res) => {
   const user = await findById(userId);
   if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
 
+  const [
+    projectResult,
+    purchaseResult,
+    passkeyResult,
+    supportResult,
+  ] = await Promise.all([
+    pool.query(
+      `
+      SELECT id, name, created_at AS "createdAt", updated_at AS "updatedAt"
+      FROM projects
+      WHERE user_id=$1
+      ORDER BY updated_at DESC
+      LIMIT 100
+      `,
+      [userId],
+    ),
+    pool.query(
+      `
+      SELECT invoice_id, plan, asset, amount, status, paid_at, created_at, processed_at
+      FROM subscription_invoices
+      WHERE user_id=$1
+      ORDER BY COALESCE(paid_at, created_at) DESC
+      LIMIT 100
+      `,
+      [userId],
+    ),
+    pool.query(
+      `
+      SELECT name, sign_count AS "signCount", created_at AS "createdAt", last_used_at AS "lastUsedAt"
+      FROM user_passkeys
+      WHERE user_id=$1
+      ORDER BY created_at DESC
+      LIMIT 50
+      `,
+      [userId],
+    ),
+    pool.query(
+      `
+      SELECT id, subject, status, created_at AS "createdAt", replied_at AS "repliedAt", user_seen_at AS "userSeenAt"
+      FROM support_requests
+      WHERE user_id=$1
+      ORDER BY created_at DESC
+      LIMIT 100
+      `,
+      [userId],
+    ),
+  ]);
+
   const loginHistory = userLoginHistory.get(userId) || [];
   const userActions = recentUserActions.filter((x) => x.userId === userId).slice(-40);
   const adminActions = recentAdminActions.filter((x) => x.targetUserId === userId).slice(-40);
@@ -2820,6 +3193,10 @@ app.get('/api/admin/user/:userId', async (req, res) => {
     status,
     loginHistory,
     uniqueIps: [...new Set(loginHistory.map((x) => x.ip).filter(Boolean))],
+    projects: projectResult.rows,
+    purchases: purchaseResult.rows.map(subscriptionReceiptRow).filter(Boolean),
+    passkeys: passkeyResult.rows,
+    supportRequests: supportResult.rows,
     actions: userActions,
     adminActions,
     subscriptions,
@@ -2884,12 +3261,14 @@ app.get('/api/admin/logs', (req, res) => {
   res.json({
     apiErrors: recentApiErrors.filter(includesQ).slice(-200),
     authErrors: recentAuthErrors.filter(includesQ).slice(-200),
+    securityEvents: recentSecurityEvents.filter(includesQ).slice(-200),
     adminActions: recentAdminActions.filter(includesQ).slice(-200),
   });
 });
 
 
 function supportRequestRow(row) {
+  const messages = supportMessagesFromRow(row);
   return row ? {
     id: row.id,
     userId: row.user_id,
@@ -2900,26 +3279,98 @@ function supportRequestRow(row) {
     status: row.status,
     replyText: row.reply_text,
     repliedAt: row.replied_at,
+    messages,
+    attachments: messages.find((msg) => msg.author === 'user')?.attachments || [],
+    userSeenAt: row.user_seen_at,
     createdAt: row.created_at,
     userName: row.user_name,
     userEmail: row.user_email,
   } : null;
 }
 
-app.post('/api/support/requests', requireUserAuth, async (req, res) => {
+const SUPPORT_IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp']);
+const SUPPORT_MAX_ATTACHMENTS = 3;
+const SUPPORT_MAX_ATTACHMENT_BYTES = 2 * 1024 * 1024;
+
+function estimateBase64Bytes(base64) {
+  const clean = String(base64 || '').replace(/\s/g, '');
+  if (!clean) return 0;
+  const padding = clean.endsWith('==') ? 2 : (clean.endsWith('=') ? 1 : 0);
+  return Math.floor((clean.length * 3) / 4) - padding;
+}
+
+function normalizeSupportAttachments(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.slice(0, SUPPORT_MAX_ATTACHMENTS).map((item) => {
+    const dataUrl = String(item?.dataUrl || '');
+    const match = dataUrl.match(/^data:(image\/(?:jpeg|jpg|png|webp));base64,([a-z0-9+/=\s]+)$/i);
+    if (!match) return null;
+    const type = match[1].toLowerCase();
+    if (!SUPPORT_IMAGE_MIME_TYPES.has(type)) return null;
+    const size = estimateBase64Bytes(match[2]);
+    if (size <= 0 || size > SUPPORT_MAX_ATTACHMENT_BYTES) return null;
+    const rawName = String(item?.name || 'screenshot').replace(/[^\w.\- а-яА-ЯёЁ]/g, '').trim();
+    return {
+      id: crypto.randomUUID(),
+      name: (rawName || 'screenshot').slice(0, 120),
+      type,
+      size,
+      dataUrl,
+    };
+  }).filter(Boolean);
+}
+
+function supportMessageEntry(author, text, attachments = [], createdAt = new Date().toISOString()) {
+  return {
+    id: crypto.randomUUID(),
+    author,
+    text: String(text || '').trim().slice(0, 8000),
+    attachments: normalizeSupportAttachments(attachments),
+    createdAt,
+  };
+}
+
+function supportMessagesFromRow(row) {
+  if (!row) return [];
+  let messages = [];
+  try {
+    messages = Array.isArray(row.messages) ? row.messages : JSON.parse(row.messages || '[]');
+  } catch {
+    messages = [];
+  }
+  messages = messages
+    .filter((msg) => msg && (msg.text || (Array.isArray(msg.attachments) && msg.attachments.length)))
+    .map((msg) => ({
+      id: String(msg.id || crypto.randomUUID()),
+      author: msg.author === 'admin' ? 'admin' : 'user',
+      text: String(msg.text || '').slice(0, 8000),
+      attachments: normalizeSupportAttachments(msg.attachments),
+      createdAt: msg.createdAt || row.created_at || new Date().toISOString(),
+    }));
+  if (messages.length > 0) return messages;
+  const fallback = [];
+  if (row.message) fallback.push(supportMessageEntry('user', row.message, [], row.created_at));
+  if (row.reply_text) fallback.push(supportMessageEntry('admin', row.reply_text, [], row.replied_at || row.created_at));
+  return fallback;
+}
+
+app.post('/api/support/requests', supportJsonParser, requireUserAuth, async (req, res) => {
   const user = await findById(req.authUserId);
   if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
   const from = String(req.body?.from || user.email || user.name || '').trim().slice(0, 200);
   const subject = String(req.body?.subject || '').trim().slice(0, 180);
-  const message = String(req.body?.message || '').trim().slice(0, 8000);
+  const messageText = String(req.body?.message || '').trim().slice(0, 8000);
+  const attachments = normalizeSupportAttachments(req.body?.attachments);
+  const message = messageText || (attachments.length ? 'Прикреплён скриншот' : '');
   const emailCandidate = String(req.body?.email || user.email || '').trim().slice(0, 200);
   const email = emailCandidate.includes('@') ? emailCandidate : (user.email || null);
   if (!from || !subject || !message) return res.status(400).json({ error: 'Заполните поля: кто, тема и суть вопроса' });
   const id = crypto.randomUUID();
+  const messages = [supportMessageEntry('user', messageText, attachments)];
   await pool.query(
-    `INSERT INTO support_requests (id, user_id, from_text, email, subject, message)
-     VALUES ($1,$2,$3,$4,$5,$6)`,
-    [id, user.id, from, email, subject, message]
+    `INSERT INTO support_requests (id, user_id, from_text, email, subject, message, messages, user_seen_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,NOW())`,
+    [id, user.id, from, email, subject, message, JSON.stringify(messages)]
   );
   recordUserAction(user.id, 'support_request_create', { supportRequestId: id, subject });
   const { rows } = await pool.query('SELECT * FROM support_requests WHERE id=$1', [id]);
@@ -2938,6 +3389,47 @@ app.get('/api/support/requests', requireUserAuth, async (req, res) => {
     [req.authUserId],
   );
   res.json({ requests: rows.map(supportRequestRow) });
+});
+
+app.post('/api/support/requests/seen', requireUserAuth, async (req, res) => {
+  await pool.query(
+    `UPDATE support_requests
+     SET user_seen_at=NOW()
+     WHERE user_id=$1 AND replied_at IS NOT NULL`,
+    [req.authUserId],
+  );
+  res.json({ success: true, unread: 0 });
+});
+
+app.get('/api/support/unread-count', requireUserAuth, async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS unread_count
+     FROM support_requests
+     WHERE user_id=$1
+       AND replied_at IS NOT NULL
+       AND (user_seen_at IS NULL OR replied_at > user_seen_at)`,
+    [req.authUserId],
+  );
+  res.json({ unread: Number(rows[0]?.unread_count || 0) });
+});
+
+app.post('/api/support/requests/:id/messages', supportJsonParser, requireUserAuth, async (req, res) => {
+  const id = String(req.params.id || '');
+  const text = String(req.body?.message || '').trim().slice(0, 8000);
+  const attachments = normalizeSupportAttachments(req.body?.attachments);
+  if (!text && attachments.length === 0) return res.status(400).json({ error: 'Введите сообщение или прикрепите скриншот' });
+  const { rows } = await pool.query('SELECT * FROM support_requests WHERE id=$1 AND user_id=$2', [id, req.authUserId]);
+  if (!rows[0]) return res.status(404).json({ error: 'Обращение не найдено' });
+  const messages = supportMessagesFromRow(rows[0]).concat(supportMessageEntry('user', text, attachments));
+  const updated = await pool.query(
+    `UPDATE support_requests
+     SET status='open', messages=$1::jsonb, user_seen_at=NOW()
+     WHERE id=$2
+     RETURNING *`,
+    [JSON.stringify(messages), id],
+  );
+  recordUserAction(req.authUserId, 'support_request_message', { supportRequestId: id });
+  res.json({ success: true, request: supportRequestRow(updated.rows[0]) });
 });
 
 app.get('/api/admin/support-requests', async (req, res) => {
@@ -2970,9 +3462,10 @@ app.post('/api/admin/support-requests/:id/reply', async (req, res) => {
   const item = supportRequestRow(rows[0]);
   if (!item) return res.status(404).json({ error: 'Обращение не найдено' });
   if (!item.userId) return res.status(400).json({ error: 'У обращения нет пользователя для ответа в профиле' });
+  const messages = supportMessagesFromRow(rows[0]).concat(supportMessageEntry('admin', reply));
   const updated = await pool.query(
-    'UPDATE support_requests SET status=$1, reply_text=$2, replied_at=NOW() WHERE id=$3 RETURNING *',
-    ['answered', reply, id],
+    'UPDATE support_requests SET status=$1, reply_text=$2, replied_at=NOW(), messages=$3::jsonb WHERE id=$4 RETURNING *',
+    ['answered', reply, JSON.stringify(messages), id],
   );
   recordAdminAction(req, 'support_request_reply', item.userId, { supportRequestId: id, delivery: 'profile' });
   res.json({ success: true, request: supportRequestRow(updated.rows[0]) });
@@ -3006,11 +3499,11 @@ app.get('/api/admin/security', (req, res) => {
     adminKeyLength: adminKeyLen,
     jwtConfigured: jwtSecretLen >= 32,
     jwtSecretLength: jwtSecretLen,
-    userAuth: 'JWT Bearer (server-side session map не используется)',
+    userAuth: 'JWT in HttpOnly Secure SameSite=Strict cookie',
     adminTotpConfigured: Boolean(ADMIN_TOTP_SECRET),
     adminPasskeysConfigured: loadAdminPasskeys().length,
     adminWebAuthnRpId: resolveAdminWebAuthnRpId(req),
-    adminAuth: 'JWT Bearer пользователя + role=admin; /admin дополнительно открывается через короткую httpOnly cookie admin_route_session',
+    adminAuth: 'HttpOnly cookie пользователя + role=admin; /admin дополнительно открывается через короткую httpOnly cookie admin_route_session',
     userSessionsActive: 0,
     adminSessionsActive: 0,
     cookieSecurity: {
@@ -3024,15 +3517,21 @@ app.get('/api/admin/security', (req, res) => {
       registerRateLimit: true,
       forgotPasswordRateLimit: true,
       resetPasswordRateLimit: true,
+      uploadRateLimit: true,
+      dslLintRateLimit: true,
+      botRunRateLimit: true,
+      aiGenerateRateLimit: true,
       verifyEmailRateLimit: true,
       emailChangeRateLimit: true,
       confirmEmailChangeRateLimit: true,
       adminLoginRateLimit: true,
       globalApiRateLimit: true,
       jsonBodyLimit: '1mb',
-      helmet: true,
+      helmet: 'CSP + HSTS + security headers',
       csrfProtection: true,
       authMiddleware: true,
+      bruteForceDetection: true,
+      auditSecurityLogging: true,
     },
   });
 });
@@ -3059,10 +3558,10 @@ app.get('/api/admin/system', (req, res) => {
 app.get('/api/admin/update-status', (req, res) => {
   if (!isAdminAuthed(req)) return res.status(403).json({ error: 'Forbidden' });
   const root = path.resolve(process.cwd());
-  const fetchRes = spawnSync('git', ['-C', root, 'fetch', '--quiet'], { encoding: 'utf8', timeout: 30_000 });
+  const fetchRes = safeSpawnSync('git', ['-C', root, 'fetch', '--quiet'], { encoding: 'utf8', timeout: 30_000 });
   if (fetchRes.error) return res.status(500).json({ error: `git fetch: ${fetchRes.error.message}` });
-  const localRes = spawnSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' });
-  const remoteRes = spawnSync('git', ['-C', root, 'rev-parse', '@{u}'], { encoding: 'utf8' });
+  const localRes = safeSpawnSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' });
+  const remoteRes = safeSpawnSync('git', ['-C', root, 'rev-parse', '@{u}'], { encoding: 'utf8' });
   if (localRes.status !== 0 || remoteRes.status !== 0) return res.status(500).json({ error: 'Не удалось получить состояние Git (проверьте upstream ветки).' });
   const local = String(localRes.stdout || '').trim();
   const remote = String(remoteRes.stdout || '').trim();
@@ -3075,12 +3574,12 @@ app.post('/api/admin/update-apply', (req, res) => {
 
   const stashName = `cicada-auto-update-${Date.now()}`;
   let autoStashed = false;
-  const statusRes = spawnSync('git', ['-C', root, 'status', '--porcelain'], { encoding: 'utf8', timeout: 30_000 });
+  const statusRes = safeSpawnSync('git', ['-C', root, 'status', '--porcelain'], { encoding: 'utf8', timeout: 30_000 });
   if (statusRes.error || statusRes.status !== 0) {
     return res.status(500).json({ error: `git status: ${statusRes.error?.message || statusRes.stderr || 'ошибка'}` });
   }
   if (String(statusRes.stdout || '').trim()) {
-    const stashRes = spawnSync('git', ['-C', root, 'stash', 'push', '--include-untracked', '-m', stashName], { encoding: 'utf8', timeout: 60_000 });
+    const stashRes = safeSpawnSync('git', ['-C', root, 'stash', 'push', '--include-untracked', '-m', stashName], { encoding: 'utf8', timeout: 60_000 });
     const stashCombined = `${stashRes.stdout || ''}\n${stashRes.stderr || ''}`;
     const noChangesToSave = /no local changes to save/i.test(stashCombined);
     if (stashRes.error || (stashRes.status !== 0 && !noChangesToSave)) {
@@ -3089,17 +3588,17 @@ app.post('/api/admin/update-apply', (req, res) => {
     autoStashed = !noChangesToSave;
   }
 
-  const pullRes = spawnSync('git', ['-C', root, 'pull', '--ff-only'], { encoding: 'utf8', timeout: 120_000 });
+  const pullRes = safeSpawnSync('git', ['-C', root, 'pull', '--ff-only'], { encoding: 'utf8', timeout: 120_000 });
   if (pullRes.error || pullRes.status !== 0) {
-    if (autoStashed) spawnSync('git', ['-C', root, 'stash', 'pop'], { encoding: 'utf8', timeout: 60_000 });
+    if (autoStashed) safeSpawnSync('git', ['-C', root, 'stash', 'pop'], { encoding: 'utf8', timeout: 60_000 });
     return res.status(500).json({ error: `git pull: ${pullRes.error?.message || pullRes.stderr || 'ошибка'}` });
   }
-  const buildRes = spawnSync('npm', ['run', 'build'], { cwd: root, encoding: 'utf8', timeout: 10 * 60_000 });
+  const buildRes = safeSpawnSync('npm', ['run', 'build'], { cwd: root, encoding: 'utf8', timeout: 10 * 60_000 });
   if (buildRes.error || buildRes.status !== 0) {
     return res.status(500).json({ error: `npm run build: ${buildRes.error?.message || buildRes.stderr || 'ошибка'}` });
   }
   if (autoStashed) {
-    const popRes = spawnSync('git', ['-C', root, 'stash', 'pop'], { encoding: 'utf8', timeout: 60_000 });
+    const popRes = safeSpawnSync('git', ['-C', root, 'stash', 'pop'], { encoding: 'utf8', timeout: 60_000 });
     if (popRes.error || popRes.status !== 0) {
       return res.status(500).json({ error: `git stash pop: ${popRes.error?.message || popRes.stderr || 'разрешите конфликт и примените stash вручную'}` });
     }
@@ -3110,7 +3609,7 @@ app.post('/api/admin/update-apply', (req, res) => {
 
   setTimeout(() => {
     try {
-      const pm2Res = spawnSync('pm2', ['restart', 'server.mjs', '--name', 'cicada-server'], { cwd: root, encoding: 'utf8', timeout: 60_000 });
+      const pm2Res = safeSpawnSync('pm2', ['restart', 'server.mjs', '--name', 'cicada-server'], { cwd: root, encoding: 'utf8', timeout: 60_000 });
       if (pm2Res.error || pm2Res.status !== 0) {
         pushSystemError('admin:update-apply:pm2', new Error(pm2Res.error?.message || pm2Res.stderr || 'pm2 restart failed'));
       }
@@ -3125,14 +3624,14 @@ function buildCicadaSourceArchiveBuffer() {
   const root = path.resolve(process.cwd());
   const gitDir = path.join(root, '.git');
   if (fs.existsSync(gitDir)) {
-    const tar = spawnSync('git', ['-C', root, 'archive', '--format=tar', 'HEAD'], {
+    const tar = safeSpawnSync('git', ['-C', root, 'archive', '--format=tar', 'HEAD'], {
       maxBuffer: 250 * 1024 * 1024,
     });
     if (tar.error) return { error: `git: ${tar.error.message}` };
     if (tar.status !== 0) {
       return { error: tar.stderr?.toString() || `git archive (код ${tar.status})` };
     }
-    const gz = spawnSync('gzip', ['-9', '-c'], {
+    const gz = safeSpawnSync('gzip', ['-9', '-c'], {
       input: tar.stdout,
       maxBuffer: 250 * 1024 * 1024,
     });
@@ -3146,7 +3645,7 @@ function buildCicadaSourceArchiveBuffer() {
   const args = ['-czf', '-', '-C', parent];
   for (const ex of excludes) args.push(`--exclude=${ex}`);
   args.push(base);
-  const tb = spawnSync('tar', args, { maxBuffer: 250 * 1024 * 1024 });
+  const tb = safeSpawnSync('tar', args, { maxBuffer: 250 * 1024 * 1024 });
   if (tb.error) return { error: `tar: ${tb.error.message}` };
   if (tb.status !== 0) return { error: tb.stderr?.toString() || `tar (код ${tb.status})` };
   return { buffer: tb.stdout };
@@ -3160,7 +3659,7 @@ app.get('/api/admin/download-database', adminAssetDownloadRateLimit, (req, res) 
   const dbUser = process.env.DB_USER || 'cicada_user';
   const password = process.env.DB_PASSWORD || '';
   const env = { ...process.env, PGPASSWORD: password };
-  const dump = spawnSync(
+  const dump = safeSpawnSync(
     'pg_dump',
     ['-h', host, '-p', port, '-U', dbUser, '-d', database, '--no-owner', '--format=plain'],
     { env, encoding: 'utf8', maxBuffer: 80 * 1024 * 1024 },
@@ -3299,12 +3798,13 @@ app.get('/api/auth/google/callback', async (req, res) => {
     }
 
     if (user.role === 'admin' && user.twofaEnabled) {
-      const pending = jwt.sign({ sub: String(user.id), type: 'oauth_2fa_pending' }, JWT_SECRET, { expiresIn: '10m' });
-      res.cookie(OAUTH_2FA_PENDING_COOKIE, pending, { httpOnly: true, sameSite: 'strict', secure: isHttps, path: '/', maxAge: 10 * 60 * 1000 });
+      const handoffCode = issueOauth2faHandoffCode(user.id);
+      return res.redirect(buildOauthRedirectUrl(handoffCode));
     } else {
       recordUserLogin(user.id, req.ip, 'google');
       recordUserAction(user.id, 'login_success', { method: 'google' });
-      issueOauthJwtHandoffCookie(res, user.id);
+      const handoffCode = issueOauthJwtHandoffCookie(res, user.id);
+      return res.redirect(buildOauthRedirectUrl(handoffCode));
     }
     return res.redirect(APP_URL || '/');
   } catch (e) {
@@ -3416,8 +3916,8 @@ app.get('/api/auth/telegram/callback', async (req, res) => {
       recordAuthError('telegram', req, String(req.query?.id || ''), 'banned_user');
       return redirectAppAuthError(res, 'Аккаунт заблокирован администратором');
     }
-    issueOauthJwtHandoffCookie(res, result.user.id);
-    return res.redirect((APP_URL || '/').replace(/\/$/, '') + '/');
+    const handoffCode = issueOauthJwtHandoffCookie(res, result.user.id);
+    return res.redirect(buildOauthRedirectUrl(handoffCode));
   } catch (e) {
     console.error('telegram callback error:', e);
     return redirectAppAuthError(res, 'Ошибка входа через Telegram');
@@ -3440,8 +3940,8 @@ app.post('/api/auth/telegram', async (req, res) => {
       return res.status(403).json({ error: 'Аккаунт заблокирован администратором' });
     }
 
-    const authToken = issueUserJwt(result.user.id);
-    res.json({ success: true, user: safeUser(result.user), token: authToken });
+    issueUserSessionCookie(res, result.user.id);
+    res.json({ success: true, user: safeUser(result.user) });
   } catch (e) {
     console.error('telegram POST auth error:', e);
     recordAuthError('telegram', req, String(req.body?.id || ''), 'exception');
@@ -6194,7 +6694,7 @@ function sendAiGenerateError(res, authUser, status, adminMessage) {
   });
 }
 
-app.post('/api/ai-generate', requireUserAuth, async (req, res) => {
+app.post('/api/ai-generate', requireUserAuth, aiGenerateRateLimit, async (req, res) => {
   const authUser = await findById(req.authUserId);
   if (!authUser) return res.status(401).json({ status: AI_GENERATE_STATUS.FAILED, reason: 'AUTH_REQUIRED', error: 'Необходима авторизация' });
   if (!isProUser(authUser)) {

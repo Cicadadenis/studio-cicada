@@ -49,7 +49,6 @@ import {
   API_URL,
   apiFetch,
   postJsonWithCsrf,
-  getStoredJwt,
   saveSession,
   getSession,
   clearSession,
@@ -179,14 +178,12 @@ function AdminRoute({ currentUser, onLoginClick }) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({}),
         });
-        const jwt = getStoredJwt();
         const res = await fetch('/api/admin/ui', {
           credentials: 'include',
-          headers: jwt ? { Authorization: `Bearer ${jwt}` } : {},
         });
         if (!res.ok) throw new Error(res.status === 403 ? 'Нет прав администратора' : 'Не удалось загрузить админку');
         const raw = await res.text();
-        if (!cancelled) setHtml(raw.replace('__ADMIN_JWT_JSON__', JSON.stringify(jwt || '')));
+        if (!cancelled) setHtml(raw);
       } catch (e) {
         if (!cancelled) setError(e.message || 'Не удалось открыть админку');
       }
@@ -194,6 +191,16 @@ function AdminRoute({ currentUser, onLoginClick }) {
     loadAdminUi();
     return () => { cancelled = true; };
   }, [currentUser]);
+
+  useEffect(() => {
+    const handleAdminMessage = (event) => {
+      if (event?.data?.type === 'cicada-admin:navigate-builder') {
+        window.location.assign('/');
+      }
+    };
+    window.addEventListener('message', handleAdminMessage);
+    return () => window.removeEventListener('message', handleAdminMessage);
+  }, []);
 
   if (!currentUser) {
     return (
@@ -231,6 +238,7 @@ function AdminRoute({ currentUser, onLoginClick }) {
     <iframe
       title="Cicada Admin"
       srcDoc={html}
+      sandbox="allow-scripts allow-forms allow-downloads allow-modals allow-same-origin allow-top-navigation-by-user-activation"
       style={{ position: 'fixed', inset: 0, width: '100%', height: '100%', border: 0, background: '#0e0f11' }}
     />
   );
@@ -744,6 +752,8 @@ export default function App() {
   // Toast notification state
   const [toast, setToast] = useState(null); // { message, type, visible }
   const [adminOpenSupportCount, setAdminOpenSupportCount] = useState(0);
+  const [userSupportUnreadCount, setUserSupportUnreadCount] = useState(0);
+  const supportUnreadInitializedRef = useRef(false);
 
   // ─── ADMIN / TRIAL ───────────────────────────────────────────────────────
   
@@ -766,6 +776,16 @@ export default function App() {
     setProfileInitialTab('profile');
     setShowProfileModal(true);
   }, []);
+
+  const openSupportModal = useCallback(() => {
+    if (!currentUser) {
+      setAuthTab('login');
+      setShowAuthModal(true);
+      return;
+    }
+    setProfileInitialTab('support');
+    setShowProfileModal(true);
+  }, [currentUser]);
 
   const openPremiumPurchase = useCallback(() => {
     if (!currentUser) {
@@ -1143,14 +1163,12 @@ export default function App() {
     setAiDiagnosticsOpen(false);
     try {
       const token = await getCsrfTokenForRequest(`${API_URL}/ai-generate`);
-      const jwt = getStoredJwt();
       const res = await fetch(`${API_URL}/ai-generate`, {
         method: 'POST',
         credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           'x-csrf-token': token,
-          ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
         },
         body: JSON.stringify({ prompt: aiPromptText }),
       });
@@ -2888,7 +2906,7 @@ const EXAMPLE_FULL = `версия "1.0"
     try {
       const userId = localStorage.getItem('cicada_userId');
       if (!userId) return;
-      const res = await fetch(`${API_URL}/bots`);
+      const res = await fetch(`${API_URL}/bots`, { credentials: 'include' });
       const list = await res.json();
       const myBot = list.find(b => b.userId === userId);
       if (myBot) {
@@ -2994,7 +3012,7 @@ const EXAMPLE_FULL = `версия "1.0"
 
   // Подтягиваем план/подписку с сервера: админ изменил профиль → без выхода из аккаунта
   useEffect(() => {
-    if (!currentUser?.id || !getStoredJwt()) return undefined;
+    if (!currentUser?.id) return undefined;
     let cancelled = false;
     const sync = () => {
       fetchSessionUserFromServer().then((u) => {
@@ -3026,7 +3044,7 @@ const EXAMPLE_FULL = `версия "1.0"
 
   /** Открыли профиль — сразу тянем план/подписку (после выдачи из админки не ждём минутный poll). */
   useEffect(() => {
-    if (!showProfileModal || !currentUser?.id || !getStoredJwt()) return undefined;
+    if (!showProfileModal || !currentUser?.id) return undefined;
     let cancelled = false;
     fetchSessionUserFromServer().then((u) => {
       if (cancelled || !u) return;
@@ -3041,7 +3059,7 @@ const EXAMPLE_FULL = `версия "1.0"
   }, [showProfileModal, currentUser?.id]);
 
   useEffect(() => {
-    if (!isAdmin || !currentUser?.id || !getStoredJwt()) {
+    if (!isAdmin || !currentUser?.id) {
       setAdminOpenSupportCount(0);
       return undefined;
     }
@@ -3064,6 +3082,50 @@ const EXAMPLE_FULL = `версия "1.0"
       window.removeEventListener('focus', loadSupportCount);
     };
   }, [isAdmin, currentUser?.id]);
+
+  useEffect(() => {
+    if (!currentUser?.id) {
+      setUserSupportUnreadCount(0);
+      return undefined;
+    }
+    let cancelled = false;
+    const loadUnreadCount = () => {
+      apiFetch('/api/support/unread-count')
+        .then((data) => {
+          if (cancelled) return;
+          const nextUnread = Number(data?.unread || 0);
+          setUserSupportUnreadCount((prevUnread) => {
+            if (supportUnreadInitializedRef.current && nextUnread > prevUnread) {
+              showToast('🔔 Поддержка ответила в вашем обращении', 'success');
+            }
+            supportUnreadInitializedRef.current = true;
+            return nextUnread;
+          });
+        })
+        .catch(() => {
+          if (!cancelled) setUserSupportUnreadCount(0);
+        });
+    };
+    const handleUnreadEvent = (event) => {
+      const nextCount = Number(event?.detail?.count);
+      if (Number.isFinite(nextCount)) {
+        supportUnreadInitializedRef.current = true;
+        setUserSupportUnreadCount(nextCount);
+      } else {
+        loadUnreadCount();
+      }
+    };
+    loadUnreadCount();
+    const interval = setInterval(loadUnreadCount, 30_000);
+    window.addEventListener('focus', loadUnreadCount);
+    window.addEventListener('cicada:support-unread-updated', handleUnreadEvent);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      window.removeEventListener('focus', loadUnreadCount);
+      window.removeEventListener('cicada:support-unread-updated', handleUnreadEvent);
+    };
+  }, [currentUser?.id, showToast]);
 
   // Poll every 5s — syncs bot status across browsers/tabs
   useEffect(() => {
@@ -4434,6 +4496,47 @@ const EXAMPLE_FULL = `версия "1.0"
                 )}
               </>
             )}
+            {userSupportUnreadCount > 0 && (
+              <button
+                type="button"
+                onClick={openSupportModal}
+                title={`Ответы поддержки: ${userSupportUnreadCount}`}
+                style={{
+                  position: 'relative',
+                  width: isMobileView ? 34 : 38,
+                  height: isMobileView ? 34 : 36,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderRadius: '50%',
+                  border: '1px solid rgba(62,207,142,0.5)',
+                  background: 'rgba(62,207,142,0.1)',
+                  color: '#bbf7d0',
+                  cursor: 'pointer',
+                  flexShrink: 0,
+                  boxShadow: '0 0 18px rgba(62,207,142,0.22)',
+                }}
+              >
+                🔔
+                <span style={{
+                  position: 'absolute',
+                  top: -4,
+                  right: -4,
+                  minWidth: 17,
+                  height: 17,
+                  padding: '0 5px',
+                  borderRadius: 999,
+                  background: '#10b981',
+                  color: '#04130d',
+                  fontSize: 10,
+                  fontWeight: 900,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  border: '1px solid rgba(255,255,255,0.55)',
+                }}>{userSupportUnreadCount > 99 ? '99+' : userSupportUnreadCount}</span>
+              </button>
+            )}
             {/* User button */}
             <button
               data-tour="profile-button"
@@ -5345,6 +5448,17 @@ const EXAMPLE_FULL = `версия "1.0"
                     style={{ width:'100%', padding:'10px 16px', textAlign:'left', background:'rgba(248,113,113,0.08)', color:'#fecaca', border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui', display:'flex', alignItems:'center', gap:8, fontWeight:800 }}
                   >🔔 Обращения: {adminOpenSupportCount}</button>
                 )}
+                <div style={{ height:1, background:'var(--border)', margin:'4px 0' }} />
+              </>
+            )}
+            {userSupportUnreadCount > 0 && (
+              <>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => { openSupportModal(); setMobileMoreOpen(false); }}
+                  style={{ width:'100%', padding:'10px 16px', textAlign:'left', background:'rgba(62,207,142,0.08)', color:'#bbf7d0', border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui', display:'flex', alignItems:'center', gap:8, fontWeight:800 }}
+                >🔔 Ответы поддержки: {userSupportUnreadCount}</button>
                 <div style={{ height:1, background:'var(--border)', margin:'4px 0' }} />
               </>
             )}
