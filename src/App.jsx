@@ -3347,18 +3347,223 @@ function fileToBase64(file) {
   });
 }
 
+const TELEGRAM_HTML_TAGS = new Set(['b', 'strong', 'i', 'em', 'u', 'ins', 's', 'strike', 'del', 'code', 'pre', 'a']);
+const HTML_ENTITY_MAP = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+
+function decodeHtmlEntities(text) {
+  return String(text ?? '').replace(/&(#x[0-9a-fA-F]+|#\d+|[a-zA-Z]+);/g, (m, ent) => {
+    if (ent[0] === '#') {
+      const n = ent[1]?.toLowerCase() === 'x'
+        ? Number.parseInt(ent.slice(2), 16)
+        : Number.parseInt(ent.slice(1), 10);
+      return Number.isFinite(n) ? String.fromCodePoint(n) : m;
+    }
+    return HTML_ENTITY_MAP[ent] ?? m;
+  });
+}
+
+function safePreviewHref(href) {
+  const s = String(href || '').trim();
+  return /^(https?:|tg:|mailto:)/i.test(s) ? s : '';
+}
+
+function parseTelegramHtmlText(text) {
+  const root = { tag: null, children: [] };
+  const stack = [root];
+  const re = /<\/?([a-zA-Z][\w-]*)(?:\s+[^>]*)?>/g;
+  let last = 0;
+  let m;
+
+  const pushText = (value) => {
+    if (value) stack[stack.length - 1].children.push(decodeHtmlEntities(value));
+  };
+
+  while ((m = re.exec(String(text ?? '')))) {
+    pushText(String(text ?? '').slice(last, m.index));
+    const raw = m[0];
+    const tag = String(m[1] || '').toLowerCase();
+    last = re.lastIndex;
+    if (!TELEGRAM_HTML_TAGS.has(tag)) {
+      pushText(raw);
+      continue;
+    }
+    if (raw.startsWith('</')) {
+      const idx = stack.findLastIndex((node) => node.tag === tag);
+      if (idx > 0) stack.length = idx;
+      continue;
+    }
+    const hrefMatch = tag === 'a' ? raw.match(/\shref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i) : null;
+    const node = {
+      tag,
+      attrs: hrefMatch ? { href: decodeHtmlEntities(hrefMatch[1] || hrefMatch[2] || hrefMatch[3] || '') } : {},
+      children: [],
+    };
+    stack[stack.length - 1].children.push(node);
+    if (!raw.endsWith('/>')) stack.push(node);
+  }
+  pushText(String(text ?? '').slice(last));
+  return root.children;
+}
+
+function findUnescapedMarker(text, marker, start) {
+  let i = start;
+  while (i < text.length) {
+    const at = text.indexOf(marker, i);
+    if (at < 0) return -1;
+    let slashes = 0;
+    for (let j = at - 1; j >= 0 && text[j] === '\\'; j -= 1) slashes += 1;
+    if (slashes % 2 === 0) return at;
+    i = at + marker.length;
+  }
+  return -1;
+}
+
+function parseTelegramMarkdownV2Text(input) {
+  const text = String(input ?? '');
+  const nodes = [];
+  let plain = '';
+  let i = 0;
+
+  const flush = () => {
+    if (plain) {
+      nodes.push(plain);
+      plain = '';
+    }
+  };
+
+  while (i < text.length) {
+    if (text[i] === '\\' && i + 1 < text.length) {
+      plain += text[i + 1];
+      i += 2;
+      continue;
+    }
+
+    if (text.startsWith('```', i)) {
+      const end = findUnescapedMarker(text, '```', i + 3);
+      if (end > i) {
+        flush();
+        nodes.push({ tag: 'pre', children: [text.slice(i + 3, end)] });
+        i = end + 3;
+        continue;
+      }
+    }
+
+    if (text[i] === '`') {
+      const end = findUnescapedMarker(text, '`', i + 1);
+      if (end > i) {
+        flush();
+        nodes.push({ tag: 'code', children: [text.slice(i + 1, end)] });
+        i = end + 1;
+        continue;
+      }
+    }
+
+    const marker = text.startsWith('__', i) ? '__' : text.startsWith('||', i) ? '||' : text[i];
+    const tag = marker === '__' ? 'u'
+      : marker === '||' ? 'spoiler'
+      : marker === '*' ? 'strong'
+      : marker === '_' ? 'em'
+      : marker === '~' ? 's'
+      : null;
+    if (tag) {
+      const end = findUnescapedMarker(text, marker, i + marker.length);
+      if (end > i) {
+        flush();
+        nodes.push({ tag, children: parseTelegramMarkdownV2Text(text.slice(i + marker.length, end)) });
+        i = end + marker.length;
+        continue;
+      }
+    }
+
+    if (text[i] === '[') {
+      const labelEnd = findUnescapedMarker(text, ']', i + 1);
+      if (labelEnd > i && text[labelEnd + 1] === '(') {
+        const urlEnd = findUnescapedMarker(text, ')', labelEnd + 2);
+        if (urlEnd > labelEnd) {
+          flush();
+          nodes.push({
+            tag: 'a',
+            attrs: { href: text.slice(labelEnd + 2, urlEnd).replace(/\\(.)/g, '$1') },
+            children: parseTelegramMarkdownV2Text(text.slice(i + 1, labelEnd)),
+          });
+          i = urlEnd + 1;
+          continue;
+        }
+      }
+    }
+
+    plain += text[i];
+    i += 1;
+  }
+
+  flush();
+  return nodes;
+}
+
+function renderPreviewRichNode(node, key) {
+  if (typeof node === 'string') return <React.Fragment key={key}>{node}</React.Fragment>;
+  const children = (node.children || []).map((child, i) => renderPreviewRichNode(child, `${key}.${i}`));
+  switch (node.tag) {
+    case 'b':
+    case 'strong':
+      return <strong key={key}>{children}</strong>;
+    case 'i':
+    case 'em':
+      return <em key={key}>{children}</em>;
+    case 'u':
+    case 'ins':
+      return <span key={key} style={{ textDecoration: 'underline', textUnderlineOffset: 2 }}>{children}</span>;
+    case 's':
+    case 'strike':
+    case 'del':
+      return <span key={key} style={{ textDecoration: 'line-through' }}>{children}</span>;
+    case 'code':
+      return <code key={key} style={{ background: 'rgba(15,23,42,0.75)', borderRadius: 4, padding: '1px 4px' }}>{children}</code>;
+    case 'pre':
+      return <code key={key} style={{ display: 'block', background: 'rgba(15,23,42,0.75)', borderRadius: 6, padding: '6px 7px', margin: '3px 0', whiteSpace: 'pre-wrap' }}>{children}</code>;
+    case 'a': {
+      const href = safePreviewHref(node.attrs?.href);
+      if (!href) return <span key={key}>{children}</span>;
+      return <a key={key} href={href} target="_blank" rel="noreferrer" style={{ color: '#93c5fd' }}>{children}</a>;
+    }
+    case 'spoiler':
+      return <span key={key} style={{ background: 'rgba(148,163,184,0.35)', borderRadius: 3, padding: '0 2px' }}>{children}</span>;
+    default:
+      return <React.Fragment key={key}>{children}</React.Fragment>;
+  }
+}
+
+function PreviewRichText({ text, format }) {
+  const fmt = String(format || '').toLowerCase();
+  const nodes = fmt === 'html'
+    ? parseTelegramHtmlText(text)
+    : (fmt === 'markdown_v2' || fmt === 'markdownv2')
+      ? parseTelegramMarkdownV2Text(text)
+      : [String(text ?? '')];
+  return <>{nodes.map((node, i) => renderPreviewRichNode(node, `pvrt.${i}`))}</>;
+}
+
+function previewFormatFromOutbound(o) {
+  const parseMode = String(o?.parse_mode || o?.parseMode || o?.params?.parse_mode || '').toLowerCase();
+  if (o?.type === 'html' || parseMode === 'html') return 'html';
+  if (o?.type === 'markdown_v2' || parseMode === 'markdownv2' || parseMode === 'markdown_v2') return 'markdown_v2';
+  return '';
+}
+
 function previewOutboundToEntries(outbound) {
   const skip = new Set(['answer_callback', 'set_commands']);
   const entries = [];
   for (const o of outbound || []) {
     if (skip.has(o.type)) continue;
-    if (o.type === 'send_message' || o.type === 'markdown') {
-      entries.push({ role: 'bot', kind: 'text', text: o.text ?? '' });
+    const format = previewFormatFromOutbound(o);
+    if (o.type === 'send_message' || o.type === 'markdown' || o.type === 'html' || o.type === 'markdown_v2') {
+      entries.push({ role: 'bot', kind: 'text', text: o.text ?? '', format });
     } else if (o.type === 'reply_keyboard') {
       entries.push({
         role: 'bot',
         kind: 'reply_keyboard',
         text: o.text ?? '',
+        format,
         keyboard: Array.isArray(o.keyboard) ? o.keyboard : [],
       });
     } else if (o.type === 'inline_keyboard') {
@@ -3366,6 +3571,7 @@ function previewOutboundToEntries(outbound) {
         role: 'bot',
         kind: 'inline_keyboard',
         text: o.text ?? '',
+        format,
         rows: Array.isArray(o.keyboard) ? o.keyboard : [],
       });
     } else if (o.type === 'photo') {
@@ -8813,12 +9019,12 @@ const EXAMPLE_FULL = `версия "1.0"
                 }}
               >
                 {m.role === 'bot' && m.kind === 'reply_keyboard' && (m.text || '').trim().length > 0 && (
-                  <div style={{ marginBottom: 8 }}>{m.text}</div>
+                  <div style={{ marginBottom: 8 }}><PreviewRichText text={m.text} format={m.format} /></div>
                 )}
                 {m.role === 'bot' && m.kind === 'inline_keyboard' && (m.text || '').trim().length > 0 && (
-                  <div style={{ marginBottom: 8 }}>{m.text}</div>
+                  <div style={{ marginBottom: 8 }}><PreviewRichText text={m.text} format={m.format} /></div>
                 )}
-                {m.role === 'bot' && m.kind === 'text' && <span>{m.text}</span>}
+                {m.role === 'bot' && m.kind === 'text' && <span><PreviewRichText text={m.text} format={m.format} /></span>}
                 {m.role === 'user' && m.kind === 'text' && <span>{m.text}</span>}
                 {m.role === 'user' && (m.kind === 'document' || m.kind === 'photo') && (
                   <span>
