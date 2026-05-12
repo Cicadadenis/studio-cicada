@@ -5015,6 +5015,9 @@ const IR_FEW_SHOT_ASSISTANT = `{"irVersion":1,"targetCore":"0.3.5","compatibilit
 const IR_FEW_SHOT_USER_2 = `магазин: категории и товары через inline-кнопки из БД`;
 const IR_FEW_SHOT_ASSISTANT_2 = `{"irVersion":1,"targetCore":"0.3.5","compatibilityMode":"0.3.5 exact","intent":{"primary":"db_inline_catalog"},"state":{"globals":[{"name":"категории","value":"[\\"Пицца\\", \\"Напитки\\"]"}]},"uiStates":[{"id":"ui_menu","message":"🏠 Главное меню","buttons":"📦 Каталог"},{"id":"ui_categories","message":"📦 Выберите категорию:","inlineDb":{"key":"категории","callbackPrefix":"cat:","backText":"⬅️ Назад","backCallback":"back","columns":"2"}}],"handlers":[{"id":"h_start","type":"start","trigger":"","actions":[{"type":"ui_state","uiStateId":"ui_menu"},{"type":"stop"}]},{"id":"h_catalog","type":"callback","trigger":"📦 Каталог","actions":[{"type":"ui_state","uiStateId":"ui_categories"},{"type":"stop"}]},{"id":"h_inline","type":"callback","trigger":"","actions":[{"type":"condition","cond":"начинается_с(callback_data, \\"cat:\\")","then":[{"type":"remember","varname":"категория","value":"срез(callback_data, 4)"},{"type":"message","text":"Товары категории: {категория}"},{"type":"inline_db","key":"товары","callbackPrefix":"prod:","backText":"⬅️ Категории","backCallback":"back_categories","columns":"1"},{"type":"stop"}],"else":[{"type":"condition","cond":"начинается_с(callback_data, \\"prod:\\")","then":[{"type":"remember","varname":"товар","value":"срез(callback_data, 5)"},{"type":"message","text":"📦 Товар: {товар}\\nЦена и описание берутся из БД."},{"type":"stop"}],"else":[{"type":"ui_state","uiStateId":"ui_categories"},{"type":"stop"}]}]}]}],"blocks":[],"scenarios":[],"transitions":[{"from":"h_catalog","to":"ui_categories","type":"ui_state"},{"from":"h_inline","to":"ui_categories","type":"inline_router"}]}`;
 
+const IR_FEW_SHOT_USER_3 = `создай бот телеграм прием заявок с бд и статусом`;
+const IR_FEW_SHOT_ASSISTANT_3 = `{"irVersion":1,"targetCore":"0.3.5","compatibilityMode":"0.3.5 exact","intent":{"primary":"request_intake_with_status"},"state":{"globals":[]},"uiStates":[{"id":"ui_start","message":"👋 Добро пожаловать! Здесь вы можете оставить заявку и проверить её статус.","buttons":"📝 Оставить заявку, 📊 Статус заявки"}],"handlers":[{"id":"h_start","type":"start","trigger":"","actions":[{"type":"ui_state","uiStateId":"ui_start"},{"type":"stop"}]},{"id":"h_new_request","type":"callback","trigger":"📝 Оставить заявку","actions":[{"type":"message","text":"Заполните заявку — я сохраню её в базе."},{"type":"run_scenario","target":"прием_заявки"}]},{"id":"h_status","type":"callback","trigger":"📊 Статус заявки","actions":[{"type":"get","key":"заявка_{user_id}","varname":"заявка"},{"type":"message","text":"📌 Статус вашей последней заявки:\n{заявка}\n\nЕсли данных нет — сначала оставьте заявку."},{"type":"stop"}]}],"blocks":[],"scenarios":[{"id":"sc_request","name":"прием_заявки","steps":[{"id":"step_name","name":"имя","actions":[{"type":"ask","question":"Как вас зовут?","varname":"имя"}]},{"id":"step_contact","name":"контакт","actions":[{"type":"ask","question":"Оставьте телефон или @username:","varname":"контакт"}]},{"id":"step_text","name":"описание","actions":[{"type":"ask","question":"Опишите заявку:","varname":"описание"},{"type":"remember","varname":"статус","value":"новая"},{"type":"save_global","key":"заявка_{user_id}","value":"№ {user_id} | Имя: {имя} | Контакт: {контакт} | Заявка: {описание} | Статус: {статус}"},{"type":"message","text":"✅ Заявка сохранена в базе.\nНомер: {user_id}\nСтатус: {статус}.\nПроверить позже можно кнопкой «📊 Статус заявки»."},{"type":"stop"}]}]}],"transitions":[{"from":"h_new_request","to":"sc_request","type":"run_scenario"},{"from":"h_status","to":"заявка_{user_id}","type":"get_status"}]}`;
+
 function serverAiAstPolicyAppendix(astMode, allowedMemoryKeys) {
   const lines = [
     '',
@@ -5022,7 +5025,7 @@ function serverAiAstPolicyAppendix(astMode, allowedMemoryKeys) {
   ];
   if (astMode === 'safe') {
     lines.push(
-      'Режим SAFE: блок с type "get" ЗАПРЕЩЁН. KV-чтение недоступно. Используй ask + remember.',
+      'Режим SAFE: get разрешён только для ключей, которые этот же бот сохраняет через save/save_global (точно такая же строка key). Для внешних/старых ключей get запрещён; используй ask + remember.',
     );
   } else {
     lines.push(
@@ -6968,6 +6971,8 @@ app.post('/api/ai-generate', requireUserAuth, aiGenerateRateLimit, async (req, r
       { role: 'assistant', content: IR_FEW_SHOT_ASSISTANT },
       { role: 'user', content: IR_FEW_SHOT_USER_2 },
       { role: 'assistant', content: IR_FEW_SHOT_ASSISTANT_2 },
+      { role: 'user', content: IR_FEW_SHOT_USER_3 },
+      { role: 'assistant', content: IR_FEW_SHOT_ASSISTANT_3 },
       { role: 'user', content: buildIntentPlannedUserPrompt(promptText, intentPlan) },
     ];
 

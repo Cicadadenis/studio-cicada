@@ -317,7 +317,7 @@ export function validateAiCanonicalIr(ir, options = {}) {
   });
   if (options.astMode !== 'advanced') {
     const usesGet = JSON.stringify(ir).includes('"type":"get"');
-    if (usesGet) warnings.push('Canonical AI IR: get в safe mode будет отклонён политикой сервера, если не заменить на ask/remember.');
+    if (usesGet) warnings.push('Canonical AI IR: get в safe mode допустим только для ключей, которые этот же бот сохраняет через save/save_global.');
   }
   return { errors: [...new Set(errors)], warnings: [...new Set(warnings)] };
 }

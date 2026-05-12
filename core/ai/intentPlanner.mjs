@@ -111,7 +111,7 @@ function detectBotType(text) {
   if (includesAny(text, ['тест', 'опрос', 'анкета', 'викторин'])) return 'survey';
   if (includesAny(text, ['файл', 'документ', 'загруз', 'скач'])) return 'file_storage';
   if (includesAny(text, ['авторизац', 'логин', 'парол'])) return 'auth';
-  if (includesAny(text, ['поддержк', 'helpdesk', 'заявк'])) return 'support';
+  if (includesAny(text, ['поддержк', 'helpdesk', 'заявк', 'заяв'])) return 'support';
   return 'informational';
 }
 
@@ -139,6 +139,7 @@ function featureCatalog(botType, text) {
   if (includesAny(text, ['кнопк', 'меню'])) features.push('main_menu');
   if (includesAny(text, ['услов', 'если', 'провер'])) features.push('simple_condition');
   if (includesAny(text, ['база', 'бд', 'сохран', 'корзин'])) features.push('memory_storage');
+  if (includesAny(text, ['статус', 'состояни', 'этап'])) features.push('status_tracking');
   if (includesAny(text, ['inline', 'категор', 'товар'])) features.push('inline_catalog');
 
   return unique(features).slice(0, 5);
@@ -152,37 +153,50 @@ function complexityFor(prompt, features, botType) {
   if (features.length > 2) score += 1;
   if (includesAny(text, ['интеграц', 'оплат', 'рассылка', 'админ', 'роль', 'сегмент', 'api', 'webhook'])) score += 2;
   if (includesAny(text, ['каталог', 'корзин', 'авторизац', 'файл', 'документ'])) score += 1;
+  if (includesAny(text, ['бд', 'база', 'статус', 'состояни'])) score += 1;
+  if (botType === 'support' && features.includes('memory_storage') && features.includes('status_tracking')) score += 1;
   if (botType === 'calculator' && prompt.length < 80) score = 0;
   if (score <= 1) return INTENT_COMPLEXITY.SIMPLE;
   if (score <= 3) return INTENT_COMPLEXITY.MEDIUM;
   return INTENT_COMPLEXITY.ADVANCED;
 }
 
-function buildMinimalFlow(botType, budget) {
-  const scenarioName = botType === 'calculator' ? 'расчет' : slug(botType, 'основной_сценарий');
+function buildMinimalFlow(botType, budget, features = []) {
+  const isRequestDesk = botType === 'support' && features.includes('memory_storage') && features.includes('status_tracking');
+  const scenarioName = isRequestDesk ? 'прием_заявки' : (botType === 'calculator' ? 'расчет' : slug(botType, 'основной_сценарий'));
   const needsScenario = botType !== 'informational';
   const handlers = [{ id: 'h_start', type: 'start', trigger: '' }];
   if (botType === 'calculator') handlers.push({ id: 'h_text', type: 'text', trigger: '' });
-  else if (needsScenario) handlers.push({ id: 'h_main_action', type: 'callback', trigger: 'Начать' });
+  else if (isRequestDesk) {
+    handlers.push({ id: 'h_new_request', type: 'callback', trigger: '📝 Оставить заявку' });
+    handlers.push({ id: 'h_request_status', type: 'callback', trigger: '📊 Статус заявки' });
+  } else if (needsScenario) handlers.push({ id: 'h_main_action', type: 'callback', trigger: 'Начать' });
 
   const uiStates = [{
     id: 'ui_start',
-    purpose: 'minimal entry screen',
+    purpose: isRequestDesk ? 'request intake menu with status lookup' : 'minimal entry screen',
     message: botType === 'calculator'
       ? 'Введите выражение для расчёта.'
-      : 'Краткое приветствие и один основной CTA.',
-    buttons: needsScenario && botType !== 'calculator' ? 'Начать' : '',
+      : (isRequestDesk ? 'Приём заявок: создайте заявку или проверьте статус.' : 'Краткое приветствие и один основной CTA.'),
+    buttons: isRequestDesk ? '📝 Оставить заявку, 📊 Статус заявки' : (needsScenario && botType !== 'calculator' ? 'Начать' : ''),
   }];
 
   const minimalFlows = needsScenario
-    ? [{
-      id: 'flow_main',
-      from: botType === 'calculator' ? 'h_text' : 'h_main_action',
-      to: scenarioName,
-      steps: botType === 'calculator'
-        ? ['ask_or_use_text_input', 'reply_with_result_placeholder']
-        : ['collect_minimum_required_input', 'confirm_request'],
-    }]
+    ? [
+      {
+        id: 'flow_main',
+        from: botType === 'calculator' ? 'h_text' : (isRequestDesk ? 'h_new_request' : 'h_main_action'),
+        to: scenarioName,
+        steps: botType === 'calculator'
+          ? ['ask_or_use_text_input', 'reply_with_result_placeholder']
+          : (isRequestDesk
+            ? ['collect_name', 'collect_contact', 'collect_request_text', 'save_request_to_kv', 'confirm_request_with_status']
+            : ['collect_minimum_required_input', 'confirm_request']),
+      },
+      ...(isRequestDesk
+        ? [{ id: 'flow_status', from: 'h_request_status', to: 'status_lookup', steps: ['load_saved_request', 'show_current_status'] }]
+        : []),
+    ]
     : [{
       id: 'flow_start',
       from: 'h_start',
@@ -191,7 +205,7 @@ function buildMinimalFlow(botType, budget) {
     }];
 
   const scenarios = needsScenario && budget.maxScenarios > 0
-    ? [{ id: `sc_${slug(scenarioName, 'main')}`, name: scenarioName, maxSteps: botType === 'calculator' ? 1 : 2 }]
+    ? [{ id: `sc_${slug(scenarioName, 'main')}`, name: scenarioName, maxSteps: isRequestDesk ? 5 : (botType === 'calculator' ? 1 : 2) }]
     : [];
 
   return {
@@ -216,7 +230,7 @@ export function intentPlanner(prompt) {
   const complexityScore = complexityFor(rawPrompt, requiredFeatures, botType);
   const budget = COMPLEXITY_BUDGETS[complexityScore];
   const knownCapabilityTemplate = templateForBotType(botType, requiredFeatures);
-  const graph = buildMinimalFlow(botType, budget);
+  const graph = buildMinimalFlow(botType, budget, requiredFeatures);
 
   return {
     botType,
@@ -343,6 +357,58 @@ export function buildSemanticTemplateIr(plan, options = {}) {
       handlers: [
         { id: 'h_start', type: 'start', trigger: '', actions: [{ type: 'ui_state', uiStateId: 'ui_start' }, { type: 'stop' }] },
         { id: 'h_subscribed', type: 'callback', trigger: 'Я подписался', actions: [{ type: 'message', text: 'Спасибо! Продолжаем.' }, { type: 'stop' }] },
+      ],
+    });
+  }
+
+  if (templateId === SEMANTIC_TEMPLATE_IDS.FORM_COLLECTION
+    && plan?.botType === 'support'
+    && asArray(plan?.requiredFeatures).includes('memory_storage')
+    && asArray(plan?.requiredFeatures).includes('status_tracking')) {
+    return normalizeAiCanonicalIr({
+      ...base,
+      intent: { ...base.intent, primary: 'request_intake_with_status' },
+      uiStates: [{
+        id: 'ui_start',
+        message: '👋 Добро пожаловать! Здесь вы можете оставить заявку и проверить её статус.',
+        buttons: '📝 Оставить заявку, 📊 Статус заявки',
+      }],
+      handlers: [
+        { id: 'h_start', type: 'start', trigger: '', actions: [{ type: 'ui_state', uiStateId: 'ui_start' }, { type: 'stop' }] },
+        { id: 'h_new_request', type: 'callback', trigger: '📝 Оставить заявку', actions: [{ type: 'message', text: 'Заполните заявку — я сохраню её в базе.' }, { type: 'run_scenario', target: 'прием_заявки' }] },
+        {
+          id: 'h_status',
+          type: 'callback',
+          trigger: '📊 Статус заявки',
+          actions: [
+            { type: 'get', key: 'заявка_{user_id}', varname: 'заявка' },
+            { type: 'message', text: '📌 Статус вашей последней заявки:\n{заявка}\n\nЕсли данных нет — сначала оставьте заявку.' },
+            { type: 'stop' },
+          ],
+        },
+      ],
+      scenarios: [{
+        id: 'sc_request',
+        name: 'прием_заявки',
+        steps: [
+          { id: 'step_name', name: 'имя', actions: [{ type: 'ask', question: 'Как вас зовут?', varname: 'имя' }] },
+          { id: 'step_contact', name: 'контакт', actions: [{ type: 'ask', question: 'Оставьте телефон или @username:', varname: 'контакт' }] },
+          {
+            id: 'step_text',
+            name: 'описание',
+            actions: [
+              { type: 'ask', question: 'Опишите заявку:', varname: 'описание' },
+              { type: 'remember', varname: 'статус', value: 'новая' },
+              { type: 'save_global', key: 'заявка_{user_id}', value: '№ {user_id} | Имя: {имя} | Контакт: {контакт} | Заявка: {описание} | Статус: {статус}' },
+              { type: 'message', text: '✅ Заявка сохранена в базе.\nНомер: {user_id}\nСтатус: {статус}.\nПроверить позже можно кнопкой «📊 Статус заявки».' },
+              { type: 'stop' },
+            ],
+          },
+        ],
+      }],
+      transitions: [
+        { from: 'h_new_request', to: 'sc_request', type: 'run_scenario' },
+        { from: 'h_status', to: 'заявка_{user_id}', type: 'get_status' },
       ],
     });
   }
