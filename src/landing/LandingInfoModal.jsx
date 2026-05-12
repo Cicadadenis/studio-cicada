@@ -1,10 +1,23 @@
 import React from 'react';
+import { FALLBACK_PRO_MONTHLY_USD, fetchPublicPlans, formatUsdPrice, getMonthlyProPriceUsd } from '../pricingPlans.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // LANDING INFO MODAL
 // ═══════════════════════════════════════════════════════════════════════════
 export default function LandingInfoModal({ page, onClose, isMobile }) {
   const [docsSection, setDocsSection] = React.useState(0);
+  const [proMonthlyUsd, setProMonthlyUsd] = React.useState(FALLBACK_PRO_MONTHLY_USD);
+
+  React.useEffect(() => {
+    if (page !== 'pricing') return undefined;
+    let cancelled = false;
+    fetchPublicPlans()
+      .then((plans) => {
+        if (!cancelled) setProMonthlyUsd(getMonthlyProPriceUsd(plans));
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [page]);
 
   const PAGE_META = {
     features:  { title: 'Возможности',  icon: '\u2728', grad: 'linear-gradient(135deg,#fbbf24,#f97316)', glow: 'rgba(251,191,36,0.18)',  border: 'rgba(251,191,36,0.35)' },
@@ -31,6 +44,7 @@ export default function LandingInfoModal({ page, onClose, isMobile }) {
       </table>
     </div>
   );
+  const proMonthlyPrice = formatUsdPrice(proMonthlyUsd);
 
   const DOC_SECTIONS = [
     { label: '📖 \u041e\u0431\u0437\u043e\u0440', content: (<div style={{ display:'flex', flexDirection:'column', gap:12 }}><SectionTitle>\u0427\u0442\u043e \u0442\u0430\u043a\u043e\u0435 Cicada Studio?</SectionTitle><p style={{ fontSize:13, color:'rgba(255,255,255,0.7)', lineHeight:1.65, margin:0 }}><strong style={{ color:'#fbbf24' }}>Cicada Studio</strong> \u2014 \u0432\u0438\u0437\u0443\u0430\u043b\u044c\u043d\u044b\u0439 \u043a\u043e\u043d\u0441\u0442\u0440\u0443\u043a\u0442\u043e\u0440 Telegram-\u0431\u043e\u0442\u043e\u0432 \u043d\u0430 \u043e\u0441\u043d\u043e\u0432\u0435 ReactFlow.</p><div style={{ display:'grid', gridTemplateColumns:isMobile?'1fr':'1fr 1fr 1fr', gap:8 }}>{[['\u041b\u0435\u0432\u0430\u044f \u043f\u0430\u043d\u0435\u043b\u044c','\u041f\u0430\u043b\u0438\u0442\u0440\u0430 \u0431\u043b\u043e\u043a\u043e\u0432 \u2014 \u043f\u0435\u0440\u0435\u0442\u0430\u0449\u0438 \u043d\u0430 \u0445\u043e\u043b\u0441\u0442','#3ecf8e'],['\u0426\u0435\u043d\u0442\u0440\u0430\u043b\u044c\u043d\u0430\u044f','\u0425\u043e\u043b\u0441\u0442 \u0434\u043b\u044f \u043f\u043e\u0441\u0442\u0440\u043e\u0435\u043d\u0438\u044f \u0441\u0445\u0435\u043c\u044b','#60a5fa'],['\u041f\u0440\u0430\u0432\u0430\u044f \u043f\u0430\u043d\u0435\u043b\u044c','\u0421\u0432\u043e\u0439\u0441\u0442\u0432\u0430 \u0431\u043b\u043e\u043a\u0430 + \u043a\u043e\u0434','#a78bfa']].map(([t,d,c]) => (<div key={t} style={{ padding:'12px 14px', borderRadius:10, background:'rgba(255,255,255,0.03)', border:`1px solid ${c}30` }}><div style={{ fontSize:12, fontWeight:700, color:c, marginBottom:4, fontFamily:'Syne,system-ui' }}>{t}</div><div style={{ fontSize:11, color:'rgba(255,255,255,0.55)', lineHeight:1.5 }}>{d}</div></div>))}</div></div>) },
@@ -339,7 +353,7 @@ export default function LandingInfoModal({ page, onClose, isMobile }) {
                     <span style={{ fontSize:10, fontWeight:800, color:'#ffd700', fontFamily:'Syne,system-ui', letterSpacing:'0.08em' }}>PRO</span>
                   </div>
                   <div style={{ display:'flex', alignItems:'flex-end', gap:6, marginBottom:6 }}>
-                    <span style={{ fontFamily:'Syne,system-ui', fontWeight:900, fontSize:42, color:'#ffd700', lineHeight:1 }}>$8</span>
+                    <span style={{ fontFamily:'Syne,system-ui', fontWeight:900, fontSize:42, color:'#ffd700', lineHeight:1 }}>{proMonthlyPrice}</span>
                     <span style={{ fontSize:14, color:'rgba(255,215,0,0.45)', paddingBottom:6 }}>/мес</span>
                   </div>
                   <div style={{ fontSize:12, color:'rgba(255,215,0,0.4)', marginBottom:20 }}>Всё для профессиональной работы</div>

@@ -188,7 +188,7 @@ function normalizeDslUI(input) {
   return out.join('\n');
 }
 
-function fixDslSchema(input) {
+export function fixDslSchema(input) {
   return normalizeDslUI(input);
 }
 

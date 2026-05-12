@@ -12,10 +12,13 @@ import {
   BLOCK_W,
   BLOCK_H,
   ROOT_H,
+  MOBILE_TOP_BAR_H,
+  MOBILE_BOTTOM_NAV_H,
   DEFAULT_PROPS,
   normalizeStudioBlockNode,
   normalizeStudioStacks,
   createStudioBlockNode,
+  UI_ATTACHMENT_LEGACY_BLOCK_TYPES,
   legacyBlockToUiAttachment,
   addUiAttachment,
   canStackBelow,
@@ -30,14 +33,17 @@ import {
   getUniqueBlockConflictMessage,
   resolveBotTokenForNewBlock,
   inferPropsFromParent,
+  normalizeAiPartialResponse,
   uid,
   resetUidSequence,
+  AiDiagnosticSection,
   BlockInfoModal,
+  BlockShape,
   BlockStack,
   Sidebar,
   PropsPanel,
 } from './builder/BuilderComponents.jsx';
-import DSLPane from './builder/DSLPane.jsx';
+import DSLPane, { fixDslSchema } from './builder/DSLPane.jsx';
 import { lintDSLSchema } from '../core/validator/schema.js';
 import { canRenderUi, stackToDSL } from '../core/stacksToDsl.js';
 import { getCsrfTokenForRequest } from './csrf.js';
@@ -67,6 +73,7 @@ import {
   telegramAuth,
   loginWithPasskey,
 } from './authHelpers.js';
+import { FALLBACK_PRO_MONTHLY_USD, fetchPublicPlans, formatUsdPrice, getMonthlyProPriceUsd } from './pricingPlans.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PROJECTS STORAGE — PostgreSQL via API
@@ -748,6 +755,7 @@ export default function App() {
   const [pythonConvertLoading, setPythonConvertLoading] = useState(false);
   const [pythonConvertError, setPythonConvertError] = useState('');
   const [landingInfoPage, setLandingInfoPage] = useState(null); // features | templates | docs | pricing | null
+  const [proMonthlyUsd, setProMonthlyUsd] = useState(FALLBACK_PRO_MONTHLY_USD);
 
   // Toast notification state
   const [toast, setToast] = useState(null); // { message, type, visible }
@@ -771,6 +779,17 @@ export default function App() {
   const aiPromptTooShort = aiPromptText.length < 5;
   const aiPromptTooLong = aiPromptText.length > AI_PROMPT_MAX_CHARS;
   const canSubmitAiPrompt = !aiLoading && !aiPromptTooShort && !aiPromptTooLong && !aiPartialResult?.skeletonFallback;
+  const proMonthlyPrice = formatUsdPrice(proMonthlyUsd);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchPublicPlans()
+      .then((plans) => {
+        if (!cancelled) setProMonthlyUsd(getMonthlyProPriceUsd(plans));
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   const openProfileModal = useCallback(() => {
     setProfileInitialTab('profile');
@@ -2912,10 +2931,14 @@ const EXAMPLE_FULL = `версия "1.0"
     }, 1000);
   }, []);
 
+  const getRuntimeUserId = useCallback(() => (
+    currentUser?.id ? String(currentUser.id) : ''
+  ), [currentUser?.id]);
+
   // Check if bot is running on server (survives page refresh / other browsers)
-  const checkBotStatus = async () => {
+  const checkBotStatus = useCallback(async () => {
     try {
-      const userId = localStorage.getItem('cicada_userId');
+      const userId = getRuntimeUserId();
       if (!userId) return;
       const res = await fetch(`${API_URL}/bots`, { credentials: 'include' });
       const list = await res.json();
@@ -2935,7 +2958,7 @@ const EXAMPLE_FULL = `версия "1.0"
     } catch (e) {
       // server unreachable — leave as false
     }
-  };
+  }, [getRuntimeUserId, startCountdown]);
 
   // Load session on startup
   useEffect(() => {
@@ -3142,7 +3165,7 @@ const EXAMPLE_FULL = `версия "1.0"
   useEffect(() => {
     const id = setInterval(checkBotStatus, 5000);
     return () => clearInterval(id);
-  }, [startCountdown]);
+  }, [checkBotStatus]);
 
   // Generate DSL from current stacks
   const generateBotDSL = useCallback(() => {
@@ -3369,12 +3392,14 @@ const EXAMPLE_FULL = `версия "1.0"
 
   useEffect(() => {
     if (!botDebugOpen) return;
-    const userId = localStorage.getItem('cicada_userId');
+    const userId = getRuntimeUserId();
     if (!userId) return;
     let cancelled = false;
     const tick = async () => {
       try {
-        const r = await fetch(`${API_URL}/bot/logs?userId=${encodeURIComponent(userId)}`);
+        const r = await fetch(`${API_URL}/bot/logs?userId=${encodeURIComponent(userId)}`, {
+          credentials: 'include',
+        });
         const data = await r.json().catch(() => ({}));
         if (cancelled || data.logs == null) return;
         setBotDebugLogs(String(data.logs));
@@ -3383,24 +3408,20 @@ const EXAMPLE_FULL = `версия "1.0"
     tick();
     const id = setInterval(tick, 1200);
     return () => { cancelled = true; clearInterval(id); };
-  }, [botDebugOpen]);
-
-  // Get or create userId
-  const getUserId = useCallback(() => {
-    let userId = localStorage.getItem('cicada_userId');
-    if (!userId) {
-      userId = Math.random().toString(36).substring(2);
-      localStorage.setItem('cicada_userId', userId);
-    }
-    return userId;
-  }, []);
+  }, [botDebugOpen, getRuntimeUserId]);
 
   // Start bot
   const startBot = useCallback(async () => {
     setIsStartingBot(true);
     setStartBotError(null);
     try {
-      const userId = getUserId();
+      const userId = getRuntimeUserId();
+      if (!userId) {
+        setAuthTab('login');
+        setShowAuthModal(true);
+        setStartBotError('Войдите в аккаунт, чтобы запустить бота');
+        return;
+      }
       const code = generateBotDSL();
       const response = await postJsonWithCsrf('/api/run', { code, userId });
       const data = await response.json().catch(() => ({}));
@@ -3426,7 +3447,7 @@ const EXAMPLE_FULL = `версия "1.0"
     } finally {
       setIsStartingBot(false);
     }
-  }, [generateBotDSL, showToast, getUserId, startCountdown]);
+  }, [generateBotDSL, showToast, getRuntimeUserId, startCountdown]);
 
   // Stop bot
   const stopBot = useCallback(async () => {
@@ -3434,7 +3455,13 @@ const EXAMPLE_FULL = `версия "1.0"
     setIsStoppingBot(true);
     setStopBotError(null);
     try {
-      const userId = getUserId();
+      const userId = getRuntimeUserId();
+      if (!userId) {
+        setAuthTab('login');
+        setShowAuthModal(true);
+        setStopBotError('Войдите в аккаунт, чтобы остановить бота');
+        return;
+      }
       const response = await postJsonWithCsrf('/api/stop', { userId });
       const data = await response.json();
       if (data.error) {
@@ -3450,7 +3477,7 @@ const EXAMPLE_FULL = `версия "1.0"
     } finally {
       setIsStoppingBot(false);
     }
-  }, [showToast, getUserId]);
+  }, [showToast, getRuntimeUserId]);
 
   const authModalNode = showAuthModal ? (
     <AuthModal
@@ -3858,7 +3885,7 @@ const EXAMPLE_FULL = `версия "1.0"
               <div className="lp-price-card featured" style={{ position:'relative' }}>
                 <div style={{ position:'absolute', top:-13, left:'50%', transform:'translateX(-50%)', background:'linear-gradient(135deg,#ffd700,#f59e0b)', color:'#111', fontSize:11, fontWeight:800, padding:'3px 14px', borderRadius:20, fontFamily:'Syne,system-ui', whiteSpace:'nowrap' }}>⭐ Популярный</div>
                 <div style={{ fontSize:12, fontWeight:700, color:'rgba(255,255,255,0.5)', textTransform:'uppercase', letterSpacing:'0.08em', marginBottom:12 }}>Pro</div>
-                <div style={{ fontFamily:'Syne,system-ui', fontSize:38, fontWeight:800, marginBottom:4 }}>990₽<span style={{ fontSize:16, fontWeight:500, color:'rgba(255,255,255,0.5)' }}> /мес</span></div>
+                <div style={{ fontFamily:'Syne,system-ui', fontSize:38, fontWeight:800, marginBottom:4 }}>{proMonthlyPrice}<span style={{ fontSize:16, fontWeight:500, color:'rgba(255,255,255,0.5)' }}> /мес</span></div>
                 <div style={{ fontSize:13, color:'rgba(255,255,255,0.5)', marginBottom:20 }}>Биллинг ежемесячно</div>
                 <div style={{ height:1, background:'rgba(255,255,255,0.08)', marginBottom:18 }} />
                 {['До 10 проектов','Все блоки и модули','AI-помощник','Продвинутая аналитика','Приоритетная поддержка','Webhooks и интеграции'].map(f => <div key={f} style={{ display:'flex', alignItems:'center', fontSize:13, color:'rgba(255,255,255,0.7)', marginBottom:9 }}><span className="lp-check">✓</span>{f}</div>)}
@@ -5436,22 +5463,14 @@ const EXAMPLE_FULL = `версия "1.0"
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            {isAdmin && (
+            {isAdmin && adminOpenSupportCount > 0 && (
               <>
                 <button
                   type="button"
                   role="menuitem"
-                  onClick={() => { openAdminMenu(); setMobileMoreOpen(false); }}
-                  style={{ width:'100%', padding:'10px 16px', textAlign:'left', background:'rgba(251,191,36,0.08)', color:'#fde68a', border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui', display:'flex', alignItems:'center', gap:8, fontWeight:800 }}
-                >⚙ Админ меню</button>
-                {adminOpenSupportCount > 0 && (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => { openAdminMenu('support'); setMobileMoreOpen(false); }}
-                    style={{ width:'100%', padding:'10px 16px', textAlign:'left', background:'rgba(248,113,113,0.08)', color:'#fecaca', border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui', display:'flex', alignItems:'center', gap:8, fontWeight:800 }}
-                  >🔔 Обращения: {adminOpenSupportCount}</button>
-                )}
+                  onClick={() => { openAdminMenu('support'); setMobileMoreOpen(false); }}
+                  style={{ width:'100%', padding:'10px 16px', textAlign:'left', background:'rgba(248,113,113,0.08)', color:'#fecaca', border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui', display:'flex', alignItems:'center', gap:8, fontWeight:800 }}
+                >🔔 Обращения: {adminOpenSupportCount}</button>
                 <div style={{ height:1, background:'var(--border)', margin:'4px 0' }} />
               </>
             )}

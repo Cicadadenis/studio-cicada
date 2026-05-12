@@ -832,6 +832,7 @@ async function initDB() {
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_subscription_invoices_user_id ON subscription_invoices(user_id)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_subscription_invoices_status ON subscription_invoices(status, processed_at)`);
+  await ensureSubscriptionPlans();
 
   // ── User libraries ───────────────────────────────────────────────────────────
   await pool.query(`
@@ -2066,16 +2067,107 @@ app.get('/api/bot/logs', requireUserAuth, (req, res) => {
 
 // ================= SUBSCRIPTION =================
 
-const PLANS = {
+const DEFAULT_PLANS = Object.freeze({
   '2w': { label: '2 недели',  days: 14,  usd: 5  },
   '1m': { label: '1 месяц',   days: 30,  usd: 8  },
   '3m': { label: '3 месяца',  days: 90,  usd: 20 },
   '6m': { label: '6 месяцев', days: 180, usd: 35 },
   '1y': { label: '1 год',     days: 365, usd: 60 },
-};
+});
+
+let PLANS = clonePlans(DEFAULT_PLANS);
 
 const CRYPTOBOT_API = 'https://pay.crypt.bot/api';
 const SUBSCRIPTION_MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+function clonePlans(plans) {
+  return Object.fromEntries(
+    Object.entries(plans).map(([key, plan]) => [
+      key,
+      {
+        label: String(plan.label),
+        days: Number(plan.days),
+        usd: Number(plan.usd),
+      },
+    ]),
+  );
+}
+
+function normalizePlanRow(row) {
+  return {
+    label: String(row.label),
+    days: Number(row.days),
+    usd: Number(row.usd),
+  };
+}
+
+async function ensureSubscriptionPlans() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS subscription_plans (
+      key        TEXT PRIMARY KEY,
+      label      TEXT NOT NULL,
+      days       INTEGER NOT NULL CHECK (days > 0),
+      usd        NUMERIC(10,2) NOT NULL CHECK (usd > 0),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  for (const [key, plan] of Object.entries(DEFAULT_PLANS)) {
+    await pool.query(
+      `
+      INSERT INTO subscription_plans (key, label, days, usd)
+      VALUES ($1,$2,$3,$4)
+      ON CONFLICT (key) DO NOTHING
+      `,
+      [key, plan.label, plan.days, plan.usd],
+    );
+  }
+
+  await loadPlansFromDb();
+}
+
+async function loadPlansFromDb() {
+  const { rows } = await pool.query(`
+    SELECT key, label, days, usd
+    FROM subscription_plans
+    ORDER BY CASE key
+      WHEN '2w' THEN 1
+      WHEN '1m' THEN 2
+      WHEN '3m' THEN 3
+      WHEN '6m' THEN 4
+      WHEN '1y' THEN 5
+      ELSE 100
+    END, days ASC, key ASC
+  `);
+
+  const nextPlans = clonePlans(DEFAULT_PLANS);
+  for (const row of rows) {
+    nextPlans[String(row.key)] = normalizePlanRow(row);
+  }
+  PLANS = nextPlans;
+  return PLANS;
+}
+
+async function updatePlanPricesInDb(updates) {
+  const plans = await loadPlansFromDb();
+  const changedKeys = [];
+
+  for (const [planKey, vals] of Object.entries(updates)) {
+    const usd = Number(vals?.usd);
+    if (!plans[planKey] || !Number.isFinite(usd) || usd <= 0) continue;
+    await pool.query(
+      `
+      UPDATE subscription_plans
+      SET usd=$1, updated_at=NOW()
+      WHERE key=$2
+      `,
+      [usd, planKey],
+    );
+    changedKeys.push(planKey);
+  }
+
+  return { plans: await loadPlansFromDb(), changedKeys };
+}
 
 async function cryptobotRequest(method, params = {}) {
   const r = await fetch(`${CRYPTOBOT_API}/${method}`, {
@@ -2116,8 +2208,8 @@ function getCryptoBotInvoiceId(invoice) {
   return id == null ? null : String(id);
 }
 
-function subscriptionReceiptRow(row) {
-  const planInfo = PLANS[row.plan] || {};
+function subscriptionReceiptRow(row, plans = PLANS) {
+  const planInfo = plans[row.plan] || {};
   return row ? {
     invoiceId: row.invoice_id,
     plan: row.plan,
@@ -2162,7 +2254,8 @@ async function upsertSubscriptionInvoice(invoice, meta) {
 }
 
 async function activateSubscriptionPayment({ userId, plan, invoiceId = null, source = 'payment' }) {
-  const planInfo = PLANS[plan];
+  const plans = await loadPlansFromDb();
+  const planInfo = plans[plan];
   if (!planInfo) return { activated: false, reason: 'invalid_plan' };
 
   const client = await pool.connect();
@@ -2238,7 +2331,8 @@ app.post('/api/subscription/create', requireUserAuth, async (req, res) => {
   const requestedUserId = req.body?.userId == null ? req.authUserId : String(req.body.userId);
   if (requestedUserId !== req.authUserId) return res.status(403).json({ error: 'Forbidden' });
   const userId = req.authUserId;
-  const planInfo = PLANS[plan];
+  const plans = await loadPlansFromDb();
+  const planInfo = plans[plan];
   if (!planInfo) return res.json({ error: 'Неверный план' });
   if (!['USDT','TRX','LTC'].includes(asset)) return res.json({ error: 'Неверная валюта' });
 
@@ -2314,6 +2408,7 @@ app.post('/api/subscription/webhook', async (req, res) => {
 
 app.post('/api/subscription/sync', requireUserAuth, async (req, res) => {
   const userId = req.authUserId;
+  const plans = await loadPlansFromDb();
   const { rows } = await pool.query(
     `
     SELECT invoice_id, plan
@@ -2345,7 +2440,7 @@ app.post('/api/subscription/sync', requireUserAuth, async (req, res) => {
 
       let meta;
       try { meta = JSON.parse(invoice?.payload); } catch { continue; }
-      if (String(meta?.userId) !== userId || !PLANS[meta?.plan]) continue;
+      if (String(meta?.userId) !== userId || !plans[meta?.plan]) continue;
 
       const invoiceId = await upsertSubscriptionInvoice(invoice, meta);
       const activation = await activateSubscriptionPayment({
@@ -2379,6 +2474,7 @@ app.post('/api/subscription/sync', requireUserAuth, async (req, res) => {
 });
 
 app.get('/api/subscription/purchases', requireUserAuth, async (req, res) => {
+  const plans = await loadPlansFromDb();
   const { rows } = await pool.query(
     `
     SELECT invoice_id, plan, asset, amount, status, paid_at, created_at, processed_at
@@ -2389,7 +2485,7 @@ app.get('/api/subscription/purchases', requireUserAuth, async (req, res) => {
     `,
     [req.authUserId],
   );
-  res.json({ purchases: rows.map(subscriptionReceiptRow).filter(Boolean) });
+  res.json({ purchases: rows.map((row) => subscriptionReceiptRow(row, plans)).filter(Boolean) });
 });
 
 app.get('/api/subscription/status', async (req, res) => {
@@ -2407,8 +2503,12 @@ app.get('/api/subscription/status', async (req, res) => {
 });
 
 // Публичный эндпоинт — цены для фронтенда
-app.get('/api/plans', (req, res) => {
-  res.json({ plans: PLANS });
+app.get('/api/plans', async (req, res) => {
+  try {
+    res.json({ plans: await loadPlansFromDb() });
+  } catch (e) {
+    return sendInternalApiError(res, 'GET /api/plans', e, 'Не удалось загрузить тарифы', 500);
+  }
 });
 
 app.get('/api/health', (_req, res) => {
@@ -3101,20 +3201,26 @@ app.post('/api/admin/revoke-subscription', async (req, res) => {
   res.json({ success: true });
 });
 
-app.get('/api/admin/plans', (req, res) => {
+app.get('/api/admin/plans', async (req, res) => {
   if (!isAdminAuthed(req)) return res.status(403).json({ error: 'Forbidden' });
-  res.json({ plans: PLANS });
+  try {
+    res.json({ plans: await loadPlansFromDb() });
+  } catch (e) {
+    return sendInternalApiError(res, 'GET /api/admin/plans', e, 'Не удалось загрузить тарифы', 500);
+  }
 });
 
-app.post('/api/admin/plans', (req, res) => {
+app.post('/api/admin/plans', async (req, res) => {
   if (!isAdminAuthed(req)) return res.status(403).json({ error: 'Forbidden' });
   const { updates } = req.body;
   if (!updates || typeof updates !== 'object') return res.json({ error: 'Неверный формат' });
-  for (const [planKey, vals] of Object.entries(updates)) {
-    if (PLANS[planKey] && typeof vals.usd === 'number' && vals.usd > 0) PLANS[planKey].usd = vals.usd;
+  try {
+    const { plans, changedKeys } = await updatePlanPricesInDb(updates);
+    recordAdminAction(req, 'update_plans', null, { planKeys: changedKeys });
+    res.json({ success: true, plans });
+  } catch (e) {
+    return sendInternalApiError(res, 'POST /api/admin/plans', e, 'Не удалось сохранить тарифы', 500);
   }
-  recordAdminAction(req, 'update_plans', null, { planKeys: Object.keys(updates) });
-  res.json({ success: true, plans: PLANS });
 });
 
 app.post('/api/admin/delete-user', async (req, res) => {
