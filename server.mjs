@@ -2505,6 +2505,7 @@ app.get('/api/subscription/status', async (req, res) => {
 // Публичный эндпоинт — цены для фронтенда
 app.get('/api/plans', async (req, res) => {
   try {
+    res.set('Cache-Control', 'no-store');
     res.json({ plans: await loadPlansFromDb() });
   } catch (e) {
     return sendInternalApiError(res, 'GET /api/plans', e, 'Не удалось загрузить тарифы', 500);

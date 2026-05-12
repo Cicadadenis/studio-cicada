@@ -3,6 +3,7 @@ import { getConstructorStrings } from '../builderI18n.js';
 import { BuilderUiContext } from '../builderContext.js';
 import { apiFetch, postJsonWithCsrf, saveSession, requestEmailChange, confirmEmailChange, sha256hex, resolveApiAssetUrl } from '../apiClient.js';
 import { registerProfilePasskey, translateServerError } from '../authHelpers.js';
+import { fetchPublicPlans, formatUsdPrice } from '../pricingPlans.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SUBSCRIPTION TAB COMPONENT
@@ -32,16 +33,20 @@ function SubscriptionTab({ userId, showToast }) {
   const [PLANS, setPlans] = React.useState(DEFAULT_PLANS);
 
   React.useEffect(() => {
-    fetch('/api/plans')
-      .then(r => r.json())
-      .then(d => {
-        if (d.plans) {
-          const merged = DEFAULT_PLANS.map(def => {
-            const srv = Object.entries(d.plans).find(([k]) => k === def.key);
-            return srv ? { ...def, usd: srv[1].usd } : def;
-          });
-          setPlans(merged);
-        }
+    fetchPublicPlans()
+      .then((plans) => {
+        const merged = DEFAULT_PLANS.map((def) => {
+          const srv = plans?.[def.key];
+          return srv
+            ? {
+              ...def,
+              label: srv.label || def.label,
+              days: Number.isFinite(Number(srv.days)) ? Number(srv.days) : def.days,
+              usd: Number.isFinite(Number(srv.usd)) ? Number(srv.usd) : def.usd,
+            }
+            : def;
+        });
+        setPlans(merged);
       })
       .catch(() => {});
   }, []);
@@ -243,7 +248,7 @@ function SubscriptionTab({ userId, showToast }) {
                 <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 6, background: 'rgba(62,207,142,0.15)', color: '#3ecf8e', fontFamily: 'Syne, system-ui' }}>ВЫГОДНО</span>
               )}
               <span style={{ fontSize: 15, fontWeight: 700, color: selectedPlan === p.key ? '#ffd700' : 'rgba(255,255,255,0.4)', fontFamily: 'Syne, system-ui' }}>
-                ${p.usd}
+                {formatUsdPrice(p.usd)}
               </span>
             </div>
           </button>
@@ -279,7 +284,7 @@ function SubscriptionTab({ userId, showToast }) {
         <div>
           <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)', marginBottom: 3 }}>К оплате</div>
           <div style={{ fontSize: 18, fontWeight: 800, fontFamily: 'Syne, system-ui', color: '#ffd700' }}>
-            ≈ ${plan.usd} <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.4)' }}>в {asset.label}</span>
+            ≈ {formatUsdPrice(plan.usd)} <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.4)' }}>в {asset.label}</span>
           </div>
           <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.25)', marginTop: 2 }}>
             Точная сумма рассчитается по курсу CryptoBot

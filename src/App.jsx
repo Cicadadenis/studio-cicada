@@ -755,7 +755,7 @@ export default function App() {
   const [pythonConvertLoading, setPythonConvertLoading] = useState(false);
   const [pythonConvertError, setPythonConvertError] = useState('');
   const [landingInfoPage, setLandingInfoPage] = useState(null); // features | templates | docs | pricing | null
-  const [proMonthlyUsd, setProMonthlyUsd] = useState(FALLBACK_PRO_MONTHLY_USD);
+  const [proMonthlyUsd, setProMonthlyUsd] = useState(null);
 
   // Toast notification state
   const [toast, setToast] = useState(null); // { message, type, visible }
@@ -779,7 +779,7 @@ export default function App() {
   const aiPromptTooShort = aiPromptText.length < 5;
   const aiPromptTooLong = aiPromptText.length > AI_PROMPT_MAX_CHARS;
   const canSubmitAiPrompt = !aiLoading && !aiPromptTooShort && !aiPromptTooLong && !aiPartialResult?.skeletonFallback;
-  const proMonthlyPrice = formatUsdPrice(proMonthlyUsd);
+  const proMonthlyPrice = proMonthlyUsd == null ? '...' : formatUsdPrice(proMonthlyUsd);
 
   useEffect(() => {
     let cancelled = false;
@@ -787,7 +787,9 @@ export default function App() {
       .then((plans) => {
         if (!cancelled) setProMonthlyUsd(getMonthlyProPriceUsd(plans));
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!cancelled) setProMonthlyUsd(FALLBACK_PRO_MONTHLY_USD);
+      });
     return () => { cancelled = true; };
   }, []);
 

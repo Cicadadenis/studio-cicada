@@ -14,6 +14,6 @@ export function getMonthlyProPriceUsd(plans) {
 }
 
 export async function fetchPublicPlans() {
-  const data = await apiFetch(`${API_URL}/plans`);
+  const data = await apiFetch(`${API_URL}/plans`, { cache: 'no-store' });
   return data?.plans || {};
 }
