@@ -115,7 +115,7 @@ export const renderBlocks = Object.freeze([
     uiScope: 'render',
     constraints: withDefaults(
       withFlow(palette('Ответ', '✉', '#5b7cf6', 'Основные', false, true), { maxOutputs: 1 }),
-      { text: 'Привет, {пользователь.имя}!' },
+      { text: 'Привет, {пользователь.имя}!', markup: '' },
     ),
   }),
   block('reply', 'render', 'Alias for a text reply render action.', {

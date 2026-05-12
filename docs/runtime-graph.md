@@ -1,6 +1,6 @@
 # Runtime Graph
 
-Canonical runtime flow for `cicada-tg==0.3.4`.
+Canonical runtime flow for `cicada-tg==0.3.5`.
 
 ```mermaid
 sequenceDiagram

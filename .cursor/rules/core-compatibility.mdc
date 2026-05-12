@@ -5,7 +5,7 @@ alwaysApply: true
 
 # Core Compatibility Policy
 
-- `cicada-tg==0.3.4` is the canonical core and source of truth.
+- `cicada-tg==0.3.5` is the canonical core and source of truth.
 - Do not modify runtime behavior in `cicada/`, `core/*.py`, or `vendor/cicada-dsl-parser/cicada/` by hand.
 - Runtime changes must happen upstream in `cicada-tg`, then be synced into this repo and verified with `npm run core:guard`.
 - Studio is a thin UI/editor layer. It may generate DSL, show hints, and call adapters, but it must not override parser, executor, runtime, event, adapter, or DB semantics.

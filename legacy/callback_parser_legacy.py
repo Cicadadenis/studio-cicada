@@ -1,6 +1,6 @@
 """@obsolete Studio-only runtime parity checks removed from active CI.
 
-These checks encoded behavior that is not part of canonical cicada-tg 0.3.4:
+These checks encoded behavior that is not part of canonical cicada-tg 0.3.5:
 - rendering `{chat_id}` inside quoted DB keys;
 - resuming remaining scenario statements after a media answer to `спросить`.
 

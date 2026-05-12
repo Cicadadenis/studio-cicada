@@ -1,7 +1,7 @@
 import { stripThinkingFromAiRaw } from '../validator/fixes.js';
 
 export const AI_CANONICAL_IR_VERSION = 1;
-export const AI_TARGET_CORE_EXACT = '0.3.4';
+export const AI_TARGET_CORE_EXACT = '0.3.5';
 
 const HANDLER_TYPES = new Set(['start', 'command', 'callback', 'text']);
 const ACTION_TYPES = new Set([

@@ -129,7 +129,7 @@ function mergeSummary(into, from) {
 }
 
 function isReplyOutput(text) {
-  return /^(?:ответ|ответ_md)\s+/i.test(text) || text === 'рандом:' || text === 'рандом';
+  return /^(?:ответ|ответ_md|ответ_html|ответ_md2|ответ_markdown_v2)\s+/i.test(text) || text === 'рандом:' || text === 'рандом';
 }
 
 function isVisibleOutput(text) {
@@ -320,7 +320,7 @@ export function analyzeDslControlFlow(code) {
 
 export function shouldInjectDefaultButtonsForClickHandler(summary) {
   // Kept for explicit callers only. collectDSLFixes intentionally does not use
-  // this legacy fallback because cicada-tg 0.3.4 accepts reply-only handlers.
+  // this legacy fallback because cicada-tg 0.3.5 accepts reply-only handlers.
   void summary;
   return false;
 }

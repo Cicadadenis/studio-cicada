@@ -298,6 +298,16 @@ class SendMarkdown:
 
 
 @dataclass
+class SendHTML:
+    parts: list
+
+
+@dataclass
+class SendMarkdownV2:
+    parts: list
+
+
+@dataclass
 class DownloadFile:
     variable: str
     save_path: str = ""
@@ -1643,10 +1653,20 @@ class Parser:
         if m:
             return StartScenario(m.group(1))
 
-        # ответить_md / ответ_md "текст"
+        # ответ_md "текст" — Telegram legacy Markdown
         m = re.match(r'^ответ_md\s+(.+)$', line)
         if m:
             return SendMarkdown(parse_string_expr(m.group(1)))
+
+        # ответ_html "текст" — Telegram HTML
+        m = re.match(r'^ответ_html\s+(.+)$', line)
+        if m:
+            return SendHTML(parse_string_expr(m.group(1)))
+
+        # ответ_md2 / ответ_markdown_v2 "текст" — Telegram MarkdownV2
+        m = re.match(r'^(?:ответ_md2|ответ_markdown_v2)\s+(.+)$', line)
+        if m:
+            return SendMarkdownV2(parse_string_expr(m.group(1)))
 
         # документ "путь" / документ "путь" "подпись" / документ "путь" имя="name" / документ переменная
         m = re.match(r'^документ\s+"([^"]+)"(?:\s+имя="[^"]*")?(?:\s+"([^"]*)")?$', line)

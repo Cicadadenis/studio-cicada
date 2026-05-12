@@ -104,6 +104,14 @@ class MockTelegramAdapter:
         self._emit("markdown", chat_id=chat_id, text=text or "")
         return {"ok": True, "result": {}}
 
+    def send_html(self, chat_id: int, text: str) -> dict:
+        self._emit("html", chat_id=chat_id, text=text or "")
+        return {"ok": True, "result": {}}
+
+    def send_markdown_v2(self, chat_id: int, text: str) -> dict:
+        self._emit("markdown_v2", chat_id=chat_id, text=text or "")
+        return {"ok": True, "result": {}}
+
     def send_location(self, chat_id: int, latitude: float, longitude: float) -> dict:
         self._emit("location", chat_id=chat_id, latitude=float(latitude), longitude=float(longitude))
         return {"ok": True, "result": {}}

@@ -1,6 +1,6 @@
 # Compatibility Report
 
-Target: `cicada-tg==0.3.4`
+Target: `cicada-tg==0.3.5`
 
 ## Current Status
 
@@ -14,14 +14,14 @@ Target: `cicada-tg==0.3.4`
 
 ## Architecture Violations Found
 
-- Local Python runtime copies had drifted from installed `cicada-tg==0.3.4`.
+- Local Python runtime copies had drifted from installed `cicada-tg==0.3.5`.
 - Studio tests encoded runtime behavior that the canonical core does not own.
 - Preview was previously configured as if a checkout path was mandatory instead of using the installed package.
 - Documentation referenced older core versions (`0.1.8`, `0.2.7`).
 
 ## Actions Taken
 
-- Synced Python runtime copies to canonical `cicada-tg==0.3.4`.
+- Synced Python runtime copies to canonical `cicada-tg==0.3.5`.
 - Added `scripts/core-guard.mjs` for hash, version, API surface, and forbidden legacy import checks.
 - Added `scripts/compatibility-ci.mjs` for parser, runtime, DSL snapshot, preview, and adapter compatibility.
 - Added `.cursor/rules/core-compatibility.mdc` as persistent project AI policy.
@@ -58,13 +58,13 @@ Why not A yet:
 - Studio keeps synchronized core copies for packaging/testing, so guard discipline is mandatory.
 - Some compatibility wrappers still reference vendor paths for lint/hints.
 
-## Upgrade Readiness for 0.3.4+
+## Upgrade Readiness for 0.3.5+
 
 Rating: **High, guarded**
 
 Upgrade steps are mechanical:
 
-1. Install `cicada-tg==0.3.4`.
+1. Install `cicada-tg==0.3.5`.
 2. Update `EXPECTED_VERSION` in `scripts/core-guard.mjs`.
 3. Sync canonical files into synchronized dirs.
 4. Run `npm run ci:compat`.

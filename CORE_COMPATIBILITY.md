@@ -1,10 +1,10 @@
 # Core Compatibility Policy
 
-`cicada-tg==0.3.4` is the canonical core for this project. The installed package in `/usr/local/lib/python3.12/dist-packages/cicada` is the source of truth for runtime behavior.
+`cicada-tg==0.3.5` is the canonical core for this project. The installed package in `/usr/local/lib/python3.12/dist-packages/cicada` is the source of truth for runtime behavior.
 
 ## Architecture Boundaries
 
-- **CORE**: immutable runtime copied from `cicada-tg==0.3.4`. No Studio-specific behavior is allowed here.
+- **CORE**: immutable runtime copied from `cicada-tg==0.3.5`. No Studio-specific behavior is allowed here.
 - **STUDIO**: UI/editor, DSL drafting, visual blocks, hints, user flows, and presentation.
 - **ADAPTERS**: integration layer between Studio and the canonical core/runtime.
 - **LEGACY**: isolated obsolete compatibility notes or code. It must not be imported by CORE.
@@ -71,7 +71,7 @@ Use adapters/extensions instead:
 
 ## Upgrade Protocol
 
-1. Install the new core version, for example `pip install cicada-tg==0.3.4`.
+1. Install the new core version, for example `pip install cicada-tg==0.3.5`.
 2. Update `EXPECTED_VERSION` in `scripts/core-guard.mjs` and docs.
 3. Sync canonical files from installed `cicada/` into synchronized directories.
 4. Run `npm run core:guard`.

@@ -170,16 +170,25 @@ class TelegramAdapter:
             "text": text,
         })
 
-    # ─────────────── markdown ───────────────
+    # ─────────────── formatted text ───────────────
 
-    def send_markdown(self, chat_id: int, text: str) -> dict:
+    def _send_formatted_text(self, chat_id: int, text: str, parse_mode: str) -> dict:
         return self.call("sendMessage", {
             "chat_id": chat_id,
             "text": text,
-            "parse_mode": "Markdown",
+            "parse_mode": parse_mode,
         })
 
-        # ─────────────── location & contact ───────────────
+    def send_markdown(self, chat_id: int, text: str) -> dict:
+        return self._send_formatted_text(chat_id, text, "Markdown")
+
+    def send_html(self, chat_id: int, text: str) -> dict:
+        return self._send_formatted_text(chat_id, text, "HTML")
+
+    def send_markdown_v2(self, chat_id: int, text: str) -> dict:
+        return self._send_formatted_text(chat_id, text, "MarkdownV2")
+
+    # ─────────────── location & contact ───────────────
 
     def send_location(self, chat_id: int, latitude: float, longitude: float) -> dict:
         return self.call("sendLocation", {

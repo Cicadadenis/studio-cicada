@@ -21,7 +21,7 @@ import pg from 'pg';
 import bcrypt from 'bcryptjs';
 import cookieParser from 'cookie-parser';
 import jwt from 'jsonwebtoken';
-import { sendVerificationEmail, sendPasswordResetEmail, sendEmailChangeCode, sendSupportReplyEmail } from './email.mjs';
+import { sendVerificationEmail, sendPasswordResetEmail, sendEmailChangeCode } from './email.mjs';
 import { startRunner, stopRunner, isRunnerActive, getRunnerStatus, listRunners, getRunnerLogs } from './services/dslRunner.mjs';
 import { lintCicadaWithPython, requireParsedDSL, getDslHintsWithPython } from './services/pythonDslLint.mjs';
 import { sendPreviewRequest } from './services/cicadaPreviewWorker.mjs';
@@ -561,6 +561,23 @@ async function initDB() {
     )
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_support_requests_created_at ON support_requests(created_at DESC)`);
+
+  // ── Paid subscriptions / CryptoBot invoices ────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS subscription_invoices (
+      invoice_id   TEXT PRIMARY KEY,
+      user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      plan         TEXT NOT NULL,
+      asset        TEXT,
+      amount       TEXT,
+      status       TEXT NOT NULL DEFAULT 'created',
+      paid_at      TIMESTAMPTZ,
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      processed_at TIMESTAMPTZ
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_subscription_invoices_user_id ON subscription_invoices(user_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_subscription_invoices_status ON subscription_invoices(status, processed_at)`);
 
   // ── User libraries ───────────────────────────────────────────────────────────
   await pool.query(`
@@ -1696,6 +1713,7 @@ const PLANS = {
 };
 
 const CRYPTOBOT_API = 'https://pay.crypt.bot/api';
+const SUBSCRIPTION_MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 async function cryptobotRequest(method, params = {}) {
   const r = await fetch(`${CRYPTOBOT_API}/${method}`, {
@@ -1719,8 +1737,145 @@ async function getRateToUSD(asset) {
   } catch { return null; }
 }
 
-app.post('/api/subscription/create', async (req, res) => {
-  const { userId, plan, asset } = req.body;
+function parseCryptoBotDate(value) {
+  if (!value) return null;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? new Date(ms) : null;
+}
+
+function readCryptoBotInvoiceItems(result) {
+  if (Array.isArray(result?.items)) return result.items;
+  if (Array.isArray(result)) return result;
+  return [];
+}
+
+function getCryptoBotInvoiceId(invoice) {
+  const id = invoice?.invoice_id ?? invoice?.invoiceId;
+  return id == null ? null : String(id);
+}
+
+function subscriptionReceiptRow(row) {
+  const planInfo = PLANS[row.plan] || {};
+  return row ? {
+    invoiceId: row.invoice_id,
+    plan: row.plan,
+    planLabel: planInfo.label || row.plan,
+    days: planInfo.days ?? null,
+    amount: row.amount,
+    asset: row.asset,
+    status: row.status,
+    paidAt: row.paid_at,
+    createdAt: row.created_at,
+    processedAt: row.processed_at,
+  } : null;
+}
+
+async function upsertSubscriptionInvoice(invoice, meta) {
+  const invoiceId = getCryptoBotInvoiceId(invoice);
+  if (!invoiceId || !meta?.userId || !meta?.plan) return null;
+
+  const paidAt = parseCryptoBotDate(invoice?.paid_at);
+  const createdAt = parseCryptoBotDate(invoice?.created_at);
+  const status = String(invoice?.status || 'created');
+  const asset = invoice?.asset == null ? null : String(invoice.asset);
+  const amount = invoice?.amount == null ? null : String(invoice.amount);
+
+  await pool.query(
+    `
+    INSERT INTO subscription_invoices
+      (invoice_id, user_id, plan, asset, amount, status, paid_at, created_at)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,COALESCE($8,NOW()))
+    ON CONFLICT (invoice_id) DO UPDATE SET
+      user_id = EXCLUDED.user_id,
+      plan    = EXCLUDED.plan,
+      asset   = COALESCE(EXCLUDED.asset, subscription_invoices.asset),
+      amount  = COALESCE(EXCLUDED.amount, subscription_invoices.amount),
+      status  = EXCLUDED.status,
+      paid_at = COALESCE(EXCLUDED.paid_at, subscription_invoices.paid_at)
+    `,
+    [invoiceId, String(meta.userId), String(meta.plan), asset, amount, status, paidAt, createdAt],
+  );
+
+  return invoiceId;
+}
+
+async function activateSubscriptionPayment({ userId, plan, invoiceId = null, source = 'payment' }) {
+  const planInfo = PLANS[plan];
+  if (!planInfo) return { activated: false, reason: 'invalid_plan' };
+
+  const client = await pool.connect();
+  let result;
+  try {
+    await client.query('BEGIN');
+
+    if (invoiceId) {
+      const invoiceLock = await client.query(
+        'SELECT processed_at FROM subscription_invoices WHERE invoice_id=$1 FOR UPDATE',
+        [String(invoiceId)],
+      );
+      if (invoiceLock.rows[0]?.processed_at) {
+        await client.query('COMMIT');
+        return { activated: false, alreadyProcessed: true };
+      }
+    }
+
+    const { rows } = await client.query(
+      'SELECT id, plan, subscription_exp FROM users WHERE id=$1 FOR UPDATE',
+      [userId],
+    );
+    const user = rows[0];
+    if (!user) {
+      await client.query('COMMIT');
+      return { activated: false, reason: 'user_not_found' };
+    }
+
+    const now = Date.now();
+    const currentExp = coerceDbMillis(user.subscription_exp);
+    const base = user.plan === 'pro' && currentExp && currentExp > now ? currentExp : now;
+    const newExp = base + planInfo.days * SUBSCRIPTION_MS_PER_DAY;
+
+    await client.query("UPDATE users SET plan='pro', subscription_exp=$1 WHERE id=$2", [newExp, userId]);
+    if (invoiceId) {
+      await client.query(
+        "UPDATE subscription_invoices SET status='paid', processed_at=NOW() WHERE invoice_id=$1",
+        [String(invoiceId)],
+      );
+    }
+
+    await client.query('COMMIT');
+    result = { activated: true, userId, plan, days: planInfo.days, subscriptionExp: newExp };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  pushRing(recentSubscriptions, {
+    at: new Date().toISOString(),
+    userId,
+    source,
+    plan,
+    days: planInfo.days,
+    subscriptionExp: result.subscriptionExp,
+    invoiceId: invoiceId ? String(invoiceId) : undefined,
+  }, 400);
+  recordUserAction(userId, 'subscription_paid', {
+    plan,
+    days: planInfo.days,
+    subscriptionExp: result.subscriptionExp,
+    invoiceId: invoiceId ? String(invoiceId) : undefined,
+  });
+  console.log(`✅ Subscription: ${userId} → ${plan} until ${new Date(result.subscriptionExp).toISOString()}`);
+
+  return result;
+}
+
+app.post('/api/subscription/create', requireUserAuth, async (req, res) => {
+  const { plan, asset } = req.body;
+  const requestedUserId = req.body?.userId == null ? req.authUserId : String(req.body.userId);
+  if (requestedUserId !== req.authUserId) return res.status(403).json({ error: 'Forbidden' });
+  const userId = req.authUserId;
   const planInfo = PLANS[plan];
   if (!planInfo) return res.json({ error: 'Неверный план' });
   if (!['USDT','TRX','LTC'].includes(asset)) return res.json({ error: 'Неверная валюта' });
@@ -1745,7 +1900,8 @@ app.post('/api/subscription/create', async (req, res) => {
       paid_btn_name: 'openBot', paid_btn_url: APP_URL,
       allow_comments: false, allow_anonymous: false, expires_in: 3600,
     });
-    res.json({ ok: true, invoiceUrl: invoice.pay_url, amount, asset });
+    await upsertSubscriptionInvoice(invoice, { userId, plan });
+    res.json({ ok: true, invoiceUrl: invoice.pay_url, invoiceId: getCryptoBotInvoiceId(invoice), amount, asset });
   } catch (e) {
     return sendInternalApiError(
       res,
@@ -1761,33 +1917,117 @@ app.post('/api/subscription/webhook', async (req, res) => {
   const { update_type, payload: invoicePayload } = req.body;
   if (update_type !== 'invoice_paid') return res.json({ ok: true });
 
+  const incomingInvoiceId = getCryptoBotInvoiceId(invoicePayload);
+  if (!incomingInvoiceId) return res.json({ ok: true });
+
+  let verifiedInvoice;
+  try {
+    const invoices = readCryptoBotInvoiceItems(
+      await cryptobotRequest('getInvoices', { invoice_ids: [incomingInvoiceId] }),
+    );
+    verifiedInvoice = invoices.find((invoice) => getCryptoBotInvoiceId(invoice) === incomingInvoiceId);
+  } catch (e) {
+    return sendInternalApiError(
+      res,
+      'POST /api/subscription/webhook verify',
+      e,
+      'Не удалось проверить оплату. CryptoBot повторит webhook позже.',
+      502,
+    );
+  }
+
+  if (verifiedInvoice?.status !== 'paid') return res.json({ ok: true });
+
   let meta;
-  try { meta = JSON.parse(invoicePayload.payload); } catch { return res.json({ ok: true }); }
+  try { meta = JSON.parse(verifiedInvoice?.payload); } catch { return res.json({ ok: true }); }
 
   const { userId, plan } = meta;
   const planInfo = PLANS[plan];
   if (!planInfo) return res.json({ ok: true });
 
-  const user = await findById(userId);
-  if (!user) return res.json({ ok: true });
-
-  const now  = Date.now();
-  const base = user.plan === 'pro' && user.subscriptionExp && user.subscriptionExp > now
-    ? user.subscriptionExp : now;
-  const newExp = base + planInfo.days * 24 * 60 * 60 * 1000;
-
-  await pool.query("UPDATE users SET plan='pro', subscription_exp=$1 WHERE id=$2", [newExp, userId]);
-  pushRing(recentSubscriptions, {
-    at: new Date().toISOString(),
-    userId,
-    source: 'payment',
-    plan,
-    days: planInfo.days,
-    subscriptionExp: newExp,
-  }, 400);
-  recordUserAction(userId, 'subscription_paid', { plan, days: planInfo.days, subscriptionExp: newExp });
-  console.log(`✅ Subscription: ${userId} → ${plan} until ${new Date(newExp).toISOString()}`);
+  const invoiceId = await upsertSubscriptionInvoice(verifiedInvoice, { userId, plan });
+  await activateSubscriptionPayment({ userId, plan, invoiceId, source: 'payment' });
   res.json({ ok: true });
+});
+
+app.post('/api/subscription/sync', requireUserAuth, async (req, res) => {
+  const userId = req.authUserId;
+  const { rows } = await pool.query(
+    `
+    SELECT invoice_id, plan
+    FROM subscription_invoices
+    WHERE user_id=$1
+      AND processed_at IS NULL
+      AND created_at > NOW() - INTERVAL '2 days'
+    ORDER BY created_at DESC
+    LIMIT 20
+    `,
+    [userId],
+  );
+
+  if (rows.length === 0) {
+    const user = await findById(userId);
+    return res.json({ ok: true, activated: false, user: user ? safeUser(user) : null });
+  }
+
+  try {
+    const invoiceIds = rows.map((row) => row.invoice_id);
+    const invoices = readCryptoBotInvoiceItems(
+      await cryptobotRequest('getInvoices', { invoice_ids: invoiceIds }),
+    );
+    let activated = false;
+    let subscriptionExp = null;
+
+    for (const invoice of invoices) {
+      if (invoice?.status !== 'paid') continue;
+
+      let meta;
+      try { meta = JSON.parse(invoice?.payload); } catch { continue; }
+      if (String(meta?.userId) !== userId || !PLANS[meta?.plan]) continue;
+
+      const invoiceId = await upsertSubscriptionInvoice(invoice, meta);
+      const activation = await activateSubscriptionPayment({
+        userId,
+        plan: meta.plan,
+        invoiceId,
+        source: 'payment_sync',
+      });
+      if (activation.activated) {
+        activated = true;
+        subscriptionExp = activation.subscriptionExp;
+      }
+    }
+
+    const user = await findById(userId);
+    return res.json({
+      ok: true,
+      activated,
+      subscriptionExp,
+      user: user ? safeUser(user) : null,
+    });
+  } catch (e) {
+    return sendInternalApiError(
+      res,
+      'POST /api/subscription/sync',
+      e,
+      'Не удалось проверить оплату. Попробуйте обновить страницу чуть позже.',
+      502,
+    );
+  }
+});
+
+app.get('/api/subscription/purchases', requireUserAuth, async (req, res) => {
+  const { rows } = await pool.query(
+    `
+    SELECT invoice_id, plan, asset, amount, status, paid_at, created_at, processed_at
+    FROM subscription_invoices
+    WHERE user_id=$1
+    ORDER BY COALESCE(paid_at, created_at) DESC
+    LIMIT 100
+    `,
+    [req.authUserId],
+  );
+  res.json({ purchases: rows.map(subscriptionReceiptRow).filter(Boolean) });
 });
 
 app.get('/api/subscription/status', async (req, res) => {
@@ -2615,7 +2855,22 @@ app.post('/api/support/requests', requireUserAuth, async (req, res) => {
     [id, user.id, from, email, subject, message]
   );
   recordUserAction(user.id, 'support_request_create', { supportRequestId: id, subject });
-  res.json({ success: true, id });
+  const { rows } = await pool.query('SELECT * FROM support_requests WHERE id=$1', [id]);
+  res.json({ success: true, id, request: supportRequestRow(rows[0]) });
+});
+
+app.get('/api/support/requests', requireUserAuth, async (req, res) => {
+  const { rows } = await pool.query(
+    `
+    SELECT *
+    FROM support_requests
+    WHERE user_id=$1
+    ORDER BY created_at DESC
+    LIMIT 100
+    `,
+    [req.authUserId],
+  );
+  res.json({ requests: rows.map(supportRequestRow) });
 });
 
 app.get('/api/admin/support-requests', async (req, res) => {
@@ -2638,11 +2893,13 @@ app.post('/api/admin/support-requests/:id/reply', async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM support_requests WHERE id=$1', [id]);
   const item = supportRequestRow(rows[0]);
   if (!item) return res.status(404).json({ error: 'Обращение не найдено' });
-  if (!item.email) return res.status(400).json({ error: 'У обращения нет email для ответа' });
-  await sendSupportReplyEmail(item.email, item.from || item.userName || 'пользователь', item.subject, reply);
-  await pool.query('UPDATE support_requests SET status=$1, reply_text=$2, replied_at=NOW() WHERE id=$3', ['answered', reply, id]);
-  recordAdminAction(req, 'support_request_reply', item.userId, { supportRequestId: id });
-  res.json({ success: true });
+  if (!item.userId) return res.status(400).json({ error: 'У обращения нет пользователя для ответа в профиле' });
+  const updated = await pool.query(
+    'UPDATE support_requests SET status=$1, reply_text=$2, replied_at=NOW() WHERE id=$3 RETURNING *',
+    ['answered', reply, id],
+  );
+  recordAdminAction(req, 'support_request_reply', item.userId, { supportRequestId: id, delivery: 'profile' });
+  res.json({ success: true, request: supportRequestRow(updated.rows[0]) });
 });
 
 app.post('/api/admin/support-requests/:id/status', async (req, res) => {
@@ -3877,8 +4134,8 @@ const AI_SYSTEM_PROMPT = `Ты — проектировщик runtime graph дл
 ИИ НЕ пишет DSL и НЕ пишет editor stacks. ИИ строит runtime graph:
 {
   "irVersion": 1,
-  "targetCore": "0.3.4",
-  "compatibilityMode": "0.3.4 exact",
+  "targetCore": "0.3.5",
+  "compatibilityMode": "0.3.5 exact",
   "intent": {"primary": "..."},
   "state": {"globals": []},
   "handlers": [],
@@ -4008,10 +4265,10 @@ const FEW_SHOT_USER_6 = `бот по кнопке «Город» спрашив�
 const FEW_SHOT_ASSISTANT_6 = `[{"id":"s0","x":40,"y":40,"blocks":[{"id":"b0","type":"bot","props":{"token":"YOUR_BOT_TOKEN"}}]},{"id":"s1","x":400,"y":40,"blocks":[{"id":"b1","type":"start","props":{}},{"id":"b2","type":"message","props":{"text":"Выберите действие"}},{"id":"b3","type":"buttons","props":{"rows":"🌍 Указать город"}},{"id":"b4","type":"stop","props":{}}]},{"id":"s2","x":760,"y":40,"blocks":[{"id":"b5","type":"callback","props":{"label":"🌍 Указать город"}},{"id":"b6","type":"run","props":{"name":"город_fsm"}}]},{"id":"s3","x":1120,"y":40,"blocks":[{"id":"b7","type":"scenario","props":{"name":"город_fsm"}},{"id":"b8","type":"step","props":{"name":"ввод"}},{"id":"b9","type":"ask","props":{"question":"В каком вы городе?","varname":"город"}},{"id":"b10","type":"remember","props":{"varname":"город_label","value":"Город: {город}"}},{"id":"b11","type":"message","props":{"text":"Запомнил: {город_label}"}},{"id":"b12","type":"stop","props":{}}]}]`;
 
 const IR_FEW_SHOT_USER = `бот принимает заказы: главное меню с кнопкой "Оформить заказ", сценарий спрашивает имя и телефон`;
-const IR_FEW_SHOT_ASSISTANT = `{"irVersion":1,"targetCore":"0.3.4","compatibilityMode":"0.3.4 exact","intent":{"primary":"order_form"},"state":{"globals":[]},"uiStates":[{"id":"ui_start","message":"Добро пожаловать! Выберите действие:","buttons":"Оформить заказ, ℹ️ О нас"}],"handlers":[{"id":"h_start","type":"start","trigger":"","actions":[{"type":"ui_state","uiStateId":"ui_start"},{"type":"stop"}]},{"id":"h_order","type":"callback","trigger":"Оформить заказ","actions":[{"type":"message","text":"Отлично! Заполним данные для заказа."},{"type":"run_scenario","target":"оформление"}]},{"id":"h_about","type":"callback","trigger":"ℹ️ О нас","actions":[{"type":"message","text":"Мы — магазин на Cicada Studio."},{"type":"stop"}]}],"blocks":[],"scenarios":[{"id":"sc_order","name":"оформление","steps":[{"id":"step_name","name":"имя","actions":[{"type":"ask","question":"Введите ваше имя:","varname":"имя"}]},{"id":"step_phone","name":"телефон","actions":[{"type":"ask","question":"Введите ваш телефон:","varname":"телефон"},{"type":"message","text":"✅ Заказ принят! Имя: {имя}, телефон: {телефон}"},{"type":"stop"}]}]}],"transitions":[{"from":"h_order","to":"sc_order","type":"run_scenario"}]}`;
+const IR_FEW_SHOT_ASSISTANT = `{"irVersion":1,"targetCore":"0.3.5","compatibilityMode":"0.3.5 exact","intent":{"primary":"order_form"},"state":{"globals":[]},"uiStates":[{"id":"ui_start","message":"Добро пожаловать! Выберите действие:","buttons":"Оформить заказ, ℹ️ О нас"}],"handlers":[{"id":"h_start","type":"start","trigger":"","actions":[{"type":"ui_state","uiStateId":"ui_start"},{"type":"stop"}]},{"id":"h_order","type":"callback","trigger":"Оформить заказ","actions":[{"type":"message","text":"Отлично! Заполним данные для заказа."},{"type":"run_scenario","target":"оформление"}]},{"id":"h_about","type":"callback","trigger":"ℹ️ О нас","actions":[{"type":"message","text":"Мы — магазин на Cicada Studio."},{"type":"stop"}]}],"blocks":[],"scenarios":[{"id":"sc_order","name":"оформление","steps":[{"id":"step_name","name":"имя","actions":[{"type":"ask","question":"Введите ваше имя:","varname":"имя"}]},{"id":"step_phone","name":"телефон","actions":[{"type":"ask","question":"Введите ваш телефон:","varname":"телефон"},{"type":"message","text":"✅ Заказ принят! Имя: {имя}, телефон: {телефон}"},{"type":"stop"}]}]}],"transitions":[{"from":"h_order","to":"sc_order","type":"run_scenario"}]}`;
 
 const IR_FEW_SHOT_USER_2 = `магазин: категории и товары через inline-кнопки из БД`;
-const IR_FEW_SHOT_ASSISTANT_2 = `{"irVersion":1,"targetCore":"0.3.4","compatibilityMode":"0.3.4 exact","intent":{"primary":"db_inline_catalog"},"state":{"globals":[{"name":"категории","value":"[\\"Пицца\\", \\"Напитки\\"]"}]},"uiStates":[{"id":"ui_menu","message":"🏠 Главное меню","buttons":"📦 Каталог"},{"id":"ui_categories","message":"📦 Выберите категорию:","inlineDb":{"key":"категории","callbackPrefix":"cat:","backText":"⬅️ Назад","backCallback":"back","columns":"2"}}],"handlers":[{"id":"h_start","type":"start","trigger":"","actions":[{"type":"ui_state","uiStateId":"ui_menu"},{"type":"stop"}]},{"id":"h_catalog","type":"callback","trigger":"📦 Каталог","actions":[{"type":"ui_state","uiStateId":"ui_categories"},{"type":"stop"}]},{"id":"h_inline","type":"callback","trigger":"","actions":[{"type":"condition","cond":"начинается_с(callback_data, \\"cat:\\")","then":[{"type":"remember","varname":"категория","value":"срез(callback_data, 4)"},{"type":"message","text":"Товары категории: {категория}"},{"type":"inline_db","key":"товары","callbackPrefix":"prod:","backText":"⬅️ Категории","backCallback":"back_categories","columns":"1"},{"type":"stop"}],"else":[{"type":"condition","cond":"начинается_с(callback_data, \\"prod:\\")","then":[{"type":"remember","varname":"товар","value":"срез(callback_data, 5)"},{"type":"message","text":"📦 Товар: {товар}\\nЦена и описание берутся из БД."},{"type":"stop"}],"else":[{"type":"ui_state","uiStateId":"ui_categories"},{"type":"stop"}]}]}]}],"blocks":[],"scenarios":[],"transitions":[{"from":"h_catalog","to":"ui_categories","type":"ui_state"},{"from":"h_inline","to":"ui_categories","type":"inline_router"}]}`;
+const IR_FEW_SHOT_ASSISTANT_2 = `{"irVersion":1,"targetCore":"0.3.5","compatibilityMode":"0.3.5 exact","intent":{"primary":"db_inline_catalog"},"state":{"globals":[{"name":"категории","value":"[\\"Пицца\\", \\"Напитки\\"]"}]},"uiStates":[{"id":"ui_menu","message":"🏠 Главное меню","buttons":"📦 Каталог"},{"id":"ui_categories","message":"📦 Выберите категорию:","inlineDb":{"key":"категории","callbackPrefix":"cat:","backText":"⬅️ Назад","backCallback":"back","columns":"2"}}],"handlers":[{"id":"h_start","type":"start","trigger":"","actions":[{"type":"ui_state","uiStateId":"ui_menu"},{"type":"stop"}]},{"id":"h_catalog","type":"callback","trigger":"📦 Каталог","actions":[{"type":"ui_state","uiStateId":"ui_categories"},{"type":"stop"}]},{"id":"h_inline","type":"callback","trigger":"","actions":[{"type":"condition","cond":"начинается_с(callback_data, \\"cat:\\")","then":[{"type":"remember","varname":"категория","value":"срез(callback_data, 4)"},{"type":"message","text":"Товары категории: {категория}"},{"type":"inline_db","key":"товары","callbackPrefix":"prod:","backText":"⬅️ Категории","backCallback":"back_categories","columns":"1"},{"type":"stop"}],"else":[{"type":"condition","cond":"начинается_с(callback_data, \\"prod:\\")","then":[{"type":"remember","varname":"товар","value":"срез(callback_data, 5)"},{"type":"message","text":"📦 Товар: {товар}\\nЦена и описание берутся из БД."},{"type":"stop"}],"else":[{"type":"ui_state","uiStateId":"ui_categories"},{"type":"stop"}]}]}]}],"blocks":[],"scenarios":[],"transitions":[{"from":"h_catalog","to":"ui_categories","type":"ui_state"},{"from":"h_inline","to":"ui_categories","type":"inline_router"}]}`;
 
 function serverAiAstPolicyAppendix(astMode, allowedMemoryKeys) {
   const lines = [

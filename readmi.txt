@@ -155,3 +155,6 @@ lsof -i :3001
 ```
 
 Если не найден — установите runtime и пропишите `CICADA_BIN` в `.env`.
+
+
+pm2 kill && npm run build && pm2 start server.mjs --name cicada-server

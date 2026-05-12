@@ -397,7 +397,7 @@ export const BLOCK_TYPES = [
   { type:'typing',     label:'Печатает...',    icon:'…',  color:'#475569', group:'Действия',   canBeRoot:false, canStack:true  },
   { type:'stop',       label:'Стоп',           icon:'■',  color:'#ef4444', group:'Действия',   canBeRoot:false, canStack:false },
   { type:'goto',       label:'Переход',        icon:'→',  color:'#a3a3a3', group:'Действия',   canBeRoot:false, canStack:false },
-  { type:'log',        label:'Лог',            icon:'📋', color:'#6b7280', group:'Действия',   canBeRoot:false, canStack:true  },
+  { type:'log',        label:'Лог',            icon:'🧾', color:'#6b7280', group:'Действия',   canBeRoot:false, canStack:true  },
   { type:'notify',     label:'Уведомление',    icon:'🔔', color:'#06b6d4', group:'Действия',   canBeRoot:false, canStack:true  },
   { type:'database',   label:'БД-запрос',      icon:'🗄', color:'#10b981', group:'Действия',   canBeRoot:false, canStack:true  },
   { type:'payment',    label:'Оплата',         icon:'💳', color:'#16a34a', group:'Действия',   canBeRoot:false, canStack:true  },
@@ -869,7 +869,7 @@ const DEFAULT_PROPS = {
   on_sticker: {},
   on_location:{},
   on_contact: {},
-  message:    { text: 'Привет, {пользователь.имя}!' },
+  message:    { text: 'Привет, {пользователь.имя}!', markup: '' },
   buttons:    { rows: 'Кнопка 1, Кнопка 2' },
   command:    { cmd: 'start' },
   callback:   { label: 'Кнопка' },
@@ -1144,6 +1144,14 @@ const FIELDS = {
   on_location:[],
   on_contact:[],
   message:   [{ key:'text',      label:'текст ответа',     tag:'textarea', rows:3 },
+              { key:'markup',    label:'разметка текста',  tag:'select',
+                options:[
+                  { value:'', label:'без разметки: ответ' },
+                  { value:'html', label:'HTML: ответ_html' },
+                  { value:'md2', label:'Markdown: ответ_md2' },
+                  { value:'markdown_v2', label:'MarkdownV2: ответ_markdown_v2' },
+                  { value:'md', label:'Markdown legacy: ответ_md' },
+                ] },
               { key:'buttons',   label:'кнопки ответа: Текст → блок/сценарий', tag:'textarea', rows:3,
                 placeholder:'➕ Добавить ещё → добавить_товар\n🏠 Главная → главная' }],
   buttons:   [{ key:'rows',      label:'кнопки (запятая = в ряд, Enter = новый ряд)', tag:'textarea', rows:4 }],
@@ -1417,7 +1425,11 @@ function getPreview(type, props) {
     case 'block':      return p.name||'';
     case 'use':        return p.blockname||'';
     case 'middleware':  return p.type === 'before' ? 'до каждого' : 'после каждого';
-    case 'message':    return p.buttons ? `"${(p.text||'').slice(0,20)}" + кнопки` : `"${(p.text||'').slice(0,28)}"`;
+    case 'message': {
+      const markup = p.markup || (p.md ? 'md' : '');
+      const prefix = markup ? `[${markup}] ` : '';
+      return p.buttons ? `${prefix}"${(p.text||'').slice(0,20)}" + кнопки` : `${prefix}"${(p.text||'').slice(0,28)}"`;
+    }
     case 'buttons':    return (p.rows||'').split('\n')[0]?.slice(0,28)||'';
     case 'inline_db':  return `"${p.key||'категории'}" → ${p.callbackPrefix||'callback:'}`;
     case 'command':    return `"/${p.cmd||'start'}"`;
@@ -2388,6 +2400,191 @@ function UiAttachmentsPanel({ block, onAttachmentChange, onAttachmentDelete }) {
   );
 }
 
+const MARKUP_FORMATTING_HELP = {
+  ru: {
+    title: 'Примеры форматирования',
+    commandLabel: 'Команда DSL',
+    noteLabel: 'Важно',
+    modes: {
+      '': {
+        name: 'Без разметки',
+        command: 'ответ',
+        note: 'Текст отправится как есть. Используй этот режим, если в сообщении есть символы разметки, которые не нужно обрабатывать.',
+        examples: [
+          'Привет, {пользователь.имя}!',
+          'Цена: 990 ₽',
+        ],
+      },
+      html: {
+        name: 'HTML',
+        command: 'ответ_html',
+        note: 'Подходят Telegram HTML-теги. Не забывай закрывать теги.',
+        examples: [
+          '<b>Жирный</b> и <i>курсив</i>',
+          '<u>подчёркнутый</u> и <s>зачёркнутый</s>',
+          '<code>код</code>',
+          '<a href="https://example.com">ссылка</a>',
+        ],
+      },
+      md2: {
+        name: 'MarkdownV2',
+        command: 'ответ_md2',
+        note: 'В MarkdownV2 спецсимволы нужно экранировать обратным слэшем: _ * [ ] ( ) ~ ` > # + - = | { } . !',
+        examples: [
+          '*Жирный* и _курсив_',
+          '__подчёркнутый__ и ~зачёркнутый~',
+          '`код`',
+          '[ссылка](https://example.com)',
+        ],
+      },
+      markdown_v2: {
+        name: 'MarkdownV2',
+        command: 'ответ_markdown_v2',
+        note: 'Полная форма команды для MarkdownV2. Правила такие же, как у ответ_md2.',
+        examples: [
+          '*Жирный* и _курсив_',
+          '||скрытый текст||',
+          '`код`',
+          '[ссылка](https://example.com)',
+        ],
+      },
+      md: {
+        name: 'Markdown legacy',
+        command: 'ответ_md',
+        note: 'Старый Telegram Markdown проще, но менее гибкий. Для новых сообщений лучше HTML или MarkdownV2.',
+        examples: [
+          '*Жирный* и _курсив_',
+          '`код`',
+          '[ссылка](https://example.com)',
+        ],
+      },
+    },
+  },
+  en: {
+    title: 'Formatting examples',
+    commandLabel: 'DSL command',
+    noteLabel: 'Note',
+    modes: {
+      '': {
+        name: 'No markup',
+        command: 'ответ',
+        note: 'The text is sent as-is. Use this when markup characters should stay plain.',
+        examples: ['Hi, {user.name}!', 'Price: 990'],
+      },
+      html: {
+        name: 'HTML',
+        command: 'ответ_html',
+        note: 'Telegram HTML tags are supported. Make sure every tag is closed.',
+        examples: ['<b>Bold</b> and <i>italic</i>', '<u>underline</u> and <s>strike</s>', '<code>code</code>', '<a href="https://example.com">link</a>'],
+      },
+      md2: {
+        name: 'MarkdownV2',
+        command: 'ответ_md2',
+        note: 'Escape MarkdownV2 special characters with a backslash: _ * [ ] ( ) ~ ` > # + - = | { } . !',
+        examples: ['*Bold* and _italic_', '__underline__ and ~strike~', '`code`', '[link](https://example.com)'],
+      },
+      markdown_v2: {
+        name: 'MarkdownV2',
+        command: 'ответ_markdown_v2',
+        note: 'Full MarkdownV2 command form. Same formatting rules as ответ_md2.',
+        examples: ['*Bold* and _italic_', '||spoiler||', '`code`', '[link](https://example.com)'],
+      },
+      md: {
+        name: 'Markdown legacy',
+        command: 'ответ_md',
+        note: 'Legacy Telegram Markdown is simpler but less flexible. Prefer HTML or MarkdownV2 for new messages.',
+        examples: ['*Bold* and _italic_', '`code`', '[link](https://example.com)'],
+      },
+    },
+  },
+  uk: {
+    title: 'Приклади форматування',
+    commandLabel: 'DSL-команда',
+    noteLabel: 'Важливо',
+    modes: {
+      '': {
+        name: 'Без розмітки',
+        command: 'ответ',
+        note: 'Текст буде надіслано як є. Використовуй цей режим, якщо символи розмітки мають лишитися звичайним текстом.',
+        examples: ['Привіт, {пользователь.имя}!', 'Ціна: 990 ₴'],
+      },
+      html: {
+        name: 'HTML',
+        command: 'ответ_html',
+        note: 'Підтримуються Telegram HTML-теги. Не забувай закривати теги.',
+        examples: ['<b>Жирний</b> і <i>курсив</i>', '<u>підкреслений</u> і <s>закреслений</s>', '<code>код</code>', '<a href="https://example.com">посилання</a>'],
+      },
+      md2: {
+        name: 'MarkdownV2',
+        command: 'ответ_md2',
+        note: 'У MarkdownV2 спецсимволи потрібно екранувати зворотним слешем: _ * [ ] ( ) ~ ` > # + - = | { } . !',
+        examples: ['*Жирний* і _курсив_', '__підкреслений__ і ~закреслений~', '`код`', '[посилання](https://example.com)'],
+      },
+      markdown_v2: {
+        name: 'MarkdownV2',
+        command: 'ответ_markdown_v2',
+        note: 'Повна форма команди MarkdownV2. Правила такі самі, як у ответ_md2.',
+        examples: ['*Жирний* і _курсив_', '||прихований текст||', '`код`', '[посилання](https://example.com)'],
+      },
+      md: {
+        name: 'Markdown legacy',
+        command: 'ответ_md',
+        note: 'Старий Telegram Markdown простіший, але менш гнучкий. Для нових повідомлень краще HTML або MarkdownV2.',
+        examples: ['*Жирний* і _курсив_', '`код`', '[посилання](https://example.com)'],
+      },
+    },
+  },
+};
+
+function MarkupFormattingExamples({ markup, lang }) {
+  const copy = MARKUP_FORMATTING_HELP[lang] || MARKUP_FORMATTING_HELP.ru;
+  const mode = copy.modes[markup] || copy.modes[''];
+
+  return (
+    <div style={{
+      marginTop: 8,
+      padding: '10px 11px',
+      borderRadius: 10,
+      border: '1px solid rgba(96,165,250,0.22)',
+      background: 'linear-gradient(135deg, rgba(59,130,246,0.08), rgba(167,139,250,0.06))',
+      boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.04)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 7 }}>
+        <span style={{ fontSize: 10, fontWeight: 800, color: '#93c5fd', textTransform: 'uppercase', letterSpacing: '.08em' }}>
+          {copy.title}
+        </span>
+        <code style={{ fontSize: 10, color: '#67e8f9', background: 'rgba(34,211,238,0.09)', border: '1px solid rgba(34,211,238,0.16)', borderRadius: 6, padding: '2px 6px' }}>
+          {mode.command}
+        </code>
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--text2)', fontWeight: 700, marginBottom: 7 }}>
+        {mode.name}
+      </div>
+      <div style={{ display: 'grid', gap: 5, marginBottom: 8 }}>
+        {mode.examples.map((example) => (
+          <code key={example} style={{
+            display: 'block',
+            padding: '6px 7px',
+            borderRadius: 7,
+            background: 'rgba(0,0,0,0.2)',
+            border: '1px solid rgba(255,255,255,0.07)',
+            color: '#dbeafe',
+            fontSize: 11,
+            lineHeight: 1.35,
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+          }}>
+            {example}
+          </code>
+        ))}
+      </div>
+      <div style={{ fontSize: 10, color: 'var(--text3)', lineHeight: 1.45 }}>
+        <span style={{ color: '#fbbf24', fontWeight: 700 }}>{copy.noteLabel}: </span>{mode.note}
+      </div>
+    </div>
+  );
+}
+
 function PropsPanel({ block, onChange, onAttachmentChange, onAttachmentDelete, stacks }) {
   const ctx = React.useContext(BuilderUiContext);
   const lang = ctx?.lang || 'ru';
@@ -2436,14 +2633,19 @@ function PropsPanel({ block, onChange, onAttachmentChange, onAttachmentDelete, s
               style={{ resize: 'vertical', lineHeight: 1.5 }}
             />
           ) : f.tag === 'select' ? (
-            <select
-              value={props[f.key] || f.options?.[0]?.value || ''}
-              onChange={e => onChange(f.key, e.target.value)}
-            >
-              {(f.options || []).map((opt) => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
+            <>
+              <select
+                value={props[f.key] || f.options?.[0]?.value || ''}
+                onChange={e => onChange(f.key, e.target.value)}
+              >
+                {(f.options || []).map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+              {block.type === 'message' && f.key === 'markup' && (
+                <MarkupFormattingExamples markup={props[f.key] || ''} lang={lang} />
+              )}
+            </>
           ) : (block.type === 'callback' && f.key === 'label' && buttonOptions.length > 0 ? (
             <select
               value={props[f.key] || ''}
@@ -3524,13 +3726,6 @@ export default function App() {
         title: ui.tourAiTitle,
         text: ui.tourAiBody,
       },
-      ...(isAdmin
-        ? [{
-          selector: '[data-tour="top-python-desktop"]',
-          title: ui.tourPythonTitle,
-          text: ui.tourPythonBody,
-        }]
-        : []),
       {
         selector: '[data-tour="top-clear-desktop"]',
         title: ui.tourClearTitle,
@@ -4448,7 +4643,10 @@ export default function App() {
       if (t.startsWith('если ') || t.startsWith('если(')) { const cond = t.replace(/^если\s*/, '').replace(/:$/, ''); return { type: 'condition', props: { cond } }; }
       if (t === 'иначе:' || t === 'иначе') return { type: 'else', props: {} };
       if (t.startsWith('шаг '))         return { type: 'step',    props: { name: t.replace(/^шаг\s+/, '').replace(/:$/, '').trim() } };
-      if (t.startsWith('ответ_md '))    return { type: 'message', props: { text: extractString(t), md: true } };
+      if (t.startsWith('ответ_markdown_v2 ')) return { type: 'message', props: { text: extractString(t), markup: 'markdown_v2' } };
+      if (t.startsWith('ответ_html '))  return { type: 'message', props: { text: extractString(t), markup: 'html' } };
+      if (t.startsWith('ответ_md2 '))   return { type: 'message', props: { text: extractString(t), markup: 'md2' } };
+      if (t.startsWith('ответ_md '))    return { type: 'message', props: { text: extractString(t), markup: 'md', md: true } };
       if (t.startsWith('ответ '))       return { type: 'message', props: { text: extractString(t) } };
       if (t.startsWith('использовать ')) return { type: 'use',   props: { blockname: t.replace(/^использовать\s+/, '').trim() } };
       if (t.startsWith('спросить ')) {
@@ -6542,6 +6740,9 @@ const EXAMPLE_FULL = `версия "1.0"
         box-shadow: 0 0 18px rgba(25,216,255,.38), 0 0 30px rgba(139,92,246,.28);
         filter: saturate(1.25) contrast(1.05);
       }
+      @media (max-width: 360px) {
+        .editor-brand-word { display: none; }
+      }
       .editor-brand-mark {
         color:#21d6ff !important;
         text-shadow: 0 0 18px rgba(33,214,255,.72), 0 0 36px rgba(139,92,246,.55) !important;
@@ -6653,6 +6854,14 @@ const EXAMPLE_FULL = `версия "1.0"
       input:focus, textarea:focus, select:focus {
         border-color: rgba(33,214,255,.62) !important;
         box-shadow: 0 0 0 3px rgba(33,214,255,.08), inset 0 1px 0 rgba(255,255,255,.05);
+      }
+      select option {
+        background: #12072f;
+        color: #f8fafc;
+      }
+      select option:checked {
+        background: #2563eb;
+        color: #fff;
       }
       .tb-btn {
         display: inline-flex; align-items: center; gap: 4px;
@@ -6785,17 +6994,17 @@ const EXAMPLE_FULL = `версия "1.0"
         background: 'linear-gradient(90deg, #0d0920 0%, #080618 100%)',
         borderBottom: '1px solid rgba(99,102,241,0.25)',
         boxShadow: '0 1px 0 rgba(249,115,22,0.08), 0 4px 24px rgba(0,0,0,0.6)',
-        display: 'flex', alignItems: 'center', padding: isMobileView ? '0 12px' : '0 18px', gap: isMobileView ? 8 : 10,
+        display: 'flex', alignItems: 'center', padding: isMobileView ? '0 8px' : '0 18px', gap: isMobileView ? 6 : 10,
         flexShrink: 0, height: isMobileView ? 52 : 64,
-        overflowX: isMobileView ? 'auto' : 'visible',
+        overflowX: 'hidden',
         position: 'relative', zIndex: 90,
       }}>
         {/* Left neon accent line */}
         <div style={{ position:'absolute', left:0, top:0, bottom:0, width:3, background:'linear-gradient(180deg, #f97316, #6366f1)', borderRadius:'0 2px 2px 0', opacity:0.9 }} />
-        <div style={{ fontFamily:'Syne, system-ui', fontWeight:800, fontSize:22, color:'var(--text)', flexShrink: 0, paddingLeft: 2, display:'flex', alignItems:'center', gap:8 }}>
+        <div style={{ fontFamily:'Syne, system-ui', fontWeight:800, fontSize:isMobileView ? 18 : 22, color:'var(--text)', flexShrink: isMobileView ? 1 : 0, minWidth: 0, paddingLeft: 2, display:'flex', alignItems:'center', gap:isMobileView ? 6 : 8 }}>
           <img src={cicadaLogo} alt="" className="editor-brand-logo" />
           <div style={{ display:'flex', alignItems:'baseline', lineHeight:1 }}>
-            <span style={{ background: 'linear-gradient(135deg, #19d8ff 0%, #a78bfa 56%, #ff7a35 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Cicada</span>
+            <span className="editor-brand-word" style={{ background: 'linear-gradient(135deg, #19d8ff 0%, #a78bfa 56%, #ff7a35 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Cicada</span>
             {!isMobileView && <span style={{ fontSize:13, background:'linear-gradient(135deg,#8b5cf6,#d8b4fe)', WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent', backgroundClip:'text', marginLeft:7, fontWeight:500, opacity:0.84 }}>Studio</span>}
           </div>
         </div>
@@ -6806,9 +7015,10 @@ const EXAMPLE_FULL = `версия "1.0"
               ref={examplesToggleRef}
               type="button"
               data-tour="mobile-examples"
+              title={builderUi.examplesOpen}
               onClick={() => setShowExamples(!showExamples)}
-              style={{ background:'transparent', color:'var(--text3)', padding:'6px 10px', border:'1px solid var(--border2)', borderRadius:6, fontSize:12, whiteSpace: 'nowrap' }}
-            >{builderUi.examplesOpen}</button>
+              style={{ width: 36, height: 34, display:'flex', alignItems:'center', justifyContent:'center', gap:2, background:'transparent', color:'var(--text3)', padding:0, border:'1px solid var(--border2)', borderRadius:10, fontSize:15, whiteSpace: 'nowrap', flexShrink: 0 }}
+            >⚡<span style={{ opacity: 0.55, fontSize: 9, lineHeight: 1 }}>▼</span></button>
           </div>
         )}
         {!isMobileView && <div className="tb-divider" />}
@@ -6830,26 +7040,6 @@ const EXAMPLE_FULL = `версия "1.0"
               title={canUseAiGenerator ? builderUi.aiTitle : builderUi.aiTitleDisabled}
               onClick={openAiGeneratorModal}
             >{canUseAiGenerator ? '✨ AI' : '🔒 AI'}</button>
-            {isAdmin && (
-              <button
-                type="button"
-                className="tb-btn tb-btn-ghost"
-                data-tour="top-python-desktop"
-                title={builderUi.adminPythonTitle}
-                onClick={() => {
-                  setPythonConvertError('');
-                  setPythonConvertMeta(null);
-                  setPythonConvertResult('');
-                  setShowPythonConvertModal(true);
-                }}
-                style={{
-                  borderColor: 'rgba(167,139,250,0.4)',
-                  color: '#e9d5ff',
-                  fontWeight: 600,
-                  fontSize: 12,
-                }}
-              >🐍</button>
-            )}
             <button
               className="tb-btn tb-btn-danger"
               data-tour="top-clear-desktop"
@@ -6921,7 +7111,7 @@ const EXAMPLE_FULL = `версия "1.0"
               type="button"
               onClick={() => setBotDebugOpen(v => !v)}
               style={botDebugOpen ? { outline: '1px solid rgba(250,204,21,0.45)', borderRadius: 8 } : undefined}
-            >🐛</button>
+            >🧾</button>
             <div className="tb-divider" />
             {!isBotRunning ? (
               <button
@@ -6967,7 +7157,9 @@ const EXAMPLE_FULL = `версия "1.0"
                 title={canUseAiGenerator ? builderUi.aiTitle : builderUi.aiTitleDisabled}
                 style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  padding: '6px 10px',
+                  width: 38,
+                  height: 34,
+                  padding: 0,
                   background: 'linear-gradient(135deg, rgba(251,191,36,0.18) 0%, rgba(251,146,60,0.12) 100%)',
                   border: '1px solid rgba(251,191,36,0.45)',
                   borderRadius: 8,
@@ -6984,7 +7176,7 @@ const EXAMPLE_FULL = `версия "1.0"
                   opacity: canUseAiGenerator ? 1 : 0.65,
                   filter: canUseAiGenerator ? undefined : 'saturate(0.6)',
                 }}
-              >{canUseAiGenerator ? 'AI' : '🔒 AI'}</button>
+              >{canUseAiGenerator ? 'AI' : '🔒'}</button>
             ) : (
               <button
                 onClick={openPremiumPurchase}
@@ -7013,8 +7205,9 @@ const EXAMPLE_FULL = `версия "1.0"
               onClick={openProfileModal}
               style={{
                 display: 'flex', alignItems: 'center', gap: 6,
-                background: 'var(--bg3)', padding: isMobileView ? '5px 10px' : '6px 14px', borderRadius: 20,
+                background: 'var(--bg3)', padding: isMobileView ? 3 : '6px 14px', borderRadius: 20,
                 border: '1px solid var(--border2)', cursor: 'pointer',
+                flexShrink: 0,
               }}
               onMouseEnter={e => e.currentTarget.style.borderColor = '#f97316'}
               onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border2)'}
@@ -7067,7 +7260,8 @@ const EXAMPLE_FULL = `версия "1.0"
               onClick={() => setMobileMoreOpen(v => !v)}
               style={{
                 background: mobileMoreOpen ? 'rgba(255,255,255,0.1)' : 'transparent',
-                color: 'var(--text3)', padding: '7px 11px',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: 'var(--text3)', width: 36, height: 34, padding: 0,
                 border: '1px solid var(--border2)', borderRadius: 8, fontSize: 16,
                 cursor: 'pointer', transition: 'all 0.15s',
               }}
@@ -7968,22 +8162,6 @@ const EXAMPLE_FULL = `версия "1.0"
                 disabled={!stacks.some(s => s.blocks.some(b => b.type === 'bot' && b.props?.token?.trim()))}
                 style={{ width:'100%', padding:'10px 16px', textAlign:'left', background:'rgba(62,207,142,0.08)', color:'#3ecf8e', border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui', fontWeight:700, display:'flex', alignItems:'center', gap:8, opacity: stacks.some(s => s.blocks.some(b => b.type === 'bot' && b.props?.token?.trim())) ? 1 : 0.4 }}
               >{builderUi.mobileStartBot}</button>
-            )}
-            <div style={{ height:1, background:'var(--border)', margin:'4px 0' }} />
-            {isAdmin && (
-              <button
-                type="button"
-                role="menuitem"
-                title={builderUi.adminPythonTitle}
-                onClick={() => {
-                  setPythonConvertError('');
-                  setPythonConvertMeta(null);
-                  setPythonConvertResult('');
-                  setShowPythonConvertModal(true);
-                  setMobileMoreOpen(false);
-                }}
-                style={{ width:'100%', padding:'10px 16px', textAlign:'left', background:'transparent', color:'#e9d5ff', border:'none', cursor:'pointer', fontSize:13, fontFamily:'Syne,system-ui', fontWeight:600, display:'flex', alignItems:'center', gap:8 }}
-              >🐍</button>
             )}
             <button
               type="button"
@@ -9684,8 +9862,8 @@ function LandingInfoModal({ page, onClose, isMobile }) {
             <div>
               <div style={{ fontFamily:'Syne,system-ui', fontWeight:800, fontSize:isMobile?18:22, color:'#fff', lineHeight:1.1 }}>{meta.title}</div>
               <div style={{ fontSize:11, color:'rgba(255,255,255,0.35)', marginTop:2, fontFamily:'system-ui' }}>
-                {page==='features'&&'Cicada Studio — всё что вам нужно для создания бота'}
-                {page==='templates'&&'Готовые схемы для быстрого старта'}
+                {page==='features'&&'Актуальные возможности ядра Cicada DSL'}
+                {page==='templates'&&'Готовые схемы на новом ядре'}
                 {page==='pricing'&&'Прозрачные тарифы без скрытых условий'}
                 {page==='docs'&&'Полная документация по платформе'}
               </div>
@@ -9701,20 +9879,20 @@ function LandingInfoModal({ page, onClose, isMobile }) {
           {page==='features' && (
             <div className="lip-scroll" style={{ flex:1, overflowY:'auto', padding:isMobile?'16px':'26px' }}>
               <p style={{ fontSize:14, color:'rgba(255,255,255,0.55)', lineHeight:1.7, marginBottom:22, marginTop:0, maxWidth:640 }}>
-                Cicada Studio — полноценная платформа для создания Telegram-ботов без написания кода вручную. Всё что нужно — собрать схему блоками.
+                Cicada Studio работает поверх нового ядра Cicada DSL: сценарии, БД, HTTP/JSON, медиа, модули и форматированный текст собираются блоками и превращаются в читаемый .ccd-код.
               </p>
               <div style={{ display:'grid', gridTemplateColumns:isMobile?'1fr':'1fr 1fr', gap:12 }}>
                 {[
-                  { icon:'🧩', title:'Визуальный конструктор', desc:'Собирайте логику бота блоками на холсте. Конструктор сам генерирует DSL-код.', color:'#fbbf24', bg:'rgba(251,191,36,0.1)' },
-                  { icon:'🤖', title:'30+ типов блоков', desc:'От простого «Ответ» до HTTP-запросов, условий, сценариев, медиа и AI-классификации.', color:'#3ecf8e', bg:'rgba(62,207,142,0.1)' },
-                  { icon:'\u2728', title:'AI-генерация схем', desc:'Опишите задачу — AI предложит готовую структуру бота с нужными блоками и сценариями.', color:'#a78bfa', bg:'rgba(167,139,250,0.1)' },
-                  { icon:'🛡', title:'Встроенная валидация', desc:'DSL-валидатор проверяет схему на ошибки до запуска — экономит время на отладку.', color:'#60a5fa', bg:'rgba(96,165,250,0.1)' },
-                  { icon:'\u2601\ufe0f', title:'Облачные проекты', desc:'Сохраняйте проекты в облако и открывайте с любого устройства. Синхронизируется автоматически.', color:'#fbbf24', bg:'rgba(251,191,36,0.1)' },
-                  { icon:'🎨', title:'Готовые шаблоны', desc:'Библиотека шаблонов для квизов, заявок, меню, интернет-магазинов и типовых задач.', color:'#f87171', bg:'rgba(248,113,113,0.1)' },
-                  { icon:'📱', title:'Мобильная версия', desc:'Адаптивный интерфейс позволяет редактировать схемы с телефона или планшета.', color:'#34d399', bg:'rgba(52,211,153,0.1)' },
-                  { icon:'\u26a1', title:'Быстрый старт', desc:'Первый рабочий бот за вечер. Установка не нужна — всё работает прямо в браузере.', color:'#fbbf24', bg:'rgba(251,191,36,0.1)' },
-                  { icon:'🔗', title:'HTTP-интеграции', desc:'Подключайте внешние API: блок HTTP умеет GET/POST с переменными и обработкой ответа.', color:'#0ea5e9', bg:'rgba(14,165,233,0.1)' },
-                  { icon:'🗄', title:'Встроенная база данных', desc:'SQL-блок для хранения данных пользователей, заказов, настроек и других сущностей.', color:'#10b981', bg:'rgba(16,185,129,0.1)' },
+                  { icon:'🧩', title:'Визуальный DSL-конструктор', desc:'Собирайте схему блоками на холсте, а Studio генерирует .ccd-код с командами, обработчиками, блоками и сценариями.', color:'#fbbf24', bg:'rgba(251,191,36,0.1)' },
+                  { icon:'💬', title:'Форматированный текст', desc:'Обычные ответы, legacy Markdown, HTML и MarkdownV2: используйте ответ_md, ответ_html и ответ_md2 для красивых сообщений Telegram.', color:'#3ecf8e', bg:'rgba(62,207,142,0.1)' },
+                  { icon:'🧠', title:'Сценарии и состояние', desc:'Многошаговые сценарии, спросить → переменная, вернуть, повтор шага, переходы, пользовательские и глобальные переменные.', color:'#a78bfa', bg:'rgba(167,139,250,0.1)' },
+                  { icon:'🔘', title:'Динамические inline-кнопки', desc:'Inline-клавиатуры можно строить из списков и из БД: columns, callback-префиксы, поля text/id и кнопка назад.', color:'#60a5fa', bg:'rgba(96,165,250,0.1)' },
+                  { icon:'🗄', title:'БД ключ-значение', desc:'Сохраняйте и загружайте строки, числа, списки и объекты для пользователя или глобально: сохранить, получить, сохранить_глобально.', color:'#10b981', bg:'rgba(16,185,129,0.1)' },
+                  { icon:'🔗', title:'HTTP и JSON', desc:'GET/POST/PATCH/PUT/DELETE, fetch_json, http_заголовки, разобрать_json и в_json для интеграций с внешними API.', color:'#0ea5e9', bg:'rgba(14,165,233,0.1)' },
+                  { icon:'🖼', title:'Медиа и файлы', desc:'Фото, документы, аудио, видео, голосовые, стикеры, локации, контакты, загрузка файлов и пересылка полученного file_id.', color:'#f87171', bg:'rgba(248,113,113,0.1)' },
+                  { icon:'📦', title:'Модули и переиспользование', desc:'Подключайте импорт "cicada.catalog" или локальные .ccd-файлы, выносите общую логику в блоки и используйте их повторно.', color:'#fbbf24', bg:'rgba(251,191,36,0.1)' },
+                  { icon:'🔁', title:'Циклы и коллекции', desc:'Работайте со списками и объектами: для каждого, пока, повторять, индексы, поля объекта, добавить, ключи, значения.', color:'#34d399', bg:'rgba(52,211,153,0.1)' },
+                  { icon:'📣', title:'Уведомления и рассылки', desc:'Отправляйте сообщения конкретному пользователю, делайте рассылку всем или группе и проверяйте подписку на канал.', color:'#fb923c', bg:'rgba(251,146,60,0.1)' },
                 ].map(({ icon, title, desc, color, bg }) => (
                   <div key={title} className="lip-feat-card"
                     onMouseEnter={e=>{e.currentTarget.style.borderColor=color+'55';e.currentTarget.style.boxShadow=`0 8px 28px rgba(0,0,0,0.4), 0 0 20px ${color}18`;}}
@@ -9735,18 +9913,18 @@ function LandingInfoModal({ page, onClose, isMobile }) {
           {page==='templates' && (
             <div className="lip-scroll" style={{ flex:1, overflowY:'auto', padding:isMobile?'16px':'26px' }}>
               <p style={{ fontSize:14, color:'rgba(255,255,255,0.55)', lineHeight:1.7, marginBottom:22, marginTop:0 }}>
-                Готовые схемы ботов для быстрого старта. Выберите шаблон и адаптируйте под свою задачу прямо в конструкторе.
+                Готовые схемы используют актуальное ядро: динамические inline-кнопки, сценарии, БД, HTTP/JSON, модули, медиа и форматирование сообщений.
               </p>
               <div style={{ display:'grid', gridTemplateColumns:isMobile?'1fr':'1fr 1fr', gap:12 }}>
                 {[
-                  { icon:'👋', title:'Приветственный бот', tags:['Старт','Ответ','Кнопки'], desc:'Красивое меню с кнопками навигации. Обработчики для каждой кнопки.', color:'#3ecf8e' },
-                  { icon:'\u2753', title:'Квиз / Опрос', tags:['Спросить','Условие','Счётчик'], desc:'Многошаговый квиз с подсчётом баллов и итоговым результатом.', color:'#fbbf24' },
-                  { icon:'📝', title:'Сбор заявок', tags:['Спросить','Сохранить','HTTP'], desc:'Форма для сбора данных с сохранением в базу или отправкой на email.', color:'#60a5fa' },
-                  { icon:'🛍\ufe0f', title:'Интернет-магазин', tags:['Меню','Кнопки','Оплата'], desc:'Каталог товаров, корзина, оформление заказа и приём оплаты.', color:'#a78bfa' },
-                  { icon:'📅', title:'Запись на приём', tags:['Спросить','Inline','БД'], desc:'Выбор даты через inline-кнопки. Запись хранится в базе данных.', color:'#f87171' },
-                  { icon:'📣', title:'Рассылка новостей', tags:['Broadcast','Сценарий','Подписка'], desc:'Бот для подписки и управления рассылками. Массовая отправка сообщений.', color:'#fb923c' },
-                  { icon:'🎮', title:'Игровой бот', tags:['Рандом','Счётчик','Условие'], desc:'Простая игра с очками, случайными событиями и таблицей лидеров.', color:'#34d399' },
-                  { icon:'🤝', title:'Поддержка клиентов', tags:['Классификация','HTTP','Лог'], desc:'AI-классификация обращений, автоответы и переадресация вопросов.', color:'#0ea5e9' },
+                  { icon:'👋', title:'Приветственный бот', tags:['Старт','HTML','Inline'], desc:'Главное меню с красивым HTML/MarkdownV2-текстом, inline-кнопками и отдельными обработчиками нажатий.', color:'#3ecf8e' },
+                  { icon:'📦', title:'Каталог из БД', tags:['БД','Inline из БД','Назад'], desc:'Категории и товары хранятся в БД, клавиатуры строятся динамически через inline из бд с columns и callback-префиксом.', color:'#60a5fa' },
+                  { icon:'🧩', title:'Модульный каталог', tags:['Импорт','Блоки','Сценарии'], desc:'Готовый модуль cicada.catalog: подключите импортом, переиспользуйте блоки меню и сценарии создания категорий и товаров.', color:'#a78bfa' },
+                  { icon:'🛍\ufe0f', title:'Магазин с карточками', tags:['Объекты','Для каждого','Глобальная БД'], desc:'Товары как объекты с id, name, price и description, карточка товара ищется циклом и открывается по callback.', color:'#fbbf24' },
+                  { icon:'📝', title:'Сбор заявок', tags:['Спросить','Сохранить','Уведомить'], desc:'Многошаговая форма собирает контакты, сохраняет результат в БД и отправляет уведомление администратору.', color:'#f87171' },
+                  { icon:'🌦', title:'API/JSON бот', tags:['fetch_json','HTTP','JSON'], desc:'Шаблон для внешних API: запрос, разбор JSON-ответа, вывод нужных полей и обработка ошибок в сценарии.', color:'#0ea5e9' },
+                  { icon:'🖼', title:'Медиа-приёмник', tags:['Фото','Документ','file_id'], desc:'Принимает фото, документы, голосовые и стикеры, сохраняет file_id и умеет отправить файл обратно пользователю.', color:'#34d399' },
+                  { icon:'📣', title:'Рассылка и подписка', tags:['Рассылка','Сегменты','Подписка'], desc:'Проверка подписки на канал, сегментация пользователей и массовые сообщения всем или выбранной группе.', color:'#fb923c' },
                 ].map(({ icon, title, tags, desc, color }) => (
                   <div key={title} className="lip-tpl-card"
                     onMouseEnter={e=>{e.currentTarget.style.borderColor=color+'44';e.currentTarget.style.boxShadow=`0 8px 28px rgba(0,0,0,0.4), 0 0 16px ${color}18`;}}
@@ -9772,8 +9950,8 @@ function LandingInfoModal({ page, onClose, isMobile }) {
               <div className="lip-note-card" style={{ marginTop:18, padding:'14px 18px', borderRadius:14, background:'rgba(251,191,36,0.05)', border:'1px solid rgba(251,191,36,0.18)', display:'flex', alignItems:'center', gap:14 }}>
                 <span style={{ fontSize:22, flexShrink:0 }}>📚</span>
                 <div>
-                  <div style={{ fontSize:13, color:'rgba(255,255,255,0.75)', fontWeight:600, marginBottom:3, fontFamily:'Syne,system-ui' }}>Шаблоны доступны в конструкторе</div>
-                  <div style={{ fontSize:11, color:'rgba(255,255,255,0.35)' }}>Откройте проект → нажмите «Библиотека» в левом меню → вкладка «Шаблоны»</div>
+                  <div style={{ fontSize:13, color:'rgba(255,255,255,0.75)', fontWeight:600, marginBottom:3, fontFamily:'Syne,system-ui' }}>Шаблоны соответствуют новому DSL</div>
+                  <div style={{ fontSize:11, color:'rgba(255,255,255,0.35)' }}>Откройте проект → нажмите «Библиотека» или «⚡ Примеры» → выберите готовую схему и адаптируйте под своего бота</div>
                 </div>
               </div>
             </div>
@@ -10595,6 +10773,7 @@ function SubscriptionTab({ userId, showToast }) {
   const [selectedPlan, setSelectedPlan] = React.useState('1m');
   const [selectedAsset, setSelectedAsset] = React.useState('USDT');
   const [loading, setLoading] = React.useState(false);
+  const [checkingPayment, setCheckingPayment] = React.useState(false);
   const [loadingStatus, setLoadingStatus] = React.useState(true);
   const [PLANS, setPlans] = React.useState(DEFAULT_PLANS);
 
@@ -10613,12 +10792,80 @@ function SubscriptionTab({ userId, showToast }) {
       .catch(() => {});
   }, []);
 
-  React.useEffect(() => {
-    fetch(`/api/subscription/status?userId=${userId}`)
-      .then(r => r.json())
-      .then(d => { setStatus(d); setLoadingStatus(false); })
-      .catch(() => setLoadingStatus(false));
+  const statusFromUser = React.useCallback((user) => {
+    const subscriptionExp = user?.subscriptionExp ?? null;
+    const active = user?.plan === 'pro' && subscriptionExp != null && Number(subscriptionExp) > Date.now();
+    return {
+      plan: active ? 'pro' : 'trial',
+      subscriptionExp,
+      daysLeft: active ? Math.ceil((Number(subscriptionExp) - Date.now()) / 86400000) : 0,
+    };
+  }, []);
+
+  const refreshStatus = React.useCallback(async () => {
+    const data = await apiFetch(`/api/subscription/status?userId=${userId}`);
+    setStatus(data);
+    return data;
   }, [userId]);
+
+  React.useEffect(() => {
+    refreshStatus()
+      .then(() => setLoadingStatus(false))
+      .catch(() => setLoadingStatus(false));
+  }, [refreshStatus]);
+
+  const syncPaidInvoices = React.useCallback(async ({ silent = false } = {}) => {
+    try {
+      const res = await postJsonWithCsrf('/api/subscription/sync', { userId });
+      const data = await res.json();
+      if (data.error) {
+        if (!silent) showToast(data.error, 'error');
+        return false;
+      }
+      if (data.user) {
+        saveSession(data.user);
+        setStatus(statusFromUser(data.user));
+        window.dispatchEvent(new Event('pageshow'));
+      } else {
+        await refreshStatus();
+      }
+      const active = data.user?.plan === 'pro' && Number(data.user?.subscriptionExp || 0) > Date.now();
+      if ((data.activated || active) && !silent) showToast('Оплата найдена, Premium активирован', 'success');
+      return Boolean(data.activated || active);
+    } catch (e) {
+      if (!silent) showToast('Не удалось проверить оплату: ' + e.message, 'error');
+      return false;
+    }
+  }, [refreshStatus, showToast, statusFromUser, userId]);
+
+  const startPaymentPolling = React.useCallback(() => {
+    setCheckingPayment(true);
+    let attempts = 0;
+    const tick = async () => {
+      attempts += 1;
+      const activated = await syncPaidInvoices({ silent: true });
+      if (activated) {
+        showToast('Оплата найдена, Premium активирован', 'success');
+        setCheckingPayment(false);
+        return;
+      }
+      if (attempts < 12) {
+        window.setTimeout(tick, 5000);
+      } else {
+        setCheckingPayment(false);
+        showToast('Если оплата уже прошла, нажмите «Проверить оплату».', 'info');
+      }
+    };
+    window.setTimeout(tick, 4000);
+  }, [showToast, syncPaidInvoices]);
+
+  React.useEffect(() => {
+    const onFocus = () => {
+      syncPaidInvoices({ silent: true });
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [syncPaidInvoices]);
 
   const handleBuy = async () => {
     setLoading(true);
@@ -10631,10 +10878,22 @@ function SubscriptionTab({ userId, showToast }) {
       const data = await res.json();
       if (data.error) { showToast(data.error, 'error'); return; }
       window.open(data.invoiceUrl, '_blank');
+      showToast('Счёт открыт. После оплаты вернитесь на эту вкладку.', 'info');
+      startPaymentPolling();
     } catch (e) {
       showToast('Ошибка: ' + e.message, 'error');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleManualPaymentCheck = async () => {
+    setCheckingPayment(true);
+    try {
+      const found = await syncPaidInvoices({ silent: false });
+      if (!found) showToast('Оплаченных счетов пока не найдено', 'info');
+    } finally {
+      setCheckingPayment(false);
     }
   };
 
@@ -10774,23 +11033,39 @@ function SubscriptionTab({ userId, showToast }) {
         </div>
         <button
           onClick={handleBuy}
-          disabled={loading}
+          disabled={loading || checkingPayment}
           style={{
             padding: '13px 24px', fontSize: 13, fontWeight: 700,
             fontFamily: 'Syne, system-ui',
-            background: loading ? 'rgba(255,215,0,0.3)' : 'linear-gradient(135deg,#ffd700,#ffaa00)',
+            background: loading || checkingPayment ? 'rgba(255,215,0,0.3)' : 'linear-gradient(135deg,#ffd700,#ffaa00)',
             color: '#111', border: 'none', borderRadius: 12,
-            cursor: loading ? 'not-allowed' : 'pointer',
-            boxShadow: loading ? 'none' : '0 6px 20px rgba(255,215,0,0.3)',
+            cursor: loading || checkingPayment ? 'not-allowed' : 'pointer',
+            boxShadow: loading || checkingPayment ? 'none' : '0 6px 20px rgba(255,215,0,0.3)',
             transition: 'all 0.2s', whiteSpace: 'nowrap',
           }}
         >
-          {loading ? 'Создаём...' : '→ Оплатить'}
+          {loading ? 'Создаём...' : checkingPayment ? 'Проверяем...' : '→ Оплатить'}
         </button>
       </div>
 
+      <button
+        type="button"
+        onClick={handleManualPaymentCheck}
+        disabled={checkingPayment}
+        style={{
+          width: '100%', padding: '11px 16px', borderRadius: 12,
+          border: '1px solid rgba(255,215,0,0.18)',
+          background: checkingPayment ? 'rgba(255,215,0,0.08)' : 'rgba(255,255,255,0.03)',
+          color: checkingPayment ? 'rgba(255,215,0,0.7)' : '#ffd700',
+          fontSize: 12, fontWeight: 700, fontFamily: 'Syne, system-ui',
+          cursor: checkingPayment ? 'not-allowed' : 'pointer',
+        }}
+      >
+        {checkingPayment ? 'Проверяем оплату...' : 'Проверить оплату'}
+      </button>
+
       <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.2)', textAlign: 'center', lineHeight: 1.6 }}>
-        Оплата через CryptoPay · После оплаты подписка активируется автоматически
+        Оплата через CryptoPay · После оплаты подписка активируется автоматически или через проверку оплаты
       </div>
     </div>
   );
@@ -10842,9 +11117,10 @@ function ProfileModal({ user, projects, initialTab = 'profile', onClose, onLogou
       profile: 'Профиль',
       projects: 'Проекты',
       subscription: 'Подписка',
+      purchases: 'Покупки',
       settings: 'Настройки',
       docs: 'Документация',
-      support: 'Поддержка',
+      support: 'Обращения',
       quickActions: 'Быстрые действия',
       newProjectSub: 'Создать бота с нуля',
       docsSub: 'Открыть инструкцию',
@@ -10900,9 +11176,10 @@ function ProfileModal({ user, projects, initialTab = 'profile', onClose, onLogou
       profile: 'Profile',
       projects: 'Projects',
       subscription: 'Subscription',
+      purchases: 'Purchases',
       settings: 'Settings',
       docs: 'Documentation',
-      support: 'Support',
+      support: 'Requests',
       quickActions: 'Quick actions',
       newProjectSub: 'Create a bot from scratch',
       docsSub: 'Open the guide',
@@ -10958,9 +11235,10 @@ function ProfileModal({ user, projects, initialTab = 'profile', onClose, onLogou
       profile: 'Профіль',
       projects: 'Проєкти',
       subscription: 'Підписка',
+      purchases: 'Покупки',
       settings: 'Налаштування',
       docs: 'Документація',
-      support: 'Підтримка',
+      support: 'Звернення',
       quickActions: 'Швидкі дії',
       newProjectSub: 'Створити бота з нуля',
       docsSub: 'Відкрити інструкцію',
@@ -11050,6 +11328,35 @@ function ProfileModal({ user, projects, initialTab = 'profile', onClose, onLogou
     return () => { cancelled = true; };
   }, [user.id]);
 
+  const loadPurchases = React.useCallback(async () => {
+    setPurchasesLoading(true);
+    try {
+      const data = await apiFetch('/api/subscription/purchases');
+      setPurchases(Array.isArray(data.purchases) ? data.purchases : []);
+    } catch (e) {
+      showToast('Не удалось загрузить покупки: ' + (e.message || 'ошибка'), 'error');
+    } finally {
+      setPurchasesLoading(false);
+    }
+  }, [showToast]);
+
+  const loadSupportRequests = React.useCallback(async () => {
+    setSupportRequestsLoading(true);
+    try {
+      const data = await apiFetch('/api/support/requests');
+      setSupportRequests(Array.isArray(data.requests) ? data.requests : []);
+    } catch (e) {
+      showToast('Не удалось загрузить обращения: ' + (e.message || 'ошибка'), 'error');
+    } finally {
+      setSupportRequestsLoading(false);
+    }
+  }, [showToast]);
+
+  React.useEffect(() => {
+    if (activeTab === 'purchases') loadPurchases();
+    if (activeTab === 'support') loadSupportRequests();
+  }, [activeTab, loadPurchases, loadSupportRequests]);
+
   // Email change flow: 'idle' | 'sending' | 'code-sent' | 'confirming'
   const [emailChangeStep, setEmailChangeStep] = useState('idle');
   const [emailChangeCode, setEmailChangeCode] = useState('');
@@ -11059,6 +11366,10 @@ function ProfileModal({ user, projects, initialTab = 'profile', onClose, onLogou
   const [supportSubject, setSupportSubject] = useState('');
   const [supportMessage, setSupportMessage] = useState('');
   const [supportSending, setSupportSending] = useState(false);
+  const [purchases, setPurchases] = useState([]);
+  const [purchasesLoading, setPurchasesLoading] = useState(false);
+  const [supportRequests, setSupportRequests] = useState([]);
+  const [supportRequestsLoading, setSupportRequestsLoading] = useState(false);
   const [passkeySaving, setPasskeySaving] = useState(false);
   const [passkeyCount, setPasskeyCount] = useState(null);
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
@@ -11208,6 +11519,7 @@ function ProfileModal({ user, projects, initialTab = 'profile', onClose, onLogou
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data.error) throw new Error(data.error || 'Не удалось отправить обращение');
+      if (data.request) setSupportRequests((prev) => [data.request, ...prev]);
       setSupportSubject('');
       setSupportMessage('');
       setActionNotice({ title: 'Готово', message: 'Обращение успешно отправлено в поддержку. Мы ответим вам в ближайшее время.' });
@@ -11234,6 +11546,23 @@ function ProfileModal({ user, projects, initialTab = 'profile', onClose, onLogou
   const formatDate = (dateString) => new Date(dateString).toLocaleDateString('ru-RU', {
     day: 'numeric', month: 'long', year: 'numeric',
   });
+  const formatDateTime = (dateString) => dateString
+    ? new Date(dateString).toLocaleString('ru-RU', {
+        day: '2-digit', month: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit',
+      })
+    : '—';
+  const supportStatusLabel = (status) => ({
+    open: 'Открыто',
+    answered: 'Ответили',
+    closed: 'Закрыто',
+  }[status] || status || 'Открыто');
+  const purchaseStatusLabel = (status) => ({
+    paid: 'Оплачено',
+    created: 'Создан',
+    active: 'Активен',
+    expired: 'Истёк',
+  }[status] || status || '—');
 
   const avatarLetter = (user.name || user.email || '?')[0].toUpperCase();
   const avatarColors = ['#ffd700,#ff8c00', '#3ecf8e,#0ea5e9', '#a78bfa,#ec4899', '#f87171,#fb923c'];
@@ -11381,6 +11710,7 @@ function ProfileModal({ user, projects, initialTab = 'profile', onClose, onLogou
                 { key: 'profile', icon: '👤', label: t.profile },
                 { key: 'projects', icon: '📁', label: t.projects, badge: projects.length || null },
                 { key: 'subscription', icon: '💳', label: t.subscription },
+                { key: 'purchases', icon: '🧾', label: t.purchases, badge: purchases.length || null },
                 { key: 'settings', icon: '⚙️', label: t.settings },
               ].map(({ key, icon, label, badge }) => (
                 <button key={key} className={`pm-nav-btn${activeTab === key ? ' pmactive' : ''}`} onClick={() => setActiveTab(key)}>
@@ -11484,6 +11814,8 @@ function ProfileModal({ user, projects, initialTab = 'profile', onClose, onLogou
                 { key: 'profile', icon: '👤', label: t.profile },
                 { key: 'projects', icon: '📁', label: t.projects },
                 { key: 'subscription', icon: '💳', label: t.subscription },
+                { key: 'purchases', icon: '🧾', label: t.purchases },
+                { key: 'support', icon: '🛟', label: t.support },
                 { key: 'settings', icon: '⚙️', label: t.settings },
               ].map(({ key, icon, label }) => (
                 <button
@@ -11697,6 +12029,57 @@ function ProfileModal({ user, projects, initialTab = 'profile', onClose, onLogou
               <SubscriptionTab userId={user.id} showToast={showToast} />
             )}
 
+            {/* ── PURCHASES TAB ── */}
+            {activeTab === 'purchases' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 860 }}>
+                <div style={{ background: 'rgba(255,215,0,0.045)', border: '1px solid rgba(255,215,0,0.18)', borderRadius: 14, padding: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                  <div>
+                    <div style={{ fontSize: 16, fontWeight: 800, color: '#fef3c7', fontFamily: 'Syne, system-ui', marginBottom: 6 }}>Покупки и чеки</div>
+                    <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)', lineHeight: 1.6 }}>
+                      Здесь хранятся оплаченные счета CryptoPay по подпискам.
+                    </div>
+                  </div>
+                  <button onClick={loadPurchases} disabled={purchasesLoading} style={{ padding: '9px 13px', borderRadius: 10, border: '1px solid rgba(255,215,0,0.25)', background: 'rgba(255,255,255,0.035)', color: '#ffd700', fontSize: 12, fontWeight: 700, fontFamily: 'Syne, system-ui', cursor: purchasesLoading ? 'not-allowed' : 'pointer', flexShrink: 0 }}>
+                    {purchasesLoading ? 'Обновляем...' : 'Обновить'}
+                  </button>
+                </div>
+
+                {purchasesLoading && purchases.length === 0 ? (
+                  <div style={{ padding: 28, textAlign: 'center', color: 'rgba(255,255,255,0.35)', background: 'rgba(255,255,255,0.025)', border: '1px dashed rgba(255,255,255,0.12)', borderRadius: 16 }}>Загружаем покупки...</div>
+                ) : purchases.length === 0 ? (
+                  <div style={{ padding: 36, textAlign: 'center', color: 'rgba(255,255,255,0.38)', background: 'rgba(255,255,255,0.025)', border: '1px dashed rgba(255,255,255,0.12)', borderRadius: 16 }}>
+                    <div style={{ fontSize: 34, marginBottom: 10 }}>🧾</div>
+                    Чеков пока нет. После оплаты подписки они появятся здесь.
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {purchases.map((item) => {
+                      const paidAt = item.paidAt || item.processedAt || item.createdAt;
+                      return (
+                        <div key={item.invoiceId} style={{ padding: 16, borderRadius: 14, background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.09)', display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.3fr 0.9fr 0.8fr', gap: 12, alignItems: 'center' }}>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: 14, fontWeight: 800, color: '#fff', fontFamily: 'Syne, system-ui' }}>{item.planLabel || 'Подписка'}</span>
+                              <span style={{ padding: '2px 8px', borderRadius: 999, background: 'rgba(62,207,142,0.12)', border: '1px solid rgba(62,207,142,0.26)', color: '#86efac', fontSize: 10, fontWeight: 800, letterSpacing: '0.06em' }}>{purchaseStatusLabel(item.status)}</span>
+                            </div>
+                            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.34)', marginTop: 6, fontFamily: 'var(--mono)' }}>Чек #{item.invoiceId}</div>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>Сумма</div>
+                            <div style={{ fontSize: 14, color: '#ffd700', fontWeight: 800, fontFamily: 'Syne, system-ui' }}>{item.amount || '—'} {item.asset || ''}</div>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>Дата</div>
+                            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.65)', fontFamily: 'var(--mono)' }}>{formatDateTime(paidAt)}</div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* ── SETTINGS TAB ── */}
             {activeTab === 'settings' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -11820,15 +12203,57 @@ function ProfileModal({ user, projects, initialTab = 'profile', onClose, onLogou
 
             {/* ── SUPPORT TAB ── */}
             {activeTab === 'support' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 760 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 860 }}>
                 <div style={{ background: 'rgba(16,185,129,0.05)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: 14, padding: 16 }}>
-                  <div style={{ fontSize: 16, fontWeight: 800, color: '#e5e7eb', fontFamily: 'Syne, system-ui', marginBottom: 6 }}>Поддержка</div>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: '#e5e7eb', fontFamily: 'Syne, system-ui', marginBottom: 6 }}>Обращения в поддержку</div>
                   <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)', lineHeight: 1.6 }}>
-                    Заполните форму — обращение появится в админ-панели во вкладке <strong>Обращения</strong>.
+                    Ниже история ваших обращений и ответы поддержки. Новое сообщение создаёт отдельный тикет в админ-панели.
                   </div>
                 </div>
 
                 <div style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.09)', borderRadius: 14, padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: '#fff', fontFamily: 'Syne, system-ui' }}>История чата</div>
+                    <button onClick={loadSupportRequests} disabled={supportRequestsLoading} style={{ padding: '8px 12px', borderRadius: 10, border: '1px solid rgba(16,185,129,0.22)', background: 'rgba(16,185,129,0.05)', color: '#86efac', fontSize: 12, fontWeight: 700, fontFamily: 'Syne, system-ui', cursor: supportRequestsLoading ? 'not-allowed' : 'pointer' }}>
+                      {supportRequestsLoading ? 'Обновляем...' : 'Обновить'}
+                    </button>
+                  </div>
+
+                  {supportRequestsLoading && supportRequests.length === 0 ? (
+                    <div style={{ padding: 24, textAlign: 'center', color: 'rgba(255,255,255,0.35)', border: '1px dashed rgba(255,255,255,0.1)', borderRadius: 14 }}>Загружаем обращения...</div>
+                  ) : supportRequests.length === 0 ? (
+                    <div style={{ padding: 30, textAlign: 'center', color: 'rgba(255,255,255,0.38)', border: '1px dashed rgba(255,255,255,0.1)', borderRadius: 14 }}>
+                      <div style={{ fontSize: 34, marginBottom: 10 }}>🛟</div>
+                      Вы ещё не писали в поддержку.
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxHeight: 420, overflowY: 'auto', paddingRight: 4 }}>
+                      {supportRequests.map((item) => (
+                        <div key={item.id} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: 12, fontWeight: 800, color: '#e5e7eb', fontFamily: 'Syne, system-ui' }}>{item.subject}</span>
+                            <span style={{ padding: '2px 8px', borderRadius: 999, background: item.status === 'answered' ? 'rgba(62,207,142,0.12)' : 'rgba(255,255,255,0.06)', border: `1px solid ${item.status === 'answered' ? 'rgba(62,207,142,0.26)' : 'rgba(255,255,255,0.11)'}`, color: item.status === 'answered' ? '#86efac' : 'rgba(255,255,255,0.55)', fontSize: 10, fontWeight: 800 }}>{supportStatusLabel(item.status)}</span>
+                            <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.28)', fontFamily: 'var(--mono)' }}>{formatDateTime(item.createdAt)}</span>
+                          </div>
+                          <div style={{ alignSelf: 'flex-end', maxWidth: '86%', padding: '11px 13px', borderRadius: '14px 14px 4px 14px', background: 'linear-gradient(135deg,rgba(14,165,233,0.18),rgba(99,102,241,0.16))', border: '1px solid rgba(14,165,233,0.24)', color: 'rgba(255,255,255,0.82)', fontSize: 12, lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>
+                            {item.message}
+                          </div>
+                          {item.replyText ? (
+                            <div style={{ alignSelf: 'flex-start', maxWidth: '86%', padding: '11px 13px', borderRadius: '14px 14px 14px 4px', background: 'linear-gradient(135deg,rgba(62,207,142,0.16),rgba(14,165,233,0.10))', border: '1px solid rgba(62,207,142,0.22)', color: 'rgba(255,255,255,0.86)', fontSize: 12, lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>
+                              <div style={{ fontSize: 10, color: '#86efac', fontWeight: 800, marginBottom: 6, fontFamily: 'Syne, system-ui' }}>Поддержка · {formatDateTime(item.repliedAt)}</div>
+                              {item.replyText}
+                            </div>
+                          ) : (
+                            <div style={{ alignSelf: 'flex-start', fontSize: 11, color: 'rgba(255,255,255,0.32)', paddingLeft: 4 }}>Ожидает ответа поддержки</div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.09)', borderRadius: 14, padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: '#fff', fontFamily: 'Syne, system-ui' }}>Новое обращение</div>
                   <div>
                     <label style={{ display: 'block', fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8, fontFamily: 'Syne, system-ui' }}>От кого</label>
                     <input

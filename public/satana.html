@@ -2201,9 +2201,9 @@
         '</div>' +
         '<pre style="white-space:pre-wrap;font-family:system-ui,sans-serif;font-size:13px;line-height:1.55;color:var(--text2);background:var(--bg3);border-radius:10px;padding:10px;margin:0 0 10px">' + escHtml(r.message || '') + '</pre>' +
         (r.replyText ? '<div style="font-size:12px;color:var(--green);margin-bottom:8px"><b>Ответ:</b><br><span style="white-space:pre-wrap">' + escHtml(r.replyText) + '</span></div>' : '') +
-        '<textarea id="support-reply-' + escHtml(r.id) + '" placeholder="Ответ пользователю на email" style="width:100%;min-height:84px;box-sizing:border-box;margin-bottom:8px;padding:10px;border-radius:10px;background:var(--bg3);border:1px solid var(--border2);color:var(--text);resize:vertical"></textarea>' +
+        '<textarea id="support-reply-' + escHtml(r.id) + '" placeholder="Ответ пользователю в профиль" style="width:100%;min-height:84px;box-sizing:border-box;margin-bottom:8px;padding:10px;border-radius:10px;background:var(--bg3);border:1px solid var(--border2);color:var(--text);resize:vertical"></textarea>' +
         '<div style="display:flex;flex-wrap:wrap;gap:8px">' +
-          '<button class="btn-primary" onclick="replySupportRequest(\'' + escJs(r.id) + '\')">✉ Ответить через support</button>' +
+          '<button class="btn-primary" onclick="replySupportRequest(\'' + escJs(r.id) + '\')">💬 Ответить в профиль</button>' +
           '<button class="topbar-btn" onclick="setSupportRequestStatus(\'' + escJs(r.id) + '\',\'closed\')">Закрыть</button>' +
           '<button class="topbar-btn danger" onclick="deleteSupportRequest(\'' + escJs(r.id) + '\')">Удалить</button>' +
         '</div>' +
@@ -2219,7 +2219,7 @@
       var res = await apiPostJson(API + '/api/admin/support-requests/' + encodeURIComponent(id) + '/reply', { reply: reply });
       var data = await res.json().catch(function(){ return {}; });
       if (!res.ok || data.error) throw new Error(data.error || 'Ошибка отправки');
-      showToast('Ответ отправлен на email', 'var(--green)');
+      showToast('Ответ появится у пользователя в профиле', 'var(--green)');
       loadSupportRequests();
     } catch (e) { showToast(e.message || 'Ошибка отправки', 'var(--red)'); }
   }

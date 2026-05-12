@@ -347,7 +347,15 @@ function emitUiAttachmentTexts(block, declaredBlocks = new Set()) {
 }
 
 function emitMessageWithLocalButtons(block, p) {
-  const message = p.md ? `ответ_md ${q(p.text || '')}` : `ответ ${q(p.text || '')}`;
+  const commandByMarkup = {
+    html: 'ответ_html',
+    md2: 'ответ_md2',
+    markdown_v2: 'ответ_markdown_v2',
+    md: 'ответ_md',
+  };
+  const markup = String(p.markup || (p.md ? 'md' : '')).trim();
+  const command = commandByMarkup[markup] || 'ответ';
+  const message = `${command} ${q(p.text || '')}`;
   const rows = parseMessageButtonRouteRows(p.buttons);
   if (!rows.length) return message;
 

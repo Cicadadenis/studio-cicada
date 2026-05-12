@@ -28,7 +28,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install cicada-tg==0.3.4
+          python -m pip install cicada-tg==0.3.5
           npm ci
 
       - name: Core compatibility guard

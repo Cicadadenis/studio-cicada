@@ -30,8 +30,8 @@ const ROOT = path.resolve(__dirname, '..', '..');
 
 const inlineCatalogIr = {
   irVersion: 1,
-  targetCore: '0.3.4',
-  compatibilityMode: '0.3.4 exact',
+  targetCore: '0.3.5',
+  compatibilityMode: '0.3.5 exact',
   intent: { primary: 'db_inline_catalog' },
   state: { globals: [{ name: 'категории', value: '["Пицца", "Напитки"]' }] },
   uiStates: [
@@ -158,8 +158,8 @@ test('AI recovery pruner limits IR complexity before deterministic recovery', ()
 test('deterministic recovery transforms PRUNED_IR into executable PARTIAL_IR without LLM', () => {
   const pruned = normalizeAiCanonicalIr({
     irVersion: 1,
-    targetCore: '0.3.4',
-    compatibilityMode: '0.3.4 exact',
+    targetCore: '0.3.5',
+    compatibilityMode: '0.3.5 exact',
     intent: { primary: 'recovery_transform_test' },
     state: { globals: [] },
     uiStates: [],
@@ -206,8 +206,8 @@ test('deterministic recovery transforms PRUNED_IR into executable PARTIAL_IR wit
 test('graph reconciler removes dangling edges after transform pruning', () => {
   const prunedGraph = normalizeAiCanonicalIr({
     irVersion: 1,
-    targetCore: '0.3.4',
-    compatibilityMode: '0.3.4 exact',
+    targetCore: '0.3.5',
+    compatibilityMode: '0.3.5 exact',
     intent: { primary: 'graph_reconciliation_test' },
     state: { globals: [] },
     uiStates: [],
@@ -303,8 +303,8 @@ test('ISV rejects calculator echo bot and injects deterministic calculator templ
   const plan = intentPlanner('бот калькулятор');
   const fakeCalculator = normalizeAiCanonicalIr({
     irVersion: 1,
-    targetCore: '0.3.4',
-    compatibilityMode: '0.3.4 exact',
+    targetCore: '0.3.5',
+    compatibilityMode: '0.3.5 exact',
     intent: { primary: 'calculator' },
     state: { globals: [] },
     handlers: [
@@ -336,8 +336,8 @@ test('ISV rejects calculator echo bot and injects deterministic calculator templ
 test('FDR injects inline_db generic callback dependency before validation', () => {
   const missingInlineDependency = normalizeAiCanonicalIr({
     irVersion: 1,
-    targetCore: '0.3.4',
-    compatibilityMode: '0.3.4 exact',
+    targetCore: '0.3.5',
+    compatibilityMode: '0.3.5 exact',
     intent: { primary: 'catalog' },
     state: { globals: [{ name: 'категории', value: '["Пицца"]' }] },
     uiStates: [{
@@ -368,8 +368,8 @@ test('FDR injects inline_db generic callback dependency before validation', () =
 test('FDR guarantees interactive buttons and scenarios have executable transition paths', () => {
   const missingTransitions = normalizeAiCanonicalIr({
     irVersion: 1,
-    targetCore: '0.3.4',
-    compatibilityMode: '0.3.4 exact',
+    targetCore: '0.3.5',
+    compatibilityMode: '0.3.5 exact',
     intent: { primary: 'form_collection' },
     state: { globals: [] },
     uiStates: [{ id: 'ui_start', message: 'Форма', buttons: 'Начать' }],

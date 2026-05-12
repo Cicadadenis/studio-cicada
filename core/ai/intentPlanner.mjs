@@ -247,8 +247,8 @@ export function buildSemanticTemplateIr(plan, options = {}) {
   const prompt = str(options.prompt || '');
   const base = {
     irVersion: 1,
-    targetCore: '0.3.4',
-    compatibilityMode: '0.3.4 exact',
+    targetCore: '0.3.5',
+    compatibilityMode: '0.3.5 exact',
     intent: {
       primary: templateId,
       plannedBotType: plan?.botType || templateId,

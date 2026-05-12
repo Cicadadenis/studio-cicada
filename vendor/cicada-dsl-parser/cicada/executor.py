@@ -26,7 +26,7 @@ from cicada.parser import (
     ForwardPhoto, SaveFile,
     SendDocument, SendAudio, SendVideo, SendVoice,
     SendLocation, SendContact, SendPoll, SendInvoice,
-    SendGame, SendMarkdown, DownloadFile,
+    SendGame, SendMarkdown, SendHTML, SendMarkdownV2, DownloadFile,
     EndScenario, ReturnFromScenario, RepeatStep, GotoStep,
     SaveToDB, LoadFromDB,
     HttpGet, HttpPost,
@@ -778,6 +778,8 @@ class Executor:
             SaveFile:           self._exec_save_file,
             StartScenario:      self._exec_start_scenario_stmt,
             SendMarkdown:       self._exec_send_markdown,
+            SendHTML:           self._exec_send_html,
+            SendMarkdownV2:     self._exec_send_markdown_v2,
             SendDocument:       self._exec_send_document,
             SendAudio:          self._exec_send_audio,
             SendVideo:          self._exec_send_video,
@@ -1668,9 +1670,18 @@ class Executor:
         self._start_scenario(ctx, stmt.name)
 
     def _exec_send_markdown(self, stmt: SendMarkdown, ctx):
-        text = self._render_parts(stmt.parts, ctx)
-        self._send_platform("markdown", ctx.chat_id, text=text)
-        self.tg.send_markdown(ctx.chat_id, text)
+        self._send_formatted_text(ctx, stmt.parts, "markdown", "send_markdown")
+
+    def _exec_send_html(self, stmt: SendHTML, ctx):
+        self._send_formatted_text(ctx, stmt.parts, "html", "send_html")
+
+    def _exec_send_markdown_v2(self, stmt: SendMarkdownV2, ctx):
+        self._send_formatted_text(ctx, stmt.parts, "markdown_v2", "send_markdown_v2")
+
+    def _send_formatted_text(self, ctx, parts: list, kind: str, method_name: str):
+        text = self._render_parts(parts, ctx)
+        self._send_platform(kind, ctx.chat_id, text=text)
+        getattr(self.tg, method_name)(ctx.chat_id, text)
 
     def _exec_send_document(self, stmt: SendDocument, ctx):
         file = eval_expr(stmt.file, ctx) if not isinstance(stmt.file, str) else stmt.file
@@ -1786,6 +1797,8 @@ class Executor:
         if self.debug:
             print(f"[STATE] loading key={key!r} user_id={ctx.user_id}")
         value = self.store.get(str(ctx.user_id), key)
+        if value is None:
+            value = self.store.get_global(key)
         ctx.set(stmt.variable, value if value is not None else "")
 
     def _exec_log(self, stmt: Log, ctx):
