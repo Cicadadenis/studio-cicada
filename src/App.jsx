@@ -160,6 +160,82 @@ function PremiumLockedPanel({ title = 'Функция доступна в Pro', 
   );
 }
 
+function AdminRoute({ currentUser, onLoginClick }) {
+  const [html, setHtml] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!currentUser) return undefined;
+    if (currentUser.role !== 'admin') {
+      setError('Доступ только для администратора');
+      return undefined;
+    }
+
+    let cancelled = false;
+    async function loadAdminUi() {
+      try {
+        await apiFetch('/api/admin/enter', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+        const jwt = getStoredJwt();
+        const res = await fetch('/api/admin/ui', {
+          credentials: 'include',
+          headers: jwt ? { Authorization: `Bearer ${jwt}` } : {},
+        });
+        if (!res.ok) throw new Error(res.status === 403 ? 'Нет прав администратора' : 'Не удалось загрузить админку');
+        const raw = await res.text();
+        if (!cancelled) setHtml(raw.replace('__ADMIN_JWT_JSON__', JSON.stringify(jwt || '')));
+      } catch (e) {
+        if (!cancelled) setError(e.message || 'Не удалось открыть админку');
+      }
+    }
+    loadAdminUi();
+    return () => { cancelled = true; };
+  }, [currentUser]);
+
+  if (!currentUser) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: '#08070f', color: '#fff', fontFamily: 'system-ui,sans-serif', padding: 20 }}>
+        <div style={{ maxWidth: 420, textAlign: 'center' }}>
+          <h1 style={{ margin: '0 0 10px', fontFamily: 'Syne,system-ui' }}>Админка защищена</h1>
+          <p style={{ color: 'rgba(255,255,255,0.65)', lineHeight: 1.5 }}>Войдите в аккаунт администратора, чтобы открыть панель.</p>
+          <button type="button" onClick={onLoginClick} style={{ marginTop: 12, padding: '11px 18px', borderRadius: 12, border: 0, background: '#f59e0b', color: '#111', fontWeight: 800, cursor: 'pointer' }}>Войти</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: '#08070f', color: '#fff', fontFamily: 'system-ui,sans-serif', padding: 20 }}>
+        <div style={{ maxWidth: 460, textAlign: 'center' }}>
+          <h1 style={{ margin: '0 0 10px', fontFamily: 'Syne,system-ui' }}>Доступ закрыт</h1>
+          <p style={{ color: 'rgba(255,255,255,0.65)', lineHeight: 1.5 }}>{error}</p>
+          <button type="button" onClick={() => { window.location.href = '/'; }} style={{ marginTop: 12, padding: '11px 18px', borderRadius: 12, border: '1px solid rgba(255,255,255,0.2)', background: 'rgba(255,255,255,0.08)', color: '#fff', fontWeight: 700, cursor: 'pointer' }}>Вернуться в конструктор</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!html) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: '#08070f', color: 'rgba(255,255,255,0.76)', fontFamily: 'system-ui,sans-serif' }}>
+        Загрузка админки...
+      </div>
+    );
+  }
+
+  return (
+    <iframe
+      title="Cicada Admin"
+      srcDoc={html}
+      style={{ position: 'fixed', inset: 0, width: '100%', height: '100%', border: 0, background: '#0e0f11' }}
+    />
+  );
+}
+
 // ─── CANVAS AUTOSAVE (guest vs logged-in аккаунт) ───────────────────────────
 function canvasKeyForUser(user) {
   if (user?.id != null) return `cicada_canvas_u_${user.id}`;
@@ -701,8 +777,18 @@ export default function App() {
     setShowProfileModal(true);
   }, [currentUser]);
 
-  const openAdminMenu = useCallback((section = '') => {
-    const target = section ? `/satana#${section}` : '/satana';
+  const openAdminMenu = useCallback(async (section = '') => {
+    const target = section ? `/admin#${section}` : '/admin';
+    try {
+      await apiFetch('/api/admin/enter', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+    } catch (e) {
+      window.alert(e.message || 'Нет доступа к админке');
+      return;
+    }
     const opened = window.open(target, '_blank');
     if (opened) opened.opener = null;
     if (!opened) window.location.href = target;
@@ -3334,6 +3420,19 @@ const EXAMPLE_FULL = `версия "1.0"
       }}
     />
   ) : null;
+
+  const isAdminRoute = typeof window !== 'undefined' && window.location.pathname.startsWith('/admin');
+  if (isAdminRoute) {
+    return (
+      <>
+        <AdminRoute
+          currentUser={currentUser}
+          onLoginClick={() => { setAuthTab('login'); setShowAuthModal(true); }}
+        />
+        {authModalNode}
+      </>
+    );
+  }
 
   if (!currentUser) {
     const openRegister = () => { setAuthTab('register'); setShowAuthModal(true); };

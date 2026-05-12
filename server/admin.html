@@ -4,7 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
   <title>Cicada Admin</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css">
   <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Rajdhani:wght@400;600;700;800&display=swap');
+
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
@@ -32,82 +35,207 @@
     }
 
     /* ── Login ── */
+
     #login-screen {
       min-height: 100vh;
       display: flex;
       align-items: center;
       justify-content: center;
       padding: 20px;
-      background: radial-gradient(ellipse at 50% 40%, #1a1d24 0%, #0e0f11 100%);
+      background: radial-gradient(ellipse at 50% 30%, #0f1118 0%, #080910 100%);
+      position: relative;
+      overflow: hidden;
     }
+
+    /* Hex background */
+    #login-screen::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg width='60' height='100' viewBox='0 0 60 100' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%231a1d26' fill-opacity='0.4'%3E%3Cpath d='M30 100L0 85V15L30 0l30 15v70l-30 15zm0-2l28.5-14V16L30 2 1.5 16v68L30 98zm0-10l-20-10V22l20-10 20 10v56l-20 10zm0-2l18.5-9V23L30 14l-18.5 9v54L30 86z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* Scanline */
+    .login-scanline {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(0,0,0,0.1) 50%, rgba(0,0,0,0.1));
+      background-size: 100% 4px;
+      pointer-events: none;
+      z-index: 1;
+      animation: scanline 10s linear infinite;
+    }
+    @keyframes scanline {
+      0% { transform: translateY(-100%); }
+      100% { transform: translateY(100%); }
+    }
+
+    /* Ambient glows */
+    .login-glow-1 {
+      position: absolute; top: 0; left: 25%;
+      width: 384px; height: 384px; border-radius: 50%;
+      opacity: 0.05; filter: blur(60px);
+      background: #00e5ff; pointer-events: none; z-index: 0;
+    }
+    .login-glow-2 {
+      position: absolute; bottom: 0; right: 25%;
+      width: 384px; height: 384px; border-radius: 50%;
+      opacity: 0.05; filter: blur(60px);
+      background: #ff00aa; pointer-events: none; z-index: 0;
+    }
+    .login-glow-3 {
+      position: absolute; top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 600px; height: 384px; border-radius: 50%;
+      opacity: 0.03; filter: blur(60px);
+      background: #ffd700; pointer-events: none; z-index: 0;
+    }
+
+    .login-inner {
+      position: relative;
+      z-index: 2;
+      width: 100%;
+      max-width: 360px;
+    }
+
+    /* Corner brackets */
+    @keyframes bracket-pulse {
+      0%, 100% { box-shadow: 0 0 10px #00e5ff, inset 0 0 10px #00e5ff; border-color: #00e5ff; }
+      33% { box-shadow: 0 0 10px #ff00aa, inset 0 0 10px #ff00aa; border-color: #ff00aa; }
+      66% { box-shadow: 0 0 10px #ffd700, inset 0 0 10px #ffd700; border-color: #ffd700; }
+    }
+    .corner-bracket {
+      position: absolute;
+      width: 20px; height: 20px;
+      border: 2px solid #00e5ff;
+      animation: bracket-pulse 6s infinite;
+    }
+    .corner-tl { top: -2px; left: -2px; border-right: none; border-bottom: none; }
+    .corner-tr { top: -2px; right: -2px; border-left: none; border-bottom: none; animation-delay: 2s; }
+    .corner-bl { bottom: -2px; left: -2px; border-right: none; border-top: none; animation-delay: 4s; }
+    .corner-br { bottom: -2px; right: -2px; border-left: none; border-top: none; animation-delay: 1s; }
 
     .login-card {
       width: 100%;
-      max-width: 380px;
-      background: var(--bg2);
-      border: 1px solid var(--border);
-      border-radius: 20px;
+      border-radius: 16px;
       overflow: hidden;
-      box-shadow: 0 40px 80px rgba(0,0,0,0.6);
+      background: rgba(22, 25, 35, 0.95);
+      border: 1px solid rgba(255, 215, 0, 0.15);
+      box-shadow: 0 40px 80px rgba(0,0,0,0.8), 0 0 40px rgba(255,215,0,0.05);
+      backdrop-filter: blur(20px);
+      position: relative;
     }
 
-    .login-card .top-strip {
-      height: 3px;
-      background: linear-gradient(90deg, transparent, var(--accent) 30%, var(--accent2) 70%, transparent);
+    .login-top-strip {
+      height: 2px;
+      background: linear-gradient(90deg, transparent, #ffd700 30%, #ff8c00 70%, transparent);
+    }
+    .login-bottom-strip {
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(0,229,255,0.3) 50%, transparent);
     }
 
-    .login-card .body { padding: 32px 28px; }
+    .login-body { padding: 32px; }
 
-    .login-logo { text-align: center; margin-bottom: 28px; }
-    .login-logo .icon {
-      font-size: 36px; color: var(--accent);
-      display: block; margin-bottom: 8px;
-      text-shadow: 0 0 20px rgba(255,215,0,0.4);
+    .login-logo {
+      display: flex; flex-direction: column; align-items: center;
+      margin-bottom: 28px;
+    }
+    .login-logo img {
+      width: 112px; height: 112px; object-fit: contain; border-radius: 12px;
+      filter: drop-shadow(0 0 20px rgba(255,215,0,0.4)) drop-shadow(0 0 40px rgba(255,215,0,0.2));
+      margin-bottom: 16px;
     }
     .login-logo h1 {
       font-size: 22px; font-weight: 800;
-      background: linear-gradient(135deg, #ffd700, #ffaa00);
+      font-family: 'Rajdhani', sans-serif;
+      background: linear-gradient(135deg, #ffd700, #ff8c00);
       -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      letter-spacing: 0.2em; text-transform: uppercase;
+      margin: 0;
     }
     .login-logo p {
-      font-size: 12px; color: var(--text3);
-      margin-top: 4px; letter-spacing: 0.1em; text-transform: uppercase;
+      font-size: 11px; margin-top: 4px;
+      font-family: 'JetBrains Mono', monospace;
+      color: #00e5ff; letter-spacing: 0.3em; text-transform: uppercase;
+      text-shadow: 0 0 10px rgba(0,229,255,0.5);
     }
 
     .field { margin-bottom: 16px; }
     .field label {
       display: block; font-size: 10px; font-weight: 700;
-      color: var(--text3); text-transform: uppercase;
-      letter-spacing: 0.1em; margin-bottom: 7px;
+      color: #4e5260; text-transform: uppercase;
+      letter-spacing: 0.15em; margin-bottom: 8px;
     }
+    .field .input-wrap { position: relative; }
+    .field .input-icon {
+      position: absolute; left: 14px; top: 50%;
+      transform: translateY(-50%);
+      font-size: 14px; z-index: 1;
+    }
+    .field .input-icon-key { color: #ff00aa; }
+    .field .input-icon-shield { color: #ffd700; }
     .field input {
-      width: 100%; padding: 13px 14px;
-      background: var(--bg3); border: 1.5px solid var(--border2);
-      border-radius: 10px; color: var(--text);
-      font-size: 16px; /* prevents iOS zoom */
-      font-family: var(--mono); outline: none;
-      transition: border-color 0.2s;
+      width: 100%; padding: 13px 14px 13px 40px;
+      background: #0d0f16; border: 1.5px solid #2a2d3a;
+      border-radius: 12px; color: #e8eaf0;
+      font-size: 14px; font-family: 'JetBrains Mono', monospace;
+      outline: none; transition: border-color 0.2s, box-shadow 0.2s;
     }
-    .field input:focus { border-color: var(--accent); }
+    .field input:focus {
+      border-color: #ffd700;
+      box-shadow: 0 0 10px rgba(255,215,0,0.2);
+    }
+    .field .input-badge {
+      position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+      width: 28px; height: 28px; border-radius: 8px;
+      background: rgba(255,215,0,0.1); border: 1px solid rgba(255,215,0,0.3);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px;
+    }
 
     .btn-primary {
       width: 100%; padding: 14px;
-      background: linear-gradient(135deg, var(--accent), var(--accent2));
-      color: #111; font-size: 15px; font-weight: 700;
+      background: linear-gradient(135deg, #ffd700, #ff8c00);
+      color: #111; font-size: 14px; font-weight: 700;
+      font-family: 'Rajdhani', sans-serif;
       border: none; border-radius: 12px; cursor: pointer;
-      transition: all 0.2s; margin-top: 4px;
-      box-shadow: 0 6px 20px rgba(255,215,0,0.3);
+      transition: all 0.2s; margin-top: 6px;
+      box-shadow: 0 6px 24px rgba(255,140,0,0.4);
       -webkit-tap-highlight-color: transparent;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      letter-spacing: 0.2em; text-transform: uppercase;
+    }
+    .btn-primary:hover {
+      box-shadow: 0 8px 32px rgba(255,140,0,0.6);
+      transform: translateY(-1px);
     }
     .btn-primary:active { transform: scale(0.98); }
+    .btn-primary:disabled {
+      background: rgba(255,215,0,0.3);
+      box-shadow: none; cursor: not-allowed; transform: none;
+    }
 
     .error-msg {
-      background: rgba(239,68,68,0.12);
+      background: rgba(239,68,68,0.1);
       border: 1px solid rgba(239,68,68,0.3);
       border-radius: 8px; padding: 10px 14px;
-      font-size: 12px; color: var(--red);
+      font-size: 12px; color: #f87171;
       margin-top: 12px; display: none;
+      font-family: 'JetBrains Mono', monospace;
+      display: none; align-items: center; gap: 8px;
     }
+
+    .login-hint {
+      text-align: center; margin-top: 20px;
+      font-size: 11px; color: #2a2d3a;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spin-icon { display: inline-block; animation: spin 0.8s linear infinite; }
 
     /* ── Admin Panel ── */
     #admin-panel { display: none; }
@@ -468,6 +596,55 @@
       color: var(--accent);
     }
     .filter-tab:active { opacity: 0.7; }
+    .admin-section-tabs {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .admin-section-tabs .filter-tab {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 42px;
+      text-align: center;
+      white-space: normal;
+    }
+    .user-avatar,
+    .user-card .card-avatar {
+      overflow: hidden;
+      position: relative;
+    }
+    .user-avatar img,
+    .user-card .card-avatar img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .admin-user-row {
+      background: linear-gradient(90deg, rgba(251,191,36,0.16), rgba(124,58,237,0.1)) !important;
+      box-shadow: inset 3px 0 0 rgba(251,191,36,0.9);
+    }
+    .admin-user-card {
+      border-color: rgba(251,191,36,0.72) !important;
+      background: linear-gradient(135deg, rgba(251,191,36,0.16), rgba(124,58,237,0.12)), var(--bg2) !important;
+      box-shadow: inset 3px 0 0 rgba(251,191,36,0.9), 0 0 24px rgba(251,191,36,0.14);
+    }
+    .admin-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      margin-top: 5px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(251,191,36,0.45);
+      background: rgba(251,191,36,0.13);
+      color: #fde68a;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
 
     /* ── Grant Sub Modal ── */
     .sub-modal-overlay {
@@ -540,8 +717,17 @@
     .btn-grant-sub:active { transform: scale(0.98); }
     .btn-grant-sub:disabled { opacity: 0.4; cursor: not-allowed; }
 
+    .mobile-only-passkey { display: none; }
+    .admin-passkey-animated { position: relative; overflow: hidden; align-items: center; justify-content: center; gap: 10px; letter-spacing: 0.14em; }
+    .passkey-fingerprint { position: relative; z-index: 1; font-size: 20px; animation: adminFingerprintPulse 1.35s ease-in-out infinite; }
+    .passkey-scan-ring { position: absolute; width: 42px; height: 42px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.28); animation: adminPasskeyRingScan 1.45s ease-out infinite; }
+    @keyframes adminFingerprintPulse { 0%,100%{transform:scale(1);filter:drop-shadow(0 0 2px rgba(255,255,255,.2))} 50%{transform:scale(1.16);filter:drop-shadow(0 0 10px rgba(62,207,142,.9))} }
+    @keyframes adminPasskeyRingScan { 0%{transform:scale(.65);opacity:.75} 100%{transform:scale(1.75);opacity:0} }
+
     /* ── Responsive ── */
     @media (max-width: 640px) {
+      .mobile-only-passkey { display: flex; }
+
       /* Stats: 3 columns but smaller */
       .stat-card .value { font-size: 22px; }
 
@@ -591,30 +777,705 @@
     .um-title { font-size: 11px; color: var(--text3); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 6px; }
     .um-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
     .um-actions button { padding: 8px 10px; border-radius: 8px; border:1px solid var(--border2); background:var(--bg2); color:var(--text); cursor:pointer; }
+
+    /* ── Neon glass admin skin ── */
+    body {
+      background:
+        radial-gradient(circle at 10% 18%, rgba(249,115,22,0.2), transparent 26%),
+        radial-gradient(circle at 76% 12%, rgba(124,58,237,0.28), transparent 34%),
+        radial-gradient(circle at 52% 84%, rgba(14,165,233,0.13), transparent 34%),
+        linear-gradient(160deg,#06030f 0%,#0b0720 44%,#080518 72%,#05030e 100%);
+      background-attachment: fixed;
+    }
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      z-index: -2;
+      pointer-events: none;
+      background:
+        linear-gradient(115deg, transparent 0 18%, rgba(249,115,22,0.08) 18.2%, transparent 18.8%),
+        linear-gradient(30deg, transparent 0 72%, rgba(99,102,241,0.1) 72.2%, transparent 72.8%),
+        radial-gradient(circle, rgba(255,255,255,0.14) 0 1px, transparent 1.7px);
+      background-size: 100% 100%, 100% 100%, 86px 86px;
+      opacity: 0.7;
+    }
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(99,102,241,0.055) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(99,102,241,0.055) 1px, transparent 1px);
+      background-size: 58px 58px;
+      mask-image: radial-gradient(circle at center, black 0%, transparent 78%);
+    }
+    #admin-panel {
+      min-height: 100vh;
+      color: rgba(232,234,240,0.92);
+      font-family: 'JetBrains Mono', 'Segoe UI', system-ui, sans-serif;
+    }
+    #admin-panel .topbar {
+      height: 64px;
+      padding: 0 24px;
+      background: rgba(8,5,24,0.76) !important;
+      border-bottom: 1px solid rgba(99,102,241,0.3) !important;
+      box-shadow: 0 1px 0 rgba(249,115,22,0.12), 0 8px 34px rgba(0,0,0,0.46);
+      backdrop-filter: blur(18px) saturate(130%);
+    }
+    #admin-panel .topbar-logo {
+      font-family: 'Rajdhani', system-ui, sans-serif;
+      font-size: 25px;
+      gap: 8px;
+    }
+    #admin-panel .topbar-logo .diamond {
+      color: #fbbf24;
+      text-shadow: 0 0 16px rgba(251,191,36,0.72);
+    }
+    #admin-panel .topbar-logo .name {
+      background: linear-gradient(135deg,#ff7a35 0%,#ef4444 45%,#fbbf24 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      filter: drop-shadow(0 0 10px rgba(249,115,22,0.22));
+    }
+    #admin-panel .topbar-badge {
+      background: rgba(239,68,68,0.14) !important;
+      border-color: rgba(239,68,68,0.4) !important;
+      color: #fca5a5 !important;
+      box-shadow: 0 0 16px rgba(239,68,68,0.16);
+    }
+    #admin-panel #last-updated {
+      color: rgba(148,163,184,0.62);
+      max-width: none;
+    }
+    #admin-panel .topbar-btn,
+    #admin-panel .um-actions button {
+      background: rgba(31,21,74,0.58) !important;
+      border: 1px solid rgba(99,102,241,0.34) !important;
+      color: rgba(235,230,255,0.78) !important;
+      border-radius: 12px;
+      box-shadow: inset 0 0 18px rgba(99,102,241,0.12);
+    }
+    #admin-panel .topbar-btn:hover,
+    #admin-panel .um-actions button:hover {
+      border-color: rgba(34,211,238,0.55) !important;
+      color: #fff !important;
+      box-shadow: 0 0 22px rgba(59,130,246,0.18), inset 0 0 22px rgba(99,102,241,0.14);
+      transform: translateY(-1px);
+    }
+    #admin-panel .topbar-btn.danger {
+      background: rgba(248,113,113,0.1) !important;
+      border-color: rgba(248,113,113,0.28) !important;
+      color: #fecaca !important;
+    }
+    #admin-panel .main {
+      max-width: 1120px;
+      padding: 28px 20px 48px;
+    }
+    #admin-panel .stat-card,
+    #admin-panel .table-wrap,
+    #admin-panel .user-card,
+    #admin-panel .price-card,
+    #admin-panel .um-card,
+    #admin-panel .user-modal,
+    #admin-panel .sub-modal-box,
+    #admin-panel .confirm-box {
+      position: relative;
+      overflow: hidden;
+      background:
+        linear-gradient(135deg, rgba(23,17,68,0.68), rgba(25,10,58,0.46)),
+        rgba(8,6,28,0.72) !important;
+      border: 1px solid rgba(90,118,255,0.32) !important;
+      box-shadow:
+        inset 0 0 24px rgba(59,130,246,0.08),
+        0 10px 28px rgba(0,0,0,0.24),
+        0 0 30px rgba(99,102,241,0.08) !important;
+      backdrop-filter: blur(14px) saturate(130%);
+    }
+    #admin-panel .stat-card::before,
+    #admin-panel .table-wrap::before,
+    #admin-panel .user-card::before,
+    #admin-panel .price-card::before,
+    #admin-panel .um-card::before,
+    #admin-panel .user-modal::before,
+    #admin-panel .sub-modal-box::before,
+    #admin-panel .confirm-box::before {
+      content: '';
+      position: absolute;
+      inset: 0 auto auto 0;
+      width: 56%;
+      height: 1px;
+      background: linear-gradient(90deg, rgba(34,211,238,0.9), transparent);
+      opacity: 0.74;
+      pointer-events: none;
+    }
+    #admin-panel .stat-card {
+      min-height: 88px;
+      border-radius: 14px;
+      padding: 18px 16px;
+    }
+    #admin-panel .stat-card:hover,
+    #admin-panel .table-wrap:hover,
+    #admin-panel .user-card:hover,
+    #admin-panel .price-card:hover {
+      border-color: rgba(34,211,238,0.56) !important;
+      box-shadow:
+        inset 0 0 28px rgba(59,130,246,0.12),
+        0 0 32px rgba(59,130,246,0.14),
+        0 12px 30px rgba(0,0,0,0.28) !important;
+      transform: translateY(-1px);
+    }
+    #admin-panel .stat-card .bg-icon {
+      right: 14px;
+      top: 14px;
+      opacity: 0.1;
+      font-size: 28px;
+      filter: drop-shadow(0 0 12px rgba(99,102,241,0.4));
+    }
+    #admin-panel .stat-card .value {
+      font-size: 30px;
+      font-family: 'Rajdhani', system-ui, sans-serif;
+      text-shadow: 0 0 20px currentColor;
+    }
+    #admin-panel .stat-card .label,
+    #admin-panel thead th {
+      color: rgba(203,213,225,0.52);
+      font-family: 'Rajdhani', system-ui, sans-serif;
+      font-size: 11px;
+      letter-spacing: 0.1em;
+    }
+    #admin-panel .filter-tabs {
+      gap: 9px;
+      margin-bottom: 16px;
+    }
+    #admin-panel .admin-section-tabs {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      overflow: visible;
+      padding-bottom: 0;
+    }
+    #admin-panel .filter-tab {
+      border-radius: 999px;
+      padding: 8px 16px;
+      background: linear-gradient(135deg, rgba(31,21,74,0.6), rgba(16,12,45,0.48)) !important;
+      border: 1px solid rgba(99,102,241,0.32) !important;
+      color: rgba(235,230,255,0.72) !important;
+      box-shadow: inset 0 0 18px rgba(99,102,241,0.1), 0 5px 16px rgba(0,0,0,0.14);
+      backdrop-filter: blur(10px);
+    }
+    #admin-panel .filter-tab:hover {
+      border-color: rgba(34,211,238,0.48) !important;
+      color: #fff !important;
+      transform: translateY(-1px);
+    }
+    #admin-panel .filter-tab.active {
+      background: linear-gradient(135deg, rgba(251,191,36,0.2), rgba(124,58,237,0.22)) !important;
+      border-color: rgba(251,191,36,0.66) !important;
+      color: #ffe86a !important;
+      box-shadow: 0 0 24px rgba(251,191,36,0.2), inset 0 0 22px rgba(251,191,36,0.08);
+    }
+    #admin-panel .section-header {
+      align-items: center;
+      margin-bottom: 14px;
+    }
+    #admin-panel .section-title {
+      font-family: 'Rajdhani', system-ui, sans-serif;
+      font-size: 18px;
+      font-weight: 800;
+      color: #fff;
+      text-shadow: 0 0 18px rgba(99,102,241,0.28);
+    }
+    #admin-panel .search-box,
+    #admin-panel .price-input,
+    #admin-panel .custom-days-input,
+    #admin-panel textarea,
+    #admin-panel select,
+    #admin-panel input:not(#admin-key-input):not(#admin-totp-input) {
+      background: rgba(21,15,58,0.56) !important;
+      border: 1px solid rgba(99,102,241,0.34) !important;
+      color: #e8eaf0 !important;
+      border-radius: 12px !important;
+      box-shadow: inset 0 0 18px rgba(59,130,246,0.1);
+    }
+    #admin-panel .search-box:focus,
+    #admin-panel .price-input:focus,
+    #admin-panel .custom-days-input:focus,
+    #admin-panel textarea:focus,
+    #admin-panel select:focus,
+    #admin-panel input:not(#admin-key-input):not(#admin-totp-input):focus {
+      border-color: rgba(34,211,238,0.72) !important;
+      box-shadow: inset 0 0 20px rgba(59,130,246,0.14), 0 0 24px rgba(34,211,238,0.18);
+    }
+    #admin-panel .table-wrap {
+      border-radius: 16px;
+    }
+    #admin-panel thead tr {
+      background: linear-gradient(90deg, rgba(59,130,246,0.16), rgba(249,115,22,0.09)) !important;
+      border-bottom: 1px solid rgba(123,92,255,0.32) !important;
+    }
+    #admin-panel tbody tr {
+      border-bottom: 1px solid rgba(123,92,255,0.2) !important;
+    }
+    #admin-panel tbody tr:hover {
+      background: rgba(99,102,241,0.09) !important;
+    }
+    #admin-panel tbody td {
+      color: rgba(232,234,240,0.84);
+    }
+    #admin-panel .user-name {
+      color: #ffd84d;
+      font-weight: 800;
+    }
+    #admin-panel .user-id,
+    #admin-panel .email-cell,
+    #admin-panel .user-card .card-email,
+    #admin-panel .user-card .card-time {
+      color: rgba(203,213,225,0.58) !important;
+    }
+    #admin-panel .badge-sub-on,
+    #admin-panel .badge-sub-expiring,
+    #admin-panel .badge-bot-on {
+      background: rgba(251,191,36,0.12) !important;
+      border-color: rgba(251,191,36,0.36) !important;
+      color: #fbbf24 !important;
+      box-shadow: 0 0 16px rgba(251,191,36,0.12);
+    }
+    #admin-panel .badge-bot-on {
+      background: rgba(62,207,142,0.12) !important;
+      border-color: rgba(62,207,142,0.34) !important;
+      color: #3ecf8e !important;
+    }
+    #admin-panel .badge-sub-off,
+    #admin-panel .badge-bot-off {
+      background: rgba(31,21,74,0.58) !important;
+      border-color: rgba(148,163,184,0.18) !important;
+      color: rgba(203,213,225,0.48) !important;
+    }
+    #admin-panel .btn-sub,
+    #admin-panel .btn-sub-card,
+    #admin-panel .btn-save-prices,
+    #admin-panel .btn-grant-sub,
+    #admin-panel .btn-primary {
+      background: linear-gradient(135deg, rgba(251,191,36,0.95), rgba(245,158,11,0.9)) !important;
+      border: 1px solid rgba(251,191,36,0.5) !important;
+      color: #111 !important;
+      box-shadow: 0 0 24px rgba(251,191,36,0.22), inset 0 0 12px rgba(255,255,255,0.2) !important;
+      border-radius: 12px;
+    }
+    #admin-panel .btn-sub:hover,
+    #admin-panel .btn-save-prices:hover,
+    #admin-panel .btn-grant-sub:hover,
+    #admin-panel .btn-primary:hover {
+      filter: saturate(1.12) brightness(1.05);
+      transform: translateY(-1px);
+    }
+    #admin-panel .btn-delete,
+    #admin-panel .btn-delete-card,
+    #admin-panel .btn-revoke-sub,
+    #admin-panel .btn-confirm-delete {
+      background: rgba(248,113,113,0.12) !important;
+      border: 1px solid rgba(248,113,113,0.32) !important;
+      color: #fca5a5 !important;
+      box-shadow: 0 0 18px rgba(248,113,113,0.12);
+    }
+    #admin-panel .btn-delete:hover,
+    #admin-panel .btn-revoke-sub:hover,
+    #admin-panel .btn-confirm-delete:hover {
+      border-color: rgba(248,113,113,0.72) !important;
+      background: rgba(248,113,113,0.18) !important;
+    }
+    #admin-panel .table-wrap > div[style*="border:1px solid"],
+    #admin-panel .table-wrap > div[style*="border: 1px solid"],
+    #admin-panel #support-list > div:not(.empty),
+    #admin-panel #groq-limits-box table {
+      background: rgba(10,8,32,0.56) !important;
+      border-color: rgba(90,118,255,0.3) !important;
+      border-radius: 14px !important;
+      box-shadow: inset 0 0 20px rgba(59,130,246,0.08);
+    }
+    #admin-panel #support-list pre {
+      background: rgba(13,9,38,0.7) !important;
+      border: 1px solid rgba(90,118,255,0.22);
+      color: rgba(232,234,240,0.76) !important;
+    }
+    #admin-panel code {
+      color: #67e8f9;
+      background: rgba(34,211,238,0.08);
+      border: 1px solid rgba(34,211,238,0.16);
+      border-radius: 6px;
+      padding: 1px 5px;
+    }
+    #admin-panel .loading,
+    #admin-panel .empty {
+      color: rgba(203,213,225,0.58);
+      background: rgba(8,6,28,0.52) !important;
+      border: 1px solid rgba(90,118,255,0.24) !important;
+      border-radius: 16px;
+    }
+    #admin-panel .spinner {
+      border-color: rgba(99,102,241,0.24);
+      border-top-color: #22d3ee;
+      box-shadow: 0 0 22px rgba(34,211,238,0.18);
+    }
+    #toast {
+      background: linear-gradient(135deg, rgba(23,17,68,0.94), rgba(25,10,58,0.9)) !important;
+      border-color: rgba(34,211,238,0.38) !important;
+      box-shadow: 0 18px 50px rgba(0,0,0,0.45), 0 0 26px rgba(34,211,238,0.14) !important;
+    }
+    #admin-panel .sub-modal-overlay,
+    #admin-panel .confirm-overlay,
+    #admin-panel .user-modal-overlay {
+      background:
+        radial-gradient(circle at 20% 10%, rgba(37,99,235,0.2), transparent 34%),
+        rgba(4,3,16,0.78) !important;
+      backdrop-filter: blur(14px) saturate(120%);
+    }
+    #admin-panel .duration-grid {
+      gap: 10px;
+    }
+    #admin-panel .dur-btn {
+      background: rgba(31,21,74,0.58) !important;
+      border-color: rgba(99,102,241,0.34) !important;
+      border-radius: 12px;
+    }
+    #admin-panel .dur-btn.selected {
+      background: rgba(251,191,36,0.12) !important;
+      border-color: rgba(251,191,36,0.66) !important;
+      box-shadow: 0 0 22px rgba(251,191,36,0.18);
+    }
+    #admin-panel .user-card {
+      border-radius: 16px;
+    }
+    #admin-panel .user-card .card-name {
+      color: #ffd84d;
+    }
+    @media (max-width: 640px) {
+      #admin-panel .topbar {
+        height: 58px;
+        padding: 0 12px;
+      }
+      #admin-panel .topbar-logo {
+        font-size: 22px;
+      }
+      #admin-panel .main {
+        padding: 18px 12px 36px;
+      }
+      #admin-panel .stats-row {
+        gap: 10px;
+      }
+      #admin-panel .stat-card {
+        padding: 14px 12px;
+        min-height: 82px;
+      }
+      #admin-panel .stat-card .value {
+        font-size: 25px;
+      }
+      #admin-panel .filter-tabs:not(.admin-section-tabs) {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        padding-bottom: 4px;
+        scrollbar-width: none;
+      }
+      #admin-panel .filter-tabs:not(.admin-section-tabs)::-webkit-scrollbar {
+        display: none;
+      }
+      #admin-panel .filter-tabs:not(.admin-section-tabs) .filter-tab {
+        flex: 0 0 auto;
+      }
+      #admin-panel .admin-section-tabs {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+      }
+      #admin-panel .admin-section-tabs .filter-tab {
+        min-height: 42px;
+        padding: 8px 6px;
+        font-size: 11px;
+      }
+      #admin-panel .section-header {
+        gap: 10px;
+      }
+    }
+
+    /* ── Neon glass admin login skin ── */
+    #login-screen {
+      padding: 32px 18px;
+      background:
+        radial-gradient(circle at 50% 28%, rgba(99,102,241,0.28), transparent 28%),
+        radial-gradient(circle at 32% 56%, rgba(249,115,22,0.18), transparent 30%),
+        radial-gradient(circle at 72% 48%, rgba(217,70,239,0.16), transparent 30%),
+        linear-gradient(160deg,#03020b 0%,#0a0620 48%,#04020d 100%) !important;
+    }
+    #login-screen::before {
+      background:
+        radial-gradient(circle, rgba(255,255,255,0.2) 0 1px, transparent 1.8px),
+        url("data:image/svg+xml,%3Csvg width='92' height='106' viewBox='0 0 92 106' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' stroke='%232563eb' stroke-opacity='.16' stroke-width='1'%3E%3Cpath d='M46 1 91 26.5v53L46 105 1 79.5v-53z'/%3E%3Cpath d='M46 13 80 32.5v41L46 93 12 73.5v-41z'/%3E%3C/g%3E%3C/svg%3E");
+      background-size: 120px 120px, 184px 212px;
+      opacity: 0.65;
+    }
+    .login-scanline {
+      opacity: 0.18;
+      mix-blend-mode: screen;
+    }
+    .login-glow-1 {
+      top: 12%;
+      left: 26%;
+      width: 520px;
+      height: 520px;
+      opacity: 0.14;
+      background: #2563eb;
+      filter: blur(95px);
+    }
+    .login-glow-2 {
+      right: 24%;
+      bottom: 8%;
+      width: 520px;
+      height: 520px;
+      opacity: 0.12;
+      background: #d946ef;
+      filter: blur(95px);
+    }
+    .login-glow-3 {
+      width: 560px;
+      height: 420px;
+      opacity: 0.1;
+      background: #f97316;
+      filter: blur(90px);
+    }
+    .login-inner {
+      max-width: 430px;
+      filter: drop-shadow(0 34px 80px rgba(0,0,0,0.58));
+    }
+    .corner-bracket {
+      display: none;
+    }
+    .login-card {
+      border-radius: 38px;
+      border: 2px solid transparent;
+      overflow: hidden;
+      background:
+        linear-gradient(155deg, rgba(8,6,28,0.78), rgba(20,11,54,0.54)) padding-box,
+        conic-gradient(from 220deg, #ff7a00, #22d3ee, #7c3aed, #f43fef, #ff7a00) border-box;
+      box-shadow:
+        0 0 26px rgba(34,211,238,0.26),
+        0 0 38px rgba(217,70,239,0.28),
+        0 0 52px rgba(249,115,22,0.18),
+        inset 0 0 34px rgba(99,102,241,0.14);
+      backdrop-filter: blur(22px) saturate(135%);
+    }
+    .login-card::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(circle at 22% 78%, rgba(249,115,22,0.24), transparent 28%),
+        radial-gradient(circle at 78% 16%, rgba(236,72,153,0.2), transparent 30%),
+        radial-gradient(circle at 44% 20%, rgba(251,191,36,0.16), transparent 24%),
+        linear-gradient(180deg, rgba(255,255,255,0.08), transparent 40%);
+      opacity: 0.86;
+    }
+    .login-top-strip,
+    .login-bottom-strip {
+      display: none;
+    }
+    .login-body {
+      position: relative;
+      z-index: 1;
+      padding: 34px 44px 30px;
+    }
+    .login-logo {
+      margin-bottom: 26px;
+    }
+    .login-logo img {
+      width: 104px;
+      height: 104px;
+      border-radius: 16px;
+      box-shadow:
+        0 0 28px rgba(251,191,36,0.36),
+        0 0 44px rgba(249,115,22,0.22);
+      filter: saturate(1.08) contrast(1.06) drop-shadow(0 0 18px rgba(251,191,36,0.42));
+    }
+    .login-logo h1 {
+      margin-top: 2px;
+      font-size: 26px;
+      letter-spacing: 0.24em;
+      color: #facc15;
+      background: linear-gradient(180deg,#fff7ad 0%,#facc15 42%,#f59e0b 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      text-shadow: 0 0 16px rgba(250,204,21,0.58);
+    }
+    .login-logo p {
+      margin-top: 8px;
+      color: #22d3ee;
+      letter-spacing: 0.36em;
+      text-shadow: 0 0 14px rgba(34,211,238,0.62);
+    }
+    .login-card .field {
+      margin-bottom: 18px;
+    }
+    .login-card .field label {
+      color: rgba(165,180,252,0.66);
+      font-size: 10px;
+      letter-spacing: 0.22em;
+      padding-left: 2px;
+    }
+    .login-card .field input {
+      min-height: 48px;
+      padding: 14px 44px;
+      background: rgba(4,3,18,0.58);
+      border: 1px solid rgba(99,102,241,0.72);
+      border-radius: 13px;
+      color: #f8fafc;
+      box-shadow:
+        inset 0 0 18px rgba(37,99,235,0.16),
+        0 0 18px rgba(99,102,241,0.16);
+    }
+    .login-card .field input::placeholder {
+      color: rgba(226,232,240,0.48);
+    }
+    .login-card .field input:focus {
+      border-color: rgba(34,211,238,0.95);
+      box-shadow:
+        inset 0 0 20px rgba(37,99,235,0.2),
+        0 0 26px rgba(34,211,238,0.28),
+        0 0 20px rgba(217,70,239,0.18);
+    }
+    .login-card .field .input-icon {
+      left: 16px;
+      font-size: 15px;
+      text-shadow: 0 0 12px currentColor;
+    }
+    .login-card .field .input-icon-key {
+      color: #d946ef;
+    }
+    .login-card .field .input-icon-shield {
+      color: #facc15;
+    }
+    .login-card .field .input-badge {
+      right: 11px;
+      background: rgba(17,13,48,0.72);
+      border-color: rgba(148,163,184,0.34);
+      color: #c4b5fd;
+      box-shadow: inset 0 0 12px rgba(124,58,237,0.16);
+    }
+    #login-btn {
+      min-height: 54px;
+      margin-top: 14px;
+      border-radius: 13px;
+      background: linear-gradient(100deg,#facc15 0%,#fb923c 24%,#ec4899 64%,#c026d3 100%);
+      color: #fff;
+      font-size: 18px;
+      letter-spacing: 0.24em;
+      text-shadow: 0 0 12px rgba(255,255,255,0.42);
+      box-shadow:
+        0 0 24px rgba(236,72,153,0.48),
+        0 0 32px rgba(249,115,22,0.26),
+        inset 0 0 18px rgba(255,255,255,0.28);
+    }
+    #login-btn:hover {
+      box-shadow:
+        0 0 28px rgba(236,72,153,0.62),
+        0 0 42px rgba(34,211,238,0.22),
+        inset 0 0 20px rgba(255,255,255,0.3);
+    }
+    #passkey-login-btn {
+      min-height: 50px;
+      border-radius: 13px;
+      background: linear-gradient(100deg,#22d3ee,#7c3aed,#ec4899) !important;
+      color: #fff !important;
+      box-shadow: 0 0 24px rgba(34,211,238,0.26), 0 0 28px rgba(236,72,153,0.22) !important;
+    }
+    .login-hint {
+      margin-top: 20px;
+      color: rgba(148,163,184,0.28);
+      letter-spacing: 0.13em;
+    }
+    @media (max-width: 520px) {
+      #login-screen {
+        padding: 18px 12px;
+      }
+      .login-card {
+        border-radius: 30px;
+      }
+      .login-body {
+        padding: 28px 24px 26px;
+      }
+      .login-logo img {
+        width: 90px;
+        height: 90px;
+      }
+      .login-logo h1 {
+        font-size: 22px;
+        letter-spacing: 0.2em;
+      }
+    }
   </style>
 </head>
 <body>
 
 <!-- LOGIN -->
 <div id="login-screen">
-  <div class="login-card">
-    <div class="top-strip"></div>
-    <div class="body">
-      <div class="login-logo">
-        <span class="icon">◈</span>
-        <h1>Cicada Admin</h1>
-        <p>Панель управления</p>
+  <div class="login-scanline"></div>
+  <div class="login-glow-1"></div>
+  <div class="login-glow-2"></div>
+  <div class="login-glow-3"></div>
+
+  <div class="login-inner">
+    <!-- Corner brackets -->
+    <div class="corner-bracket corner-tl"></div>
+    <div class="corner-bracket corner-tr"></div>
+    <div class="corner-bracket corner-bl"></div>
+    <div class="corner-bracket corner-br"></div>
+
+    <div class="login-card">
+      <div class="login-top-strip"></div>
+      <div class="login-body">
+
+        <!-- Logo -->
+        <div class="login-logo">
+          <img src="cicada-logo.jpeg" alt="Cicada Studio">
+          <h1>CICADA STUDIO</h1>
+          <p>ПАНЕЛЬ ВХОДА</p>
+        </div>
+
+        <!-- Fields -->
+        <div class="field">
+          <label>Секретный ключ</label>
+          <div class="input-wrap">
+            <span class="input-icon input-icon-key">🗝</span>
+            <input type="password" id="admin-key-input" placeholder="Введите ключ доступа" autocomplete="current-password" />
+          </div>
+        </div>
+
+        <div class="field" id="admin-totp-wrap">
+          <label>Код Authenticator</label>
+          <div class="input-wrap">
+            <span class="input-icon input-icon-shield">🛡</span>
+            <input type="text" id="admin-totp-input" placeholder="Введите код из приложения" inputmode="numeric" pattern="[0-9\s]*" maxlength="12" autocomplete="one-time-code" />
+            <div class="input-badge">🛡</div>
+          </div>
+        </div>
+
+        <button class="btn-primary" id="login-btn" onclick="tryLogin()">
+          <span>→</span>
+          <span>ВОЙТИ</span>
+        </button>
+        <button class="btn-primary mobile-only-passkey admin-passkey-animated" id="passkey-login-btn" onclick="tryPasskeyLogin()" style="display:none;margin-top:10px;background:linear-gradient(135deg,#7c3aed,#2563eb)">
+          <span class="passkey-scan-ring"></span>
+          <span class="passkey-fingerprint">🫆</span>
+          <span>ВОЙТИ</span>
+        </button>
+
+        <div class="error-msg" id="login-error">⚠ Неверный ключ, код или отпечаток</div>
+
+        <p class="login-hint">NEON PROTOCOL • SECURE</p>
       </div>
-      <div class="field">
-        <label>Секретный ключ</label>
-        <input type="password" id="admin-key-input" placeholder="Введите ключ доступа" autocomplete="current-password" />
-      </div>
-      <div class="field" id="admin-totp-wrap" style="display:none">
-        <label>Код Authenticator</label>
-        <input type="text" id="admin-totp-input" placeholder="6 цифр из приложения" inputmode="numeric" pattern="[0-9\s]*" maxlength="12" autocomplete="one-time-code" />
-      </div>
-      <button class="btn-primary" onclick="tryLogin()">→ Войти</button>
-      <div class="error-msg" id="login-error">Неверный ключ или код</div>
+      <div class="login-bottom-strip"></div>
     </div>
   </div>
 </div>
@@ -629,6 +1490,7 @@
     <span class="topbar-badge">Admin</span>
     <div class="topbar-spacer"></div>
     <span id="last-updated"></span>
+    <button class="topbar-btn" onclick="window.top.location.href='/'">Конструктор</button>
     <button class="topbar-btn" onclick="loadUsers()">↻</button>
     <button class="topbar-btn danger" onclick="logout()">Выйти</button>
   </div>
@@ -665,9 +1527,10 @@
       </div>
     </div>
 
-    <div class="filter-tabs" style="margin-bottom:14px">
+    <div class="filter-tabs admin-section-tabs" style="margin-bottom:14px">
       <div class="filter-tab active" data-section="money" onclick="setSection('money', this)">💰 Деньги</div>
       <div class="filter-tab" data-section="users" onclick="setSection('users', this)">👥 Пользователи</div>
+      <div class="filter-tab" data-section="support" onclick="setSection('support', this)">🛟 Обращения</div>
       <div class="filter-tab" data-section="product" onclick="setSection('product', this)">🤖 Боты / продукт</div>
       <div class="filter-tab" data-section="security" onclick="setSection('security', this)">🔒 Безопасность</div>
       <div class="filter-tab" data-section="system" onclick="setSection('system', this)">🖥 Система</div>
@@ -723,6 +1586,16 @@
           <div class="icon">👤</div>
           Пользователи не найдены
         </div>
+      </div>
+    </div>
+
+    <div id="section-support" style="display:none">
+      <div class="section-header">
+        <div class="section-title">Обращения</div>
+        <button class="topbar-btn" onclick="loadSupportRequests()">↻ Обновить</button>
+      </div>
+      <div class="table-wrap" style="padding:14px">
+        <div id="support-list" class="loading" style="padding:20px">Загрузка...</div>
       </div>
     </div>
 
@@ -833,6 +1706,7 @@
 
 <script>
   const API = '__API_TARGET__';
+  const ADMIN_JWT = __ADMIN_JWT_JSON__;
   let adminKey = '';
   let allUsers = [];
   let currentFilter = 'all';
@@ -840,7 +1714,10 @@
   let securityInfo = null;
   let systemInfo = null;
   let loginTotpRequired = false;
+  let loginPasskeyEnabled = false;
   let adminLogs = { apiErrors: [], authErrors: [], adminActions: [] };
+  let supportRequests = [];
+  const PRIMARY_ADMIN_EMAIL = 'denisbednakov@gmail.com';
 
   const AVATAR_COLORS = [
     'linear-gradient(135deg,#ffd700,#ff8c00)',
@@ -855,11 +1732,67 @@
     return AVATAR_COLORS[name.charCodeAt(0) % AVATAR_COLORS.length];
   }
 
+  function isPrimaryAdmin(user) {
+    return String(user && user.email || '').trim().toLowerCase() === PRIMARY_ADMIN_EMAIL;
+  }
+
+  function resolveAssetUrl(url) {
+    if (!url || typeof url !== 'string') return '';
+    if (/^(?:data:|blob:|https?:\/\/)/i.test(url)) return url;
+    if (!url.startsWith('/api/')) return url;
+    try {
+      var base = API || window.location.origin;
+      return new URL(url, new URL(base, window.location.origin).origin).toString();
+    } catch (e) {
+      return url;
+    }
+  }
+
+  function avatarHtml(user, className) {
+    var label = (user && (user.name || user.email) || '?');
+    var letter = label[0].toUpperCase();
+    var photo = resolveAssetUrl(user && (user.photo_url || user.photoUrl));
+    var color = avatarColor(label);
+    if (photo) {
+      return '<div class="' + className + '" style="background:' + color + '"><img src="' + escHtml(photo) + '" alt="" loading="lazy" onerror="this.remove();this.parentElement.textContent=\'' + escJs(letter) + '\'"></div>';
+    }
+    return '<div class="' + className + '" style="background:' + color + '">' + escHtml(letter) + '</div>';
+  }
+
+  function sortUsersForAdmin(users) {
+    return users.slice().sort(function(a, b) {
+      var ap = isPrimaryAdmin(a) ? 0 : 1;
+      var bp = isPrimaryAdmin(b) ? 0 : 1;
+      if (ap !== bp) return ap - bp;
+      return String(a.name || a.email || '').localeCompare(String(b.name || b.email || ''), 'ru');
+    });
+  }
+
+  function adminAuthHeaders() {
+    return ADMIN_JWT ? { Authorization: 'Bearer ' + ADMIN_JWT } : {};
+  }
+
+  (function patchAdminFetchAuth() {
+    var nativeFetch = window.fetch.bind(window);
+    window.fetch = function(input, init) {
+      var url = typeof input === 'string' ? input : (input && input.url) || '';
+      var path = '';
+      try { path = new URL(url, window.location.origin).pathname; } catch (e) { path = String(url || ''); }
+      if (!ADMIN_JWT || !path.startsWith('/api/admin')) return nativeFetch(input, init);
+      var nextInit = Object.assign({}, init || {});
+      var headers = new Headers(nextInit.headers || (input && input.headers) || {});
+      if (!headers.has('Authorization')) headers.set('Authorization', 'Bearer ' + ADMIN_JWT);
+      nextInit.headers = headers;
+      return nativeFetch(input, nextInit);
+    };
+  })();
+
   async function apiPostJson(url, body) {
     var cr = await fetch(API + '/api/csrf-token', { credentials: 'include' });
     var ct = '';
     try { ct = (await cr.json()).csrfToken; } catch (e) {}
     var headers = { 'Content-Type': 'application/json' };
+    Object.assign(headers, adminAuthHeaders());
     if (ct) headers['x-csrf-token'] = ct;
     return fetch(url, {
       method: 'POST',
@@ -867,6 +1800,43 @@
       headers: headers,
       body: JSON.stringify(body != null ? body : {}),
     });
+  }
+
+  function b64urlToBuffer(value) {
+    var s = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
+    while (s.length % 4) s += '=';
+    var bin = atob(s);
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+    return bytes.buffer;
+  }
+
+  function bufferToB64url(buffer) {
+    var bytes = new Uint8Array(buffer || new ArrayBuffer(0));
+    var bin = '';
+    for (var i = 0; i < bytes.length; i += 1) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  }
+
+  function preparePasskeyOptions(options) {
+    var publicKey = Object.assign({}, options.publicKey || {});
+    publicKey.challenge = b64urlToBuffer(publicKey.challenge);
+    if (publicKey.user && publicKey.user.id) publicKey.user.id = b64urlToBuffer(publicKey.user.id);
+    ['allowCredentials', 'excludeCredentials'].forEach(function(key) {
+      if (Array.isArray(publicKey[key])) {
+        publicKey[key] = publicKey[key].map(function(c) { return Object.assign({}, c, { id: b64urlToBuffer(c.id) }); });
+      }
+    });
+    return publicKey;
+  }
+
+  function serializePasskeyCredential(credential, challenge) {
+    var r = credential.response;
+    var out = { id: credential.id, type: credential.type, rawId: bufferToB64url(credential.rawId), challenge: challenge, response: {} };
+    ['clientDataJSON', 'attestationObject', 'authenticatorData', 'signature', 'userHandle'].forEach(function(key) {
+      if (r[key]) out.response[key] = bufferToB64url(r[key]);
+    });
+    return out;
   }
 
   function showToast(msg, color = 'var(--text)') {
@@ -877,21 +1847,38 @@
     setTimeout(() => t.classList.remove('show'), 3000);
   }
 
-  function downloadAdminAsset(adminPath) {
+  async function downloadAdminAsset(adminPath) {
     var base = (typeof API !== 'undefined' && API) ? API : '';
-    window.location.href = base + adminPath;
     showToast('Запрос на скачивание…', 'var(--text2)');
+    try {
+      var res = await fetch(base + adminPath, { credentials: 'include', headers: adminAuthHeaders() });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      var blob = await res.blob();
+      var disposition = res.headers.get('content-disposition') || '';
+      var match = disposition.match(/filename="?([^"]+)"?/i);
+      var filename = match ? match[1] : 'cicada-admin-download';
+      var link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(function() { URL.revokeObjectURL(link.href); }, 1000);
+    } catch (e) {
+      showToast('Не удалось скачать файл: ' + (e.message || 'ошибка'), 'var(--red)');
+    }
   }
 
   function setSection(section, el) {
     currentSection = section;
     document.querySelectorAll('[data-section]').forEach(function(t) { t.classList.remove('active'); });
     if (el) el.classList.add('active');
-    ['money', 'users', 'product', 'security', 'system'].forEach(function(key) {
+    ['money', 'users', 'support', 'product', 'security', 'system'].forEach(function(key) {
       var node = document.getElementById('section-' + key);
       if (node) node.style.display = (key === section ? 'block' : 'none');
     });
     if (section === 'product') renderProductSummary();
+    if (section === 'support') loadSupportRequests();
     if (section === 'security') { loadSecurity(); loadGroqTokens(); }
     if (section === 'system') { loadSystem(); loadAdminLogs(); }
   }
@@ -901,9 +1888,63 @@
       const r = await fetch(API + '/api/admin/login-config');
       const j = await r.json();
       loginTotpRequired = !!j.totpRequired;
+      loginPasskeyEnabled = !!j.passkeyEnabled && !!window.PublicKeyCredential;
       var wrap = document.getElementById('admin-totp-wrap');
       if (wrap) wrap.style.display = loginTotpRequired ? 'block' : 'none';
+      syncPasskeyLoginButtonVisibility();
     } catch (e) {}
+  }
+
+
+  function syncPasskeyLoginButtonVisibility() {
+    var passkeyBtn = document.getElementById('passkey-login-btn');
+    if (passkeyBtn) passkeyBtn.style.display = (loginPasskeyEnabled && window.innerWidth <= 640) ? 'flex' : 'none';
+  }
+
+  async function tryPasskeyLogin() {
+    if (!window.PublicKeyCredential) {
+      showToast('Этот браузер не поддерживает вход по отпечатку / Face ID', 'var(--red)');
+      return;
+    }
+    var btn = document.getElementById('passkey-login-btn');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin-icon">⟳</span> Отпечаток...'; }
+    try {
+      var optionsRes = await apiPostJson(API + '/api/admin/passkey/login-options', {});
+      var options = await optionsRes.json().catch(function() { return {}; });
+      if (!optionsRes.ok) throw new Error(options.error || 'Отпечаток / Face ID ещё не настроен');
+      var challenge = options.publicKey.challenge;
+      var credential = await navigator.credentials.get({ publicKey: preparePasskeyOptions(options) });
+      var verifyRes = await apiPostJson(API + '/api/admin/passkey/login', serializePasskeyCredential(credential, challenge));
+      if (!verifyRes.ok) throw new Error('Отпечаток / Face ID не принят сервером');
+      adminKey = '__passkey__';
+      loadUsers();
+    } catch (e) {
+      var errEl = document.getElementById('login-error');
+      errEl.textContent = '⚠ ' + (e.message || 'Не удалось войти по отпечатку / Face ID');
+      errEl.style.display = 'flex';
+      if (btn) { btn.disabled = false; btn.innerHTML = '<span class="passkey-scan-ring"></span><span class="passkey-fingerprint">🫆</span><span>ВОЙТИ</span>'; }
+    }
+  }
+
+  async function registerAdminPasskey() {
+    if (!window.PublicKeyCredential) {
+      showToast('Этот браузер не поддерживает вход по отпечатку / Face ID', 'var(--red)');
+      return;
+    }
+    try {
+      var optionsRes = await apiPostJson(API + '/api/admin/passkey/register-options', {});
+      var options = await optionsRes.json().catch(function() { return {}; });
+      if (!optionsRes.ok) throw new Error(options.error || 'Нет доступа к регистрации отпечатка / Face ID');
+      var challenge = options.publicKey.challenge;
+      var credential = await navigator.credentials.create({ publicKey: preparePasskeyOptions(options) });
+      var verifyRes = await apiPostJson(API + '/api/admin/passkey/register', serializePasskeyCredential(credential, challenge));
+      var verify = await verifyRes.json().catch(function() { return {}; });
+      if (!verifyRes.ok) throw new Error(verify.error || 'Сервер отклонил отпечаток / Face ID');
+      showToast('Отпечаток / Face ID зарегистрирован для админки', 'var(--green)');
+      loadSecurity();
+    } catch (e) {
+      showToast(e.message || 'Не удалось зарегистрировать отпечаток / Face ID', 'var(--red)');
+    }
   }
 
   async function tryLogin() {
@@ -913,26 +1954,32 @@
     var totpRaw = totpEl ? totpEl.value.replace(/\s/g, '') : '';
     if (loginTotpRequired && totpRaw.length !== 6) {
       var errEl = document.getElementById('login-error');
-      errEl.textContent = 'Введите 6-значный код из приложения';
-      errEl.style.display = 'block';
+      errEl.textContent = '⚠ Введите 6-значный код из приложения';
+      errEl.style.display = 'flex';
       return;
     }
+    var btn = document.getElementById('login-btn');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin-icon">⟳</span> Проверка...'; }
     try {
       const body = loginTotpRequired ? { key, totp: totpRaw } : { key };
       const res = await apiPostJson(API + '/api/admin/login', body);
       if (res.status === 403) {
-        document.getElementById('login-error').textContent = 'Неверный ключ или код';
-        document.getElementById('login-error').style.display = 'block';
+        var e2 = document.getElementById('login-error');
+        e2.textContent = '⚠ Неверный ключ или код';
+        e2.style.display = 'flex';
+        if (btn) { btn.disabled = false; btn.innerHTML = '<span>→</span><span>ВОЙТИ</span>'; }
         return;
       }
       if (res.status === 503) {
         showToast('Сервер: проверьте ADMIN_KEY', 'var(--red)');
+        if (btn) { btn.disabled = false; btn.innerHTML = '<span>→</span><span>ВОЙТИ</span>'; }
         return;
       }
       adminKey = key;
       loadUsers();
     } catch(e) {
       showToast('Ошибка подключения к серверу', 'var(--red)');
+      if (btn) { btn.disabled = false; btn.innerHTML = '<span>→</span><span>ВОЙТИ</span>'; }
     }
   }
 
@@ -1007,7 +2054,9 @@
       document.getElementById('login-screen').style.display = 'none';
       document.getElementById('admin-panel').style.display = 'block';
       document.getElementById('login-error').style.display = 'none';
-      var activeSectionTab = document.querySelector('[data-section].active');
+      var hashSection = String(window.location.hash || '').replace(/^#/, '');
+      var hashSectionTab = hashSection ? document.querySelector('[data-section="' + hashSection.replace(/"/g, '') + '"]') : null;
+      var activeSectionTab = hashSectionTab || document.querySelector('[data-section].active');
       if (activeSectionTab) {
         setSection(activeSectionTab.getAttribute('data-section'), activeSectionTab);
       }
@@ -1027,6 +2076,7 @@
       renderTable();
       renderProductSummary();
       loadPlans();
+      if (currentSection === 'support') loadSupportRequests();
       if (currentSection === 'security') loadSecurity();
       if (currentSection === 'system') { loadSystem(); loadAdminLogs(); }
 
@@ -1076,18 +2126,21 @@
     if (!box || !securityInfo) return;
     var keyState = securityInfo.adminKeyConfigured ? 'OK' : 'СЛАБЫЙ/НЕ ЗАДАН';
     var keyColor = securityInfo.adminKeyConfigured ? 'var(--green)' : 'var(--red)';
+    var passkeyCount = Number(securityInfo.adminPasskeysConfigured || 0);
     box.className = '';
     box.innerHTML =
       '<div class="stats-row" style="margin-bottom:0">' +
         '<div class="stat-card"><span class="bg-icon">🔑</span><div class="value" style="color:' + keyColor + ';font-size:20px">' + keyState + '</div><div class="label">ADMIN_KEY (' + (securityInfo.adminKeyLength || 0) + ' симв.)</div></div>' +
-        '<div class="stat-card"><span class="bg-icon">🛡️</span><div class="value" style="color:var(--accent)">' + (securityInfo.passwordHashing || '-') + '</div><div class="label">Хеширование паролей</div></div>' +
+        '<div class="stat-card"><span class="bg-icon">🔐</span><div class="value" style="color:var(--accent)">' + passkeyCount + '</div><div class="label">Отпечатки / Face ID</div></div>' +
         '<div class="stat-card"><span class="bg-icon">🍪</span><div class="value" style="color:var(--text2)">' + (securityInfo.cookieSecurity && securityInfo.cookieSecurity.sameSite ? securityInfo.cookieSecurity.sameSite : '-') + '</div><div class="label">Cookie policy</div></div>' +
       '</div>' +
       '<div style="margin-top:12px;font-size:12px;color:var(--text2);line-height:1.45">' +
         escHtml(securityInfo.userAuth || '') +
         '<br/>' +
         escHtml(securityInfo.adminAuth || '') +
-      '</div>';
+        '<br/>RP ID: ' + escHtml(securityInfo.adminWebAuthnRpId || '-') +
+      '</div>' +
+      '<button class="btn-save-prices" style="margin-top:12px;background:linear-gradient(135deg,#7c3aed,#2563eb)" onclick="registerAdminPasskey()">🔐 Зарегистрировать отпечаток / Face ID</button>';
   }
 
   async function loadGroqTokens() {
@@ -1250,6 +2303,90 @@
       '<tbody>' + rows + '</tbody></table></div>';
   }
 
+  async function loadSupportRequests() {
+    var box = document.getElementById('support-list');
+    if (!box) return;
+    box.className = 'loading';
+    box.textContent = 'Загрузка...';
+    try {
+      var res = await fetch(API + '/api/admin/support-requests', { credentials: 'include' });
+      if (res.status === 403) { box.textContent = 'Нет доступа'; return; }
+      var data = await res.json();
+      supportRequests = Array.isArray(data.requests) ? data.requests : [];
+      renderSupportRequests();
+    } catch (e) {
+      box.textContent = 'Ошибка загрузки обращений';
+    }
+  }
+
+  function supportStatusBadge(status) {
+    var color = status === 'answered' ? 'var(--green)' : (status === 'closed' ? 'var(--text3)' : 'var(--accent)');
+    var label = status === 'answered' ? 'отвечено' : (status === 'closed' ? 'закрыто' : 'новое');
+    return '<span style="display:inline-flex;padding:4px 8px;border-radius:999px;border:1px solid ' + color + '55;color:' + color + ';font-size:11px;font-weight:700">' + label + '</span>';
+  }
+
+  function renderSupportRequests() {
+    var box = document.getElementById('support-list');
+    if (!box) return;
+    box.className = '';
+    if (!supportRequests.length) {
+      box.innerHTML = '<div class="empty" style="display:block">Обращений пока нет</div>';
+      return;
+    }
+    box.innerHTML = supportRequests.map(function(r) {
+      var date = r.createdAt ? new Date(r.createdAt).toLocaleString('ru-RU') : '—';
+      return '<div style="padding:14px;border:1px solid var(--border);border-radius:12px;background:var(--bg2);margin-bottom:10px">' +
+        '<div style="display:flex;gap:10px;align-items:flex-start;justify-content:space-between;margin-bottom:8px">' +
+          '<div><div style="font-weight:800;color:var(--text);font-size:14px">' + escHtml(r.subject || 'Без темы') + '</div>' +
+          '<div style="font-size:12px;color:var(--text3);margin-top:4px">' + escHtml(r.from || '-') + ' · ' + escHtml(r.email || r.userEmail || 'email не указан') + ' · ' + escHtml(date) + '</div></div>' +
+          supportStatusBadge(r.status) +
+        '</div>' +
+        '<pre style="white-space:pre-wrap;font-family:system-ui,sans-serif;font-size:13px;line-height:1.55;color:var(--text2);background:var(--bg3);border-radius:10px;padding:10px;margin:0 0 10px">' + escHtml(r.message || '') + '</pre>' +
+        (r.replyText ? '<div style="font-size:12px;color:var(--green);margin-bottom:8px"><b>Ответ:</b><br><span style="white-space:pre-wrap">' + escHtml(r.replyText) + '</span></div>' : '') +
+        '<textarea id="support-reply-' + escHtml(r.id) + '" placeholder="Ответ пользователю в профиль" style="width:100%;min-height:84px;box-sizing:border-box;margin-bottom:8px;padding:10px;border-radius:10px;background:var(--bg3);border:1px solid var(--border2);color:var(--text);resize:vertical"></textarea>' +
+        '<div style="display:flex;flex-wrap:wrap;gap:8px">' +
+          '<button class="btn-primary" onclick="replySupportRequest(\'' + escJs(r.id) + '\')">💬 Ответить в профиль</button>' +
+          '<button class="topbar-btn" onclick="setSupportRequestStatus(\'' + escJs(r.id) + '\',\'closed\')">Закрыть</button>' +
+          '<button class="topbar-btn danger" onclick="deleteSupportRequest(\'' + escJs(r.id) + '\')">Удалить</button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  async function replySupportRequest(id) {
+    var textarea = document.getElementById('support-reply-' + id);
+    var reply = textarea ? textarea.value.trim() : '';
+    if (!reply) { showToast('Введите текст ответа', 'var(--red)'); return; }
+    try {
+      var res = await apiPostJson(API + '/api/admin/support-requests/' + encodeURIComponent(id) + '/reply', { reply: reply });
+      var data = await res.json().catch(function(){ return {}; });
+      if (!res.ok || data.error) throw new Error(data.error || 'Ошибка отправки');
+      showToast('Ответ появится у пользователя в профиле', 'var(--green)');
+      loadSupportRequests();
+    } catch (e) { showToast(e.message || 'Ошибка отправки', 'var(--red)'); }
+  }
+
+  async function setSupportRequestStatus(id, status) {
+    try {
+      var res = await apiPostJson(API + '/api/admin/support-requests/' + encodeURIComponent(id) + '/status', { status: status });
+      if (!res.ok) throw new Error('Ошибка статуса');
+      loadSupportRequests();
+    } catch (e) { showToast(e.message || 'Ошибка статуса', 'var(--red)'); }
+  }
+
+  async function deleteSupportRequest(id) {
+    if (!confirm('Удалить обращение?')) return;
+    try {
+      var cr = await fetch(API + '/api/csrf-token', { credentials: 'include' });
+      var ct = '';
+      try { ct = (await cr.json()).csrfToken; } catch (e) {}
+      var res = await fetch(API + '/api/admin/support-requests/' + encodeURIComponent(id), { method: 'DELETE', credentials: 'include', headers: ct ? { 'x-csrf-token': ct } : {} });
+      if (!res.ok) throw new Error('Ошибка удаления');
+      showToast('Обращение удалено', 'var(--green)');
+      loadSupportRequests();
+    } catch (e) { showToast(e.message || 'Ошибка удаления', 'var(--red)'); }
+  }
+
   async function loadSystem() {
     var box = document.getElementById('system-summary');
     if (!box) return;
@@ -1260,6 +2397,7 @@
       if (res.status === 403) { box.textContent = 'Нет доступа'; return; }
       systemInfo = await res.json();
       renderSystemSummary();
+      loadUpdateStatus();
     } catch (e) {
       box.textContent = 'Ошибка загрузки';
     }
@@ -1284,7 +2422,43 @@
         '<div class="stat-card"><span class="bg-icon">🤖</span><div class="value" style="color:var(--green)">' + (systemInfo.activeBots || 0) + '</div><div class="label">Active bots</div></div>' +
       '</div>' +
       '<div style="margin-top:12px;font-size:12px;color:var(--text2)">Node: ' + escHtml(systemInfo.nodeVersion || '-') + ' | PID: ' + escHtml(systemInfo.pid || '-') + '</div>' +
+      '<div id="update-box" style="margin-top:10px;font-size:12px;color:var(--text2)">Проверка обновлений...</div>' +
       errorsHtml;
+  }
+
+  async function loadUpdateStatus() {
+    var box = document.getElementById('update-box');
+    if (!box) return;
+    box.textContent = 'Проверка обновлений...';
+    try {
+      var res = await fetch(API + '/api/admin/update-status', { credentials: 'include' });
+      var data = await res.json().catch(function(){ return {}; });
+      if (!res.ok || data.error) throw new Error(data.error || 'Ошибка проверки');
+      if (data.hasUpdate) {
+        box.innerHTML = '<span style="color:var(--accent);font-weight:700">Доступно обновление из Git.</span> ' +
+          '<button class="btn-primary" style="margin-left:8px" onclick="applySystemUpdate()">Обновить</button>';
+      } else {
+        box.innerHTML = '<span style="color:var(--green)">Обновлений нет (актуальная версия).</span> ' +
+          '<button class="topbar-btn" style="margin-left:8px" onclick="loadUpdateStatus()">Проверить снова</button>';
+      }
+    } catch (e) {
+      box.innerHTML = '<span style="color:var(--red)">Ошибка проверки обновлений: ' + escHtml(e.message || 'unknown') + '</span>';
+    }
+  }
+
+  async function applySystemUpdate() {
+    if (!confirm('Применить обновление? Будут выполнены: git pull, npm run build и pm2 restart.')) return;
+    try {
+      showToast('Запуск обновления...', 'var(--accent)');
+      var res = await apiPostJson(API + '/api/admin/update-apply', {});
+      var data = await res.json().catch(function(){ return {}; });
+      if (!res.ok || data.error) throw new Error(data.error || 'Ошибка обновления');
+      showToast(data.message || 'Обновление применено', 'var(--green)');
+      loadUpdateStatus();
+      loadSystem();
+    } catch (e) {
+      showToast(e.message || 'Ошибка обновления', 'var(--red)');
+    }
   }
 
   async function loadAdminLogs() {
@@ -1321,12 +2495,13 @@
   function renderTable() {
     const query = (document.getElementById('search') ? document.getElementById('search').value : '').toLowerCase();
     let filtered = allUsers.filter(u =>
-      u.name.toLowerCase().includes(query) ||
-      u.email.toLowerCase().includes(query) ||
-      u.id.toLowerCase().includes(query)
+      String(u.name || '').toLowerCase().includes(query) ||
+      String(u.email || '').toLowerCase().includes(query) ||
+      String(u.id || '').toLowerCase().includes(query)
     );
     if (currentFilter === 'sub')   filtered = filtered.filter(u => subStatus(u).active);
     if (currentFilter === 'nosub') filtered = filtered.filter(u => !subStatus(u).active);
+    filtered = sortUsersForAdmin(filtered);
 
     const tbody = document.getElementById('users-tbody');
     const table = document.getElementById('users-table');
@@ -1345,57 +2520,57 @@
     if (isMobile()) {
       table.style.display = 'none'; cards.style.display = 'flex';
       cards.innerHTML = filtered.map(function(user) {
-        const letter = (user.name || user.email || '?')[0].toUpperCase();
-        const color = avatarColor(user.name || user.email || '?');
         const badge = user.botRunning
           ? '<span class="badge-bot-on">Запущен</span>'
           : '<span class="badge-bot-off">Не активен</span>';
         const time = user.botStartedAt
           ? '<span class="card-time">с ' + startedAtStr(user.botStartedAt) + '</span>' : '';
         const subBadge = subBadgeHtml(user);
-        return '<div class="user-card">' +
-          '<div class="card-avatar" style="background:' + color + '">' + letter + '</div>' +
+        const adminBadge = isPrimaryAdmin(user) ? '<span class="admin-badge">Администратор</span>' : '';
+        return '<div class="user-card' + (isPrimaryAdmin(user) ? ' admin-user-card' : '') + '">' +
+          avatarHtml(user, 'card-avatar') +
           '<div class="card-body">' +
-            '<div class="card-name"><button style="all:unset;cursor:pointer;color:var(--accent)" onclick="openUserDetails(\'' + user.id + '\')">' + escHtml(user.name) + '</button></div>' +
-            '<div class="card-email">' + escHtml(user.email) + '</div>' +
+            '<div class="card-name"><button style="all:unset;cursor:pointer;color:var(--accent)" onclick="openUserDetails(\'' + user.id + '\')">' + escHtml(user.name || user.email || 'Без имени') + '</button></div>' +
+            adminBadge +
+            '<div class="card-email">' + escHtml(user.email || 'email не указан') + '</div>' +
             '<div class="card-meta">' + badge + subBadge + time + '</div>' +
           '</div>' +
           '<div class="card-actions" style="display:flex;flex-direction:column;gap:6px">' +
-            '<button class="btn-sub-card" onclick="openGrantSub(\'' + user.id + '\',\'' + escJs(user.name) + '\')" title="Выдать подписку">★</button>' +
-            '<button class="btn-delete-card" onclick="confirmDelete(\'' + user.id + '\',\'' + escJs(user.name) + '\')" title="Удалить">×</button>' +
+            '<button class="btn-sub-card" onclick="openGrantSub(\'' + user.id + '\',\'' + escJs(user.name || user.email || 'Пользователь') + '\')" title="Выдать подписку">★</button>' +
+            '<button class="btn-delete-card" onclick="confirmDelete(\'' + user.id + '\',\'' + escJs(user.name || user.email || 'Пользователь') + '\')" title="Удалить">×</button>' +
           '</div>' +
         '</div>';
       }).join('');
     } else {
       cards.style.display = 'none'; table.style.display = 'table';
       tbody.innerHTML = filtered.map(function(user) {
-        const letter = (user.name || user.email || '?')[0].toUpperCase();
-        const color = avatarColor(user.name || user.email || '?');
         const botBadge = user.botRunning
           ? '<span class="badge-bot-on">Запущен</span>'
           : '<span class="badge-bot-off">Не активен</span>';
         const subBadge = subBadgeHtml(user);
-        return '<tr>' +
+        const adminBadge = isPrimaryAdmin(user) ? '<span class="admin-badge">Администратор</span>' : '';
+        return '<tr class="' + (isPrimaryAdmin(user) ? 'admin-user-row' : '') + '">' +
           '<td><div class="user-info">' +
-            '<div class="user-avatar" style="background:' + color + '">' + letter + '</div>' +
-            '<div><div class="user-name"><button style="all:unset;cursor:pointer;color:var(--accent)" onclick="openUserDetails(\'' + user.id + '\')">' + escHtml(user.name) + '</button></div>' +
+            avatarHtml(user, 'user-avatar') +
+            '<div><div class="user-name"><button style="all:unset;cursor:pointer;color:var(--accent)" onclick="openUserDetails(\'' + user.id + '\')">' + escHtml(user.name || user.email || 'Без имени') + '</button></div>' +
+            adminBadge +
             '<div class="user-id">#' + user.id + '</div></div>' +
           '</div></td>' +
-          '<td class="email-cell">' + escHtml(user.email) + '</td>' +
+          '<td class="email-cell">' + escHtml(user.email || 'email не указан') + '</td>' +
           '<td><code style="font-size:11px;color:var(--text3);font-family:var(--mono)">' + user.id + '</code></td>' +
           '<td>' + subBadge + '</td>' +
           '<td>' + botBadge + '</td>' +
           '<td style="font-size:12px;color:var(--text3);font-family:var(--mono)">' + startedAtStr(user.botStartedAt) + '</td>' +
           '<td><div class="row-actions">' +
-            '<button class="btn-sub" onclick="openGrantSub(\'' + user.id + '\',\'' + escJs(user.name) + '\')">★ Подписка</button>' +
-            '<button class="btn-delete" onclick="confirmDelete(\'' + user.id + '\',\'' + escJs(user.name) + '\')">Удалить</button>' +
+            '<button class="btn-sub" onclick="openGrantSub(\'' + user.id + '\',\'' + escJs(user.name || user.email || 'Пользователь') + '\')">★ Подписка</button>' +
+            '<button class="btn-delete" onclick="confirmDelete(\'' + user.id + '\',\'' + escJs(user.name || user.email || 'Пользователь') + '\')">Удалить</button>' +
           '</div></td>' +
         '</tr>';
       }).join('');
     }
   }
 
-  window.addEventListener('resize', renderTable);
+  window.addEventListener('resize', function() { renderTable(); syncPasskeyLoginButtonVisibility(); });
 
   function escHtml(str) {
     if (str == null) return '';

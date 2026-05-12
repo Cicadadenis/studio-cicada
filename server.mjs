@@ -145,17 +145,16 @@ app.use((req, res, next) => {
   });
   next();
 });
-app.use(express.static('dist'));
-app.get('/satana', (req, res) => {
-  const html = fs.readFileSync(path.resolve('public/satana.html'), 'utf8')
-    .replace("'__API_TARGET__'", "''");  // пустая строка = same-origin, cookie работает
-  res.setHeader('Content-Type', 'text/html');
-  res.send(html);
+app.all(/^\/(?:satana|debug)(?:\/|\.|$)/, requireAdminPage, (req, res) => {
+  res.redirect(302, '/admin');
 });
 
-app.get('/satana.html', (req, res) => {
-  res.redirect(301, '/satana');
+app.all(/^\/admin(?:.*)?$/, requireAdminPage, (req, res) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return res.status(405).send('Method Not Allowed');
+  res.sendFile(path.resolve('dist/index.html'));
 });
+
+app.use(express.static('dist'));
 
 const BOTS_DIR = 'bots';
 const recentSystemErrors = [];
@@ -352,7 +351,7 @@ const pythonBotConvertRateLimit = rateLimit({
   handler: rl429,
 });
 
-/** Скачивание дампа БД / исходников — только cookie admin_session, лимит по IP. */
+/** Скачивание дампа БД / исходников — только JWT role=admin, лимит по IP. */
 const adminAssetDownloadRateLimit = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 24,
@@ -400,8 +399,10 @@ const JWT_EXPIRES_SEC = Number(process.env.JWT_EXPIRES_SEC || 30 * 24 * 60 * 60)
 /** Одноразовая передача JWT в SPA после OAuth-редиректа (httpOnly cookie). */
 const OAUTH_JWT_HANDOFF_COOKIE = 'oauth_jwt_handoff';
 const OAUTH_2FA_PENDING_COOKIE = 'oauth_2fa_pending';
+const ADMIN_ROUTE_COOKIE = 'admin_route_session';
 
 const ADMIN_JWT_EXPIRES_SEC = Number(process.env.ADMIN_JWT_EXPIRES_SEC || 8 * 60 * 60);
+const ADMIN_ROUTE_EXPIRES_SEC = Number(process.env.ADMIN_ROUTE_EXPIRES_SEC || 20 * 60);
 
 function issueUserJwt(userId) {
   return jwt.sign({ sub: userId, type: 'user' }, JWT_SECRET, { expiresIn: JWT_EXPIRES_SEC });
@@ -425,6 +426,19 @@ function issueAdminSessionCookie(res) {
     sameSite: 'strict',
     secure: isHttps,
     maxAge: ADMIN_JWT_EXPIRES_SEC * 1000,
+    path: '/',
+  });
+}
+
+function issueAdminRouteCookie(res, userId) {
+  const token = jwt.sign({ sub: String(userId), type: 'admin_route' }, JWT_SECRET, {
+    expiresIn: ADMIN_ROUTE_EXPIRES_SEC,
+  });
+  res.cookie(ADMIN_ROUTE_COOKIE, token, {
+    httpOnly: true,
+    sameSite: 'strict',
+    secure: isHttps,
+    maxAge: ADMIN_ROUTE_EXPIRES_SEC * 1000,
     path: '/',
   });
 }
@@ -453,12 +467,40 @@ function requireUserAuth(req, res, next) {
 async function requireAppAdmin(req, res, next) {
   try {
     const user = await findById(req.authUserId);
-    if (!user || user.role !== 'admin') {
+    if (!user || user.role !== 'admin' || user.banned) {
       return res.status(403).json({ error: 'Доступ только для администратора' });
     }
+    req.appAdminUser = user;
     return next();
   } catch (err) {
     return sendInternalApiError(res, 'requireAppAdmin', err, 'Не удалось проверить права.', 500);
+  }
+}
+
+async function requireAdminApi(req, res, next) {
+  const jwtUserId = getJwtUserId(req);
+  if (!jwtUserId) return res.status(403).json({ error: 'Forbidden' });
+  req.authUserId = jwtUserId;
+  return requireAppAdmin(req, res, next);
+}
+
+async function requireAdminPage(req, res, next) {
+  const token = req.cookies?.[ADMIN_ROUTE_COOKIE];
+  if (!token) return res.status(403).send('Forbidden');
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    if (!decoded || decoded.type !== 'admin_route' || !decoded.sub) {
+      return res.status(403).send('Forbidden');
+    }
+    const user = await findById(String(decoded.sub));
+    if (!user || user.role !== 'admin' || user.banned) {
+      return res.status(403).send('Forbidden');
+    }
+    req.authUserId = user.id;
+    req.appAdminUser = user;
+    return next();
+  } catch {
+    return res.status(403).send('Forbidden');
   }
 }
 
@@ -2508,6 +2550,7 @@ function buildAdminPasskeyOptions(req, kind) {
 }
 
 function isAdminAuthed(req) {
+  if (req.appAdminUser?.role === 'admin') return true;
   const token = req.cookies?.admin_session;
   if (!token) return false;
   try {
@@ -2519,6 +2562,21 @@ function isAdminAuthed(req) {
 }
 
 /** Подсказка для страницы входа: включён ли второй фактор (не раскрывает ключ). */
+app.use('/api/admin', requireAdminApi);
+
+app.post('/api/admin/enter', (req, res) => {
+  issueAdminRouteCookie(res, req.authUserId);
+  recordAdminAction(req, 'admin_route_enter', req.authUserId, {});
+  res.json({ ok: true });
+});
+
+app.get('/api/admin/ui', (req, res) => {
+  const html = fs.readFileSync(path.resolve('server/admin.html'), 'utf8')
+    .replace("'__API_TARGET__'", "''");
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(html);
+});
+
 app.get('/api/admin/login-config', adminLoginRateLimit, (req, res) => {
   res.json({
     totpRequired: Boolean(ADMIN_TOTP_SECRET),
@@ -2642,6 +2700,7 @@ app.get('/api/admin/session', (req, res) => {
 
 app.post('/api/admin/logout', (req, res) => {
   res.clearCookie('admin_session', { path: '/', httpOnly: true, sameSite: 'strict', secure: isHttps });
+  res.clearCookie(ADMIN_ROUTE_COOKIE, { path: '/', httpOnly: true, sameSite: 'strict', secure: isHttps });
   recordAdminAction(req, 'admin_logout', null, {});
   res.json({ ok: true });
 });
@@ -2951,12 +3010,7 @@ app.get('/api/admin/security', (req, res) => {
     adminTotpConfigured: Boolean(ADMIN_TOTP_SECRET),
     adminPasskeysConfigured: loadAdminPasskeys().length,
     adminWebAuthnRpId: resolveAdminWebAuthnRpId(req),
-    adminAuth:
-      loadAdminPasskeys().length > 0
-        ? 'Отпечаток/Face ID (Passkey/WebAuthn) или ADMIN_KEY' + (ADMIN_TOTP_SECRET ? ' + TOTP' : '') + ', затем JWT в cookie admin_session'
-        : (ADMIN_TOTP_SECRET != null
-            ? 'ADMIN_KEY + TOTP (RFC 6238), затем JWT в cookie admin_session'
-            : 'ADMIN_KEY, затем JWT в httpOnly cookie admin_session (stateless)'),
+    adminAuth: 'JWT Bearer пользователя + role=admin; /admin дополнительно открывается через короткую httpOnly cookie admin_route_session',
     userSessionsActive: 0,
     adminSessionsActive: 0,
     cookieSecurity: {
