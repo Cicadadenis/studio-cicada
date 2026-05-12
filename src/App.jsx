@@ -1316,7 +1316,11 @@ export default function App() {
   }, [selectedBlockId]);
 
   const handleDragStack = useCallback((stackId, e) => {
-    const rect = canvasRef.current.getBoundingClientRect();
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) {
+      endPaletteDrag();
+      return;
+    }
     const stack = stacks.find(s => s.id === stackId);
     if (!stack) return;
     const offsetX = (e.clientX - rect.left - canvasOffset.x) / canvasScale - stack.x;
@@ -1398,7 +1402,10 @@ export default function App() {
   }, [canvasDrag, draggingStack, dropTarget]);
 
   const handleCanvasMouseDown = useCallback((e) => {
-    if (e.target !== canvasRef.current && !e.target.classList.contains('canvas-bg')) return;
+    const target = e.target;
+    const isElement = target instanceof Element;
+    const isCanvasBg = isElement && target.classList?.contains('canvas-bg');
+    if (target !== canvasRef.current && !isCanvasBg) return;
     setSelectedBlockId(null);
     setSelectedStackId(null);
     setCanvasDrag({ startX: e.clientX, startY: e.clientY, origX: canvasOffset.x, origY: canvasOffset.y });
@@ -1414,7 +1421,11 @@ export default function App() {
     e.preventDefault();
     const type = e.dataTransfer.getData('cicada/new-type');
     if (!type) return;
-    const rect = canvasRef.current.getBoundingClientRect();
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) {
+      endPaletteDrag();
+      return;
+    }
     const worldLX = (e.clientX - rect.left - canvasOffset.x) / canvasScale - BLOCK_W / 2;
     const worldTY = (e.clientY - rect.top - canvasOffset.y) / canvasScale - ROOT_H / 2;
     const snap = findNewBlockSnapTarget(stacks, worldLX, worldTY, type);
