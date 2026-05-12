@@ -2116,7 +2116,7 @@ app.get('/api/bot/logs', requireUserAuth, (req, res) => {
 // ================= SUBSCRIPTION =================
 
 const DEFAULT_PLANS = Object.freeze({
-  '2w': { label: '2 недели',  days: 14,  usd: 5  },
+  '2w': { label: '2 недели',  days: 14,  usd: 1  },
   '1m': { label: '1 месяц',   days: 30,  usd: 8  },
   '3m': { label: '3 месяца',  days: 90,  usd: 20 },
   '6m': { label: '6 месяцев', days: 180, usd: 35 },
@@ -2127,6 +2127,7 @@ let PLANS = clonePlans(DEFAULT_PLANS);
 
 const CRYPTOBOT_API = 'https://pay.crypt.bot/api';
 const SUBSCRIPTION_MS_PER_DAY = 24 * 60 * 60 * 1000;
+const MIN_SUBSCRIPTION_USD = Number(process.env.MIN_SUBSCRIPTION_USD || 1);
 
 function clonePlans(plans) {
   return Object.fromEntries(
@@ -2142,10 +2143,15 @@ function clonePlans(plans) {
 }
 
 function normalizePlanRow(row) {
+  const key = String(row.key || '');
+  const fallback = DEFAULT_PLANS[key];
+  const usd = Number(row.usd);
   return {
     label: String(row.label),
     days: Number(row.days),
-    usd: Number(row.usd),
+    usd: Number.isFinite(usd) && usd >= MIN_SUBSCRIPTION_USD
+      ? usd
+      : Number(fallback?.usd || MIN_SUBSCRIPTION_USD),
   };
 }
 
@@ -2202,7 +2208,10 @@ async function updatePlanPricesInDb(updates) {
 
   for (const [planKey, vals] of Object.entries(updates)) {
     const usd = Number(vals?.usd);
-    if (!plans[planKey] || !Number.isFinite(usd) || usd <= 0) continue;
+    if (!plans[planKey]) continue;
+    if (!Number.isFinite(usd) || usd < MIN_SUBSCRIPTION_USD) {
+      throw new Error(`plan ${planKey} usd must be >= ${MIN_SUBSCRIPTION_USD}`);
+    }
     await pool.query(
       `
       UPDATE subscription_plans

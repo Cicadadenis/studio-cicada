@@ -13,6 +13,7 @@ const DSL_MAX_PROCESSES = Math.max(8, Number(process.env.DSL_MAX_PROCESSES || 64
 const DSL_SANDBOX_MODE = String(
   process.env.DSL_SANDBOX_MODE || (process.env.APP_ENV === 'production' || process.env.NODE_ENV === 'production' ? 'enforced' : 'auto'),
 ).trim().toLowerCase();
+const DSL_SANDBOX_NETWORK = String(process.env.DSL_SANDBOX_NETWORK || 'host').trim().toLowerCase();
 const SAFE_EXECUTABLE = /^(?:[a-zA-Z0-9_./:-]+)$/;
 
 const runners = new Map(); // userId -> state
@@ -59,6 +60,20 @@ function prlimitExecutable() {
   return null;
 }
 
+function sandboxNetworkDisabled() {
+  return DSL_SANDBOX_NETWORK === 'none' || DSL_SANDBOX_NETWORK === 'isolated';
+}
+
+function bwrapHostNetworkBinds() {
+  if (sandboxNetworkDisabled()) return [];
+  return [
+    '--ro-bind-try', '/etc/resolv.conf', '/etc/resolv.conf',
+    '--ro-bind-try', '/etc/hosts', '/etc/hosts',
+    '--ro-bind-try', '/etc/nsswitch.conf', '/etc/nsswitch.conf',
+    '--ro-bind-try', '/etc/gai.conf', '/etc/gai.conf',
+  ];
+}
+
 function buildSandboxedCommand({ cicadaBin, userDir, runFile }) {
   if (!executableExists(cicadaBin)) throw new Error('invalid CICADA_BIN');
   const sandbox = sandboxExecutable();
@@ -72,7 +87,7 @@ function buildSandboxedCommand({ cicadaBin, userDir, runFile }) {
     args = [
       '--die-with-parent',
       '--new-session',
-      '--unshare-net',
+      ...(sandboxNetworkDisabled() ? ['--unshare-net'] : []),
       '--proc', '/proc',
       '--dev', '/dev',
       '--tmpfs', '/tmp',
@@ -81,6 +96,7 @@ function buildSandboxedCommand({ cicadaBin, userDir, runFile }) {
       '--ro-bind-try', '/lib', '/lib',
       '--ro-bind-try', '/lib64', '/lib64',
       '--ro-bind-try', '/etc/ssl', '/etc/ssl',
+      ...bwrapHostNetworkBinds(),
       '--bind', userDir, userDir,
       '--chdir', userDir,
       cicadaBin,
@@ -92,7 +108,7 @@ function buildSandboxedCommand({ cicadaBin, userDir, runFile }) {
     command = sandbox;
     args = [
       '--quiet',
-      '--net=none',
+      ...(sandboxNetworkDisabled() ? ['--net=none'] : []),
       '--private-dev',
       '--rlimit-nproc=64',
       `--rlimit-as=${DSL_MEMORY_BYTES}`,

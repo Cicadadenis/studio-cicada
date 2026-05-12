@@ -10,7 +10,7 @@ import { fetchPublicPlans, formatUsdPrice } from '../pricingPlans.js';
 // ═══════════════════════════════════════════════════════════════════════════
 
 const DEFAULT_PLANS = [
-  { key: '2w', label: '2 недели',  days: 14,  usd: 5  },
+  { key: '2w', label: '2 недели',  days: 14,  usd: 1  },
   { key: '1m', label: '1 месяц',   days: 30,  usd: 8  },
   { key: '3m', label: '3 месяца',  days: 90,  usd: 20 },
   { key: '6m', label: '6 месяцев', days: 180, usd: 35 },
