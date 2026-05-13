@@ -1,5 +1,6 @@
 import React from 'react';
 
+
 const FIELDS = {
   version:   [{ key:'version',   label:'версия (например 1.0)',     tag:'input' }],
   bot:       [{ key:'token',     label:'Telegram Bot Token',       tag:'input' }],
@@ -105,6 +106,19 @@ const TYPE_HINTS = {
 };
 
 export default function PropsPanel({ node, onChange, onDelete }) {
+  const filePickerRef = React.useRef(null);
+  const [pickerType, setPickerType] = React.useState('');
+  const [pickerField, setPickerField] = React.useState('');
+
+  const openPicker = (type, field) => {
+    setPickerType(type);
+    setPickerField(field);
+    if (filePickerRef.current) {
+      filePickerRef.current.value = '';
+      filePickerRef.current.click();
+    }
+  };
+
   if (!node) return (
     <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center', color:'var(--text3)', fontSize:12, flexDirection:'column', gap:6 }}>
       <div style={{ fontSize:20, opacity:.3 }}>◈</div>
@@ -150,11 +164,32 @@ export default function PropsPanel({ node, onChange, onDelete }) {
             {f.tag === 'textarea'
               ? <textarea rows={f.rows||2} value={props[f.key]||''} style={{ resize:'vertical' }}
                   onChange={e => onChange(id, { ...props, [f.key]: e.target.value })} />
-              : <input type="text" value={props[f.key]||''}
-                  onChange={e => onChange(id, { ...props, [f.key]: e.target.value })} />
+              : <>
+                  <input type="text" value={props[f.key]||''}
+                    onChange={e => onChange(id, { ...props, [f.key]: e.target.value })} />
+                  {(data.type === 'photo' || data.type === 'document') && f.key === 'url' && (
+                    <button type="button" style={{ marginTop: 6, width: '100%' }} onClick={() => openPicker(data.type, f.key)}>
+                      Загрузить с устройства
+                    </button>
+                  )}
+                </>
             }
           </div>
         ))}
+        <input
+          ref={filePickerRef}
+          type="file"
+          accept={pickerType === 'photo' ? 'image/*' : '*/*'}
+          style={{ display: 'none' }}
+          onChange={e => {
+            const file = e.target.files?.[0];
+            if (!file || !pickerField) return;
+            const localBlobUrl = URL.createObjectURL(file);
+            const next = { ...props, [pickerField]: localBlobUrl };
+            if (data.type === 'document') next.filename = file.name || next.filename || '';
+            onChange(id, next);
+          }}
+        />
       </div>
     </div>
   );

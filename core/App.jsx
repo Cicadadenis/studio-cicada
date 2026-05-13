@@ -1619,7 +1619,36 @@ function Sidebar({ onDragStart, onDragEnd, onTapAdd }) {
 }
 
 // ─── PROPS PANEL ──────────────────────────────────────────────────────────
+const fileToDataUrl = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(String(reader.result || ''));
+  reader.onerror = () => reject(new Error('read_failed'));
+  reader.readAsDataURL(file);
+});
+
+async function uploadBotMediaFile(file) {
+  const dataUrl = await fileToDataUrl(file);
+  const res = await fetch('/api/media-upload', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ dataUrl, fileName: file.name || 'file' }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data?.url) throw new Error(data?.error || 'upload_failed');
+  return data.url;
+}
+
 function PropsPanel({ block, onChange }) {
+  const filePickerRef = React.useRef(null);
+
+  const openLocalFilePicker = React.useCallback(() => {
+    if (filePickerRef.current) {
+      filePickerRef.current.value = '';
+      filePickerRef.current.click();
+    }
+  }, []);
+
   if (!block) return (
     <div style={{
       flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -1631,6 +1660,7 @@ function PropsPanel({ block, onChange }) {
   const def = getBlockDef(block.type);
   const fields = FIELDS[block.type] || [];
   const props = block.props || {};
+  const showLocalUpload = block.type === 'photo' || block.type === 'document';
   const beginnerHint = getBeginnerPanelHint(block);
   return (
     <div style={{ overflowY: 'auto', flex: 1, padding: '10px 12px' }}>
@@ -1675,13 +1705,41 @@ function PropsPanel({ block, onChange }) {
               style={{ resize: 'vertical', lineHeight: 1.5 }}
             />
           ) : (
-            <input
-              value={props[f.key] || ''}
-              onChange={e => onChange(f.key, e.target.value)}
-            />
+            <>
+              <input
+                value={props[f.key] || ''}
+                onChange={e => onChange(f.key, e.target.value)}
+              />
+              {showLocalUpload && f.key === 'url' && (
+                <button
+                  type="button"
+                  style={{ marginTop: 6, width: '100%', fontSize: 11, border: '1px dashed var(--border2)', borderRadius: 6, padding: '7px 10px', background: 'var(--bg)', color: 'var(--text2)', cursor: 'pointer' }}
+                  onClick={openLocalFilePicker}
+                >
+                  Загрузить с устройства
+                </button>
+              )}
+            </>
           )}
         </div>
       ))}
+      <input
+        ref={filePickerRef}
+        type="file"
+        accept={block.type === 'photo' ? 'image/*' : '*/*'}
+        style={{ display: 'none' }}
+        onChange={async (e) => {
+          const file = e.target.files?.[0];
+          if (!file) return;
+          try {
+            const uploadedUrl = await uploadBotMediaFile(file);
+            onChange('url', uploadedUrl);
+            if (block.type === 'document') onChange('filename', file.name || '');
+          } catch (err) {
+            alert('Не удалось загрузить файл: ' + (err?.message || 'ошибка'));
+          }
+        }}
+      />
       {fields.length === 0 && (
         <div style={{ color: 'var(--text3)', fontSize: 10 }}>Нет настроек</div>
       )}
