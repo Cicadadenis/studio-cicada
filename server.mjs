@@ -1604,7 +1604,7 @@ function saveBotMediaDataUrl(dataUrl, preferredName = 'file') {
   return `${MEDIA_URL_PREFIX}/${fileName}`;
 }
 
-app.post('/api/media-upload', mediaJsonParser, requireUserAuth, uploadRateLimit, async (req, res) => {
+app.post('/api/media-upload', mediaJsonParser, uploadRateLimit, async (req, res) => {
   try {
     const { dataUrl, fileName } = req.body || {};
     if (!dataUrl || typeof dataUrl !== 'string') return res.status(400).json({ error: 'Нет dataUrl' });
