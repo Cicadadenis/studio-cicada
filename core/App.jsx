@@ -1620,6 +1620,15 @@ function Sidebar({ onDragStart, onDragEnd, onTapAdd }) {
 
 // ─── PROPS PANEL ──────────────────────────────────────────────────────────
 function PropsPanel({ block, onChange }) {
+  const filePickerRef = React.useRef(null);
+
+  const openLocalFilePicker = React.useCallback(() => {
+    if (filePickerRef.current) {
+      filePickerRef.current.value = '';
+      filePickerRef.current.click();
+    }
+  }, []);
+
   if (!block) return (
     <div style={{
       flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -1631,6 +1640,7 @@ function PropsPanel({ block, onChange }) {
   const def = getBlockDef(block.type);
   const fields = FIELDS[block.type] || [];
   const props = block.props || {};
+  const showLocalUpload = block.type === 'photo' || block.type === 'document';
   const beginnerHint = getBeginnerPanelHint(block);
   return (
     <div style={{ overflowY: 'auto', flex: 1, padding: '10px 12px' }}>
@@ -1675,13 +1685,37 @@ function PropsPanel({ block, onChange }) {
               style={{ resize: 'vertical', lineHeight: 1.5 }}
             />
           ) : (
-            <input
-              value={props[f.key] || ''}
-              onChange={e => onChange(f.key, e.target.value)}
-            />
+            <>
+              <input
+                value={props[f.key] || ''}
+                onChange={e => onChange(f.key, e.target.value)}
+              />
+              {showLocalUpload && f.key === 'url' && (
+                <button
+                  type="button"
+                  style={{ marginTop: 6, width: '100%', fontSize: 11 }}
+                  onClick={openLocalFilePicker}
+                >
+                  Загрузить с устройства
+                </button>
+              )}
+            </>
           )}
         </div>
       ))}
+      <input
+        ref={filePickerRef}
+        type="file"
+        accept={block.type === 'photo' ? 'image/*' : '*/*'}
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (!file) return;
+          const localBlobUrl = URL.createObjectURL(file);
+          onChange('url', localBlobUrl);
+          if (block.type === 'document') onChange('filename', file.name || '');
+        }}
+      />
       {fields.length === 0 && (
         <div style={{ color: 'var(--text3)', fontSize: 10 }}>Нет настроек</div>
       )}

@@ -2242,6 +2242,24 @@ function MarkupFormattingExamples({ markup, lang }) {
 
 function PropsPanel({ block, onChange, onAttachmentChange, onAttachmentDelete, stacks }) {
   const ctx = React.useContext(BuilderUiContext);
+  const filePickerRef = React.useRef(null);
+  const [pendingUploadField, setPendingUploadField] = React.useState(null);
+
+  const openLocalFilePicker = React.useCallback((fieldKey) => {
+    setPendingUploadField(fieldKey);
+    if (filePickerRef.current) {
+      filePickerRef.current.value = '';
+      filePickerRef.current.click();
+    }
+  }, []);
+
+  const onLocalFilePicked = React.useCallback((event) => {
+    const file = event.target.files?.[0];
+    if (!file || !pendingUploadField) return;
+    const localBlobUrl = URL.createObjectURL(file);
+    onChange(pendingUploadField, localBlobUrl);
+    if (pendingUploadField === 'url') onChange('filename', file.name || '');
+  }, [onChange, pendingUploadField]);
   const lang = ctx?.lang || 'ru';
   const blockTypes = ctx?.blockTypes || BLOCK_TYPES;
   const ui = ctx?.t || getConstructorStrings('ru');
@@ -2261,6 +2279,7 @@ function PropsPanel({ block, onChange, onAttachmentChange, onAttachmentDelete, s
     () => collectProjectBlockPickerOptionsByKind(stacks, blockTypes),
     [stacks, blockTypes],
   );
+  const showLocalUpload = block.type === 'photo' || block.type === 'document';
   const buttonOptions = React.useMemo(() => collectReplyButtonOptions(stacks), [stacks]);
   return (
     <div style={{ overflowY: 'auto', flex: 1, padding: '10px 12px' }}>
@@ -2318,6 +2337,15 @@ function PropsPanel({ block, onChange, onAttachmentChange, onAttachmentDelete, s
                 value={props[f.key] || ''}
                 onChange={e => onChange(f.key, e.target.value)}
               />
+              {showLocalUpload && f.key === 'url' && (
+                <button
+                  type="button"
+                  onClick={() => openLocalFilePicker('url')}
+                  style={{ marginTop: 6, width: '100%', fontSize: 11 }}
+                >
+                  Загрузить с устройства
+                </button>
+              )}
               {pickerListId && (
                 <datalist id={pickerListId}>
                   {pickerOptions.map((opt) => (
@@ -2334,6 +2362,13 @@ function PropsPanel({ block, onChange, onAttachmentChange, onAttachmentDelete, s
         </div>
         );
       })}
+      <input
+        ref={filePickerRef}
+        type="file"
+        accept={block.type === 'photo' ? 'image/*' : '*/*'}
+        onChange={onLocalFilePicked}
+        style={{ display: 'none' }}
+      />
       {fields.length === 0 && (
         <div style={{ color: 'var(--text3)', fontSize: 10 }}>{ui.noSettings}</div>
       )}
