@@ -83,6 +83,8 @@ function cspNonce(req, res) {
 
 const AVATAR_UPLOAD_DIR = path.resolve('uploads/avatars');
 const AVATAR_URL_PREFIX = '/api/avatars';
+const MEDIA_UPLOAD_DIR = path.resolve('uploads/media');
+const MEDIA_URL_PREFIX = '/api/media';
 const AVATAR_MAX_BYTES = 5 * 1024 * 1024;
 const AVATAR_MIME_EXT = new Map([
   ['image/jpeg', 'jpg'],
@@ -1571,6 +1573,46 @@ async function updateUserAvatar(userId, dataUrl) {
   return findById(userId);
 }
 
+
+
+function saveBotMediaDataUrl(dataUrl, preferredName = 'file') {
+  const m = String(dataUrl || '').match(/^data:([\w.+-]+\/[\w.+-]+);base64,(.+)$/i);
+  if (!m) {
+    const err = new Error('Неверный формат файла');
+    err.publicMessage = err.message;
+    throw err;
+  }
+  const mimeType = m[1].toLowerCase();
+  const b64 = m[2];
+  const buffer = Buffer.from(b64, 'base64');
+  if (!buffer.length) {
+    const err = new Error('Пустой файл');
+    err.publicMessage = err.message;
+    throw err;
+  }
+  if (buffer.length > 15 * 1024 * 1024) {
+    const err = new Error('Файл слишком большой (макс 15MB)');
+    err.publicMessage = err.message;
+    throw err;
+  }
+  const ext = mime.extension(mimeType) || path.extname(preferredName).replace(/^\./, '') || 'bin';
+  const safeBase = path.basename(String(preferredName || 'file')).replace(/[^\w.\-]+/g, '_').slice(0, 60) || 'file';
+  fs.mkdirSync(MEDIA_UPLOAD_DIR, { recursive: true });
+  const fileName = `${Date.now()}-${crypto.randomUUID()}-${safeBase}.${ext}`;
+  fs.writeFileSync(path.join(MEDIA_UPLOAD_DIR, fileName), buffer, { flag: 'wx' });
+  return `${MEDIA_URL_PREFIX}/${fileName}`;
+}
+
+app.post('/api/media-upload', avatarJsonParser, requireUserAuth, uploadRateLimit, async (req, res) => {
+  try {
+    const { dataUrl, fileName } = req.body || {};
+    if (!dataUrl || typeof dataUrl !== 'string') return res.status(400).json({ error: 'Нет dataUrl' });
+    const url = saveBotMediaDataUrl(dataUrl, typeof fileName === 'string' ? fileName : 'file');
+    return res.json({ ok: true, url });
+  } catch (e) {
+    return res.status(400).json({ error: e?.publicMessage || 'Не удалось загрузить файл' });
+  }
+});
 
 app.post('/api/avatar', avatarJsonParser, requireUserAuth, uploadRateLimit, async (req, res) => {
   const { userId, dataUrl } = req.body || {};

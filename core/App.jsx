@@ -1619,6 +1619,26 @@ function Sidebar({ onDragStart, onDragEnd, onTapAdd }) {
 }
 
 // ─── PROPS PANEL ──────────────────────────────────────────────────────────
+const fileToDataUrl = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(String(reader.result || ''));
+  reader.onerror = () => reject(new Error('read_failed'));
+  reader.readAsDataURL(file);
+});
+
+async function uploadBotMediaFile(file) {
+  const dataUrl = await fileToDataUrl(file);
+  const res = await fetch('/api/media-upload', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ dataUrl, fileName: file.name || 'file' }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data?.url) throw new Error(data?.error || 'upload_failed');
+  return data.url;
+}
+
 function PropsPanel({ block, onChange }) {
   const filePickerRef = React.useRef(null);
 
@@ -1708,12 +1728,16 @@ function PropsPanel({ block, onChange }) {
         type="file"
         accept={block.type === 'photo' ? 'image/*' : '*/*'}
         style={{ display: 'none' }}
-        onChange={(e) => {
+        onChange={async (e) => {
           const file = e.target.files?.[0];
           if (!file) return;
-          const localBlobUrl = URL.createObjectURL(file);
-          onChange('url', localBlobUrl);
-          if (block.type === 'document') onChange('filename', file.name || '');
+          try {
+            const uploadedUrl = await uploadBotMediaFile(file);
+            onChange('url', uploadedUrl);
+            if (block.type === 'document') onChange('filename', file.name || '');
+          } catch (err) {
+            alert('Не удалось загрузить файл: ' + (err?.message || 'ошибка'));
+          }
         }}
       />
       {fields.length === 0 && (

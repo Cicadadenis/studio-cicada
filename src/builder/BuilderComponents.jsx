@@ -2240,6 +2240,26 @@ function MarkupFormattingExamples({ markup, lang }) {
   );
 }
 
+const fileToDataUrl = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(String(reader.result || ''));
+  reader.onerror = () => reject(new Error('read_failed'));
+  reader.readAsDataURL(file);
+});
+
+async function uploadBotMediaFile(file) {
+  const dataUrl = await fileToDataUrl(file);
+  const res = await fetch('/api/media-upload', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ dataUrl, fileName: file.name || 'file' }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data?.url) throw new Error(data?.error || 'upload_failed');
+  return data.url;
+}
+
 function PropsPanel({ block, onChange, onAttachmentChange, onAttachmentDelete, stacks }) {
   const ctx = React.useContext(BuilderUiContext);
   const filePickerRef = React.useRef(null);
@@ -2253,12 +2273,16 @@ function PropsPanel({ block, onChange, onAttachmentChange, onAttachmentDelete, s
     }
   }, []);
 
-  const onLocalFilePicked = React.useCallback((event) => {
+  const onLocalFilePicked = React.useCallback(async (event) => {
     const file = event.target.files?.[0];
     if (!file || !pendingUploadField) return;
-    const localBlobUrl = URL.createObjectURL(file);
-    onChange(pendingUploadField, localBlobUrl);
-    if (pendingUploadField === 'url') onChange('filename', file.name || '');
+    try {
+      const uploadedUrl = await uploadBotMediaFile(file);
+      onChange(pendingUploadField, uploadedUrl);
+      if (pendingUploadField === 'url') onChange('filename', file.name || '');
+    } catch (err) {
+      alert('Не удалось загрузить файл: ' + (err?.message || 'ошибка'));
+    }
   }, [onChange, pendingUploadField]);
   const lang = ctx?.lang || 'ru';
   const blockTypes = ctx?.blockTypes || BLOCK_TYPES;
