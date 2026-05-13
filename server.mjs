@@ -173,7 +173,7 @@ const avatarJsonParser = express.json({ limit: process.env.AVATAR_JSON_LIMIT || 
 const mediaJsonParser = express.json({ limit: process.env.MEDIA_JSON_LIMIT || '24mb' });
 const previewJsonParser = express.json({ limit: process.env.PREVIEW_JSON_LIMIT || '16mb' });
 const supportJsonParser = express.json({ limit: process.env.SUPPORT_JSON_LIMIT || '8mb' });
-const LARGE_JSON_ROUTE_PATHS = new Set(['/api/avatar', '/api/bot/preview']);
+const LARGE_JSON_ROUTE_PATHS = new Set(['/api/avatar', '/api/bot/preview', '/api/media-upload']);
 
 app.use((req, res, next) => {
   if (
