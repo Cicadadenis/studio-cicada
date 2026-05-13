@@ -2341,7 +2341,7 @@ function PropsPanel({ block, onChange, onAttachmentChange, onAttachmentDelete, s
                 <button
                   type="button"
                   onClick={() => openLocalFilePicker('url')}
-                  style={{ marginTop: 6, width: '100%', fontSize: 11 }}
+                  style={{ marginTop: 6, width: '100%', fontSize: 11, border: '1px dashed var(--border2)', borderRadius: 6, padding: '7px 10px', background: 'var(--bg)', color: 'var(--text2)', cursor: 'pointer' }}
                 >
                   Загрузить с устройства
                 </button>

@@ -1693,7 +1693,7 @@ function PropsPanel({ block, onChange }) {
               {showLocalUpload && f.key === 'url' && (
                 <button
                   type="button"
-                  style={{ marginTop: 6, width: '100%', fontSize: 11 }}
+                  style={{ marginTop: 6, width: '100%', fontSize: 11, border: '1px dashed var(--border2)', borderRadius: 6, padding: '7px 10px', background: 'var(--bg)', color: 'var(--text2)', cursor: 'pointer' }}
                   onClick={openLocalFilePicker}
                 >
                   Загрузить с устройства
