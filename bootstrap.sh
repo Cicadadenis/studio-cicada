@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 # ═══════════════════════════════════════════════════════════════
 #   CICADA STUDIO — ULTRA PROD BOOTSTRAP
@@ -20,46 +20,60 @@ NC='\033[0m'
 ORANGE='\033[38;5;208m'
 VIOLET='\033[38;5;141m'
 TEAL='\033[38;5;45m'
+GRAY='\033[38;5;240m'
+BG_DARK='\033[48;5;235m'
 
 ui_init() {
   if [ -n "${NO_COLOR:-}" ] || [ ! -t 1 ]; then
     RED='' GREEN='' YELLOW='' CYAN='' BLUE='' MAGENTA='' WHITE='' DIM='' BOLD='' NC=''
-    ORANGE='' VIOLET='' TEAL=''
+    ORANGE='' VIOLET='' TEAL='' GRAY='' BG_DARK=''
   fi
 }
 ui_init
 
-ok()   { echo -e "  ${GREEN}✔${NC}  ${WHITE}$1${NC}"; }
-info() { echo -e "  ${CYAN}ℹ${NC}  ${WHITE}$1${NC}"; }
-warn() { echo -e "  ${YELLOW}⚠${NC}  ${YELLOW}$1${NC}"; }
-err()  { echo -e "  ${RED}✖${NC}  ${RED}${BOLD}$1${NC}"; exit 1; }
-dim()  { echo -e "  ${DIM}$1${NC}"; }
-hint() { echo -e "  ${DIM}↳${NC} $1"; }
+# ─── Перехват необработанных ошибок ────────────────────────────
+# При set -e любая команда без || обрывает скрипт — trap покажет где именно
+_trap_err() {
+  local code=$? line=$1
+  echo -e "\n  ${RED}✖  ${BOLD}Необработанная ошибка${NC} ${RED}(exit ${code})${NC}"
+  echo -e "  ${GRAY}╰╴ Строка ${line} в ${BASH_SOURCE[1]:-bootstrap.sh}${NC}"
+  echo -e "  ${YELLOW}▲  Запусти с DEBUG=1 bash bootstrap.sh для подробностей${NC}\n"
+  exit "$code"
+}
+trap '_trap_err $LINENO' ERR
+
+[ "${DEBUG:-0}" = "1" ] && set -x
+
+ok()   { echo -e "  ${GREEN}✔${NC}  $1${NC}"; }
+info() { echo -e "  ${CYAN}◆${NC}  ${WHITE}$1${NC}"; }
+warn() { echo -e "  ${YELLOW}▲${NC}  ${YELLOW}$1${NC}"; }
+err()  { echo -e "\n  ${RED}✖  ${BOLD}ОШИБКА:${NC} ${RED}$1${NC}\n"; exit 1; }
+dim()  { echo -e "  ${GRAY}$1${NC}"; }
+hint() { echo -e "  ${GRAY}╰╴${NC}${DIM}$1${NC}"; }
 
 divider() {
-  echo -e "${DIM}  ────────────────────────────────────────────────────────────${NC}"
+  echo -e "${GRAY}  ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔${NC}"
 }
 
 section() {
   echo ""
-  divider
-  echo -e "${BOLD}${MAGENTA}  ▣  $1${NC}"
-  divider
+  echo -e "${BOLD}${MAGENTA}  ╔══ ${NC}${BOLD}${WHITE}$1 ${MAGENTA}${NC}"
+  echo -e "${GRAY}  ╟──────────────────────────────────────────────────────────${NC}"
 }
 
 subsection() {
-  echo -e "${BOLD}${TEAL}  ▸ $1${NC}"
+  echo -e "  ${TEAL}▸${NC} ${BOLD}$1${NC}"
 }
 
 ask() {
   echo ""
-  echo -e "${BOLD}${ORANGE}  ▶  $1${NC}"
+  echo -e "  ${ORANGE}┌─${BOLD} $1 ${NC}${ORANGE}─────────────────────────────────────────────────┐${NC}"
 }
 
 prompt() {
   local __var=$1
   shift
-  echo -en "${BLUE}  │ ${NC}${WHITE}$*${NC}: "
+  echo -en "  ${VIOLET}❯${NC} ${WHITE}$*${NC}: "
   read -r "$__var"
 }
 
@@ -67,7 +81,7 @@ prompt_def() {
   local __var=$1
   local __def=$2
   shift 2
-  echo -en "${BLUE}  │ ${NC}${WHITE}$*${NC} ${DIM}[${CYAN}${__def}${DIM}]${NC}: "
+  echo -en "  ${VIOLET}❯${NC} ${WHITE}$*${NC} ${GRAY}[${CYAN}${__def}${GRAY}]${NC}: "
   read -r "$__var"
   if [ -z "${!__var}" ]; then
     printf -v "$__var" '%s' "$__def"
@@ -77,7 +91,7 @@ prompt_def() {
 prompt_secret() {
   local __var=$1
   shift
-  echo -en "${BLUE}  │ ${NC}${WHITE}$*${NC}: "
+  echo -en "  ${VIOLET}❯${NC} ${WHITE}$*${NC} ${GRAY}[скрыто]${NC}: "
   read -rs "$__var"
   echo ""
 }
@@ -86,7 +100,7 @@ prompt_yn() {
   local __var=$1
   local __def=$2
   shift 2
-  echo -en "${BLUE}  │ ${NC}${WHITE}$*${NC} ${DIM}[${CYAN}${__def}${DIM}]${NC}: "
+  echo -en "  ${VIOLET}❯${NC} ${WHITE}$*${NC} ${GRAY}[${CYAN}${__def}${GRAY}]${NC}: "
   read -r "$__var"
   if [ -z "${!__var}" ]; then
     printf -v "$__var" '%s' "$__def"
@@ -94,21 +108,21 @@ prompt_yn() {
 }
 
 choice_line() {
-  echo -e "     ${BOLD}${VIOLET}$1)${NC} ${WHITE}$2${NC} ${DIM}— $3${NC}"
+  echo -e "  ${GRAY}│${NC}  ${BOLD}${VIOLET}[$1]${NC} ${WHITE}$2${NC}  ${GRAY}— $3${NC}"
 }
 
 summary_row() {
   local key=$1 val=$2 color=${3:-$WHITE}
-  printf "  ${DIM}%-16s${NC} ${color}%s${NC}\n" "$key:" "$val"
+  printf "  ${GRAY}│  ${DIM}%-18s${NC}  ${color}%s${NC}\n" "$key" "$val"
 }
 
 summary_box_begin() {
   echo ""
-  echo -e "${BOLD}${CYAN}  ╭─ Итоговые настройки ─────────────────────────────────────╮${NC}"
+  echo -e "${BOLD}${CYAN}  ╭── Итоговые настройки ─────────────────────────────────────╮${NC}"
 }
 
 summary_box_end() {
-  echo -e "${BOLD}${CYAN}  ╰──────────────────────────────────────────────────────────╯${NC}"
+  echo -e "${BOLD}${CYAN}  ╰────────────────────────────────────────────────────────────╯${NC}"
 }
 
 platform_chip() {
@@ -131,8 +145,10 @@ mode_chip() {
 print_banner() {
   echo ""
   echo -e "${ORANGE}  ╔══════════════════════════════════════════════════════════╗${NC}"
-  echo -e "${ORANGE}  ║${NC}${BOLD}${WHITE}           🦟  CICADA STUDIO BOOTSTRAP v1.4              ${NC}${ORANGE}║${NC}"
-  echo -e "${ORANGE}  ║${NC}${DIM}        Установка · настройка · первый запуск            ${NC}${ORANGE}║${NC}"
+  echo -e "${ORANGE}  ║                                                          ║${NC}"
+  echo -e "${ORANGE}  ║${NC}  ${BOLD}${WHITE}   🦟  CICADA STUDIO${NC}  ${GRAY}·${NC}  ${DIM}Bootstrap v1.4${NC}            ${ORANGE}  ║${NC}"
+  echo -e "${ORANGE}  ║${NC}  ${GRAY}   Установка · Настройка · Первый запуск${NC}              ${ORANGE}  ║${NC}"
+  echo -e "${ORANGE}  ║                                                          ║${NC}"
   echo -e "${ORANGE}  ╚══════════════════════════════════════════════════════════╝${NC}"
   echo ""
 }
@@ -140,18 +156,28 @@ print_banner() {
 INSTALL_STEP=0
 install_phase() {
   INSTALL_STEP=$((INSTALL_STEP + 1))
+  local total="${INSTALL_TOTAL:-12}"
+  local pad=""
+  [ "$INSTALL_STEP" -lt 10 ] && pad=" "
   echo ""
-  echo -e "${BOLD}${VIOLET}  ┌─ Шаг ${INSTALL_STEP}/${INSTALL_TOTAL:-12}${NC}  ${CYAN}$1${NC}"
-  echo -e "${DIM}  └────────────────────────────────────────────────────────${NC}"
+  echo -e "${BOLD}${VIOLET}  ┌─[${INSTALL_STEP}/${total}]${NC}  ${BOLD}${WHITE}$1${NC}"
+  echo -e "${GRAY}  └$( printf '%.0s─' $(seq 1 58) )${NC}"
 }
 
 print_banner
+
+# bootstrap.sh с CRLF (редактор Windows) ломает heredoc — конвертируем и перезапускаем
+if grep -q $'\r' "${BASH_SOURCE[0]}" 2>/dev/null; then
+  warn "bootstrap.sh в формате CRLF — конвертируем в Unix (LF)..."
+  sed -i 's/\r$//' "${BASH_SOURCE[0]}"
+  exec bash "${BASH_SOURCE[0]}" "$@"
+fi
 
 # ═══════════════════════════════════════════════════════════════
 # 0. ОПРЕДЕЛЕНИЕ ПЛАТФОРМЫ
 # ═══════════════════════════════════════════════════════════════
 detect_platform() {
-  if [ -n "$TERMUX_VERSION" ] || [ -d "/data/data/com.termux" ]; then
+  if [ -n "${TERMUX_VERSION:-}" ] || [ -d "/data/data/com.termux" ]; then
     echo "termux"
   elif grep -qiE "microsoft|wsl" /proc/version 2>/dev/null; then
     echo "wsl"
@@ -160,20 +186,29 @@ detect_platform() {
   fi
 }
 
+termux_resolve_app_user() {
+  local prefix="${PREFIX:-/data/data/com.termux/files/usr}"
+  local u="${TERMUX_PKG_USER:-}"
+  if [ -z "$u" ] || [ "$u" = "root" ]; then
+    u=$(stat -c '%U' "$prefix" 2>/dev/null || true)
+  fi
+  if [ -z "$u" ] || [ "$u" = "root" ]; then
+    u=$(ls -ld "$prefix" 2>/dev/null | awk '{print $3}')
+  fi
+  echo "$u"
+}
+
 PLATFORM=$(detect_platform)
 
 case "$PLATFORM" in
   termux)
-    info "Платформа: $(platform_chip Termux)"
     SUDO=""
     HAS_SYSTEMCTL=false
     PREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
-    TERMUX_PKG_USER=$(stat -c '%U' "$PREFIX" 2>/dev/null || stat -f '%Su' "$PREFIX" 2>/dev/null || true)
+    TERMUX_PKG_USER=$(termux_resolve_app_user)
+    info "Платформа: $(platform_chip Termux)"
     if [ "$(id -u)" -eq 0 ]; then
-      warn "Termux: pkg не работает от root — пакеты ставим от пользователя ${TERMUX_PKG_USER:-termux}"
-      case "${PWD:-}" in
-        /root/*) warn "Проект в /root — лучше клонировать в \$HOME/cicada-studio и запускать без su/root" ;;
-      esac
+      hint "Обнаружен root — скрипт перезапустится от пользователя ${TERMUX_PKG_USER:-termux}"
     fi
     ;;
   wsl)
@@ -218,31 +253,75 @@ svc_is_active() {
   fi
 }
 
-termux_pkg() {
-  if [ "$(id -u)" -eq 0 ] && [ -n "${TERMUX_PKG_USER:-}" ] && [ "$TERMUX_PKG_USER" != "root" ]; then
-    su -s /bin/bash "$TERMUX_PKG_USER" -c "export PATH=\"\$PREFIX/bin:\$PATH\"; pkg $(printf '%q ' "$@")"
-  else
-    pkg "$@"
+termux_reexec_as_app_user() {
+  [ "$PLATFORM" != "termux" ] && return 0
+  [ "$(id -u)" -ne 0 ] && return 0
+
+  local tuser
+  tuser=$(termux_resolve_app_user)
+  if [ -z "$tuser" ] || [ "$tuser" = "root" ]; then
+    err "Termux: не найден пользователь приложения. Выйди из su (exit) и запусти: bash bootstrap.sh"
   fi
+
+  local cwd script
+  cwd="$(pwd)"
+  case "$cwd" in
+    /root/*)
+      err "Termux: каталог ${cwd} недоступен пользователю ${tuser}.
+Перенеси проект в домашнюю папку Termux:
+  mkdir -p ~/cicada-studio && cp -a ${cwd}/. ~/cicada-studio/
+  cd ~/cicada-studio && bash bootstrap.sh"
+      ;;
+  esac
+
+  script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+  if ! command -v su &>/dev/null; then
+    err "Termux от root: нужен пакет su. В обычной сессии Termux (без su): pkg install su
+Или выйди из root: exit — и снова bash bootstrap.sh"
+  fi
+  warn "Termux: pkg не работает от root — перезапуск от ${tuser}..."
+  exec su -s /bin/bash "$tuser" -c \
+    "export PATH=\"${PREFIX:-/data/data/com.termux/files/usr}/bin:\$PATH\"; cd $(printf '%q' "$cwd") && exec bash $(printf '%q' "$script")"
+}
+
+termux_pkg() {
+  if [ "$(id -u)" -eq 0 ]; then
+    echo "Error: Cannot run 'pkg' command as root" >&2
+    return 1
+  fi
+  if ! command -v pkg &>/dev/null; then
+    echo "Error: pkg not found — это Termux?" >&2
+    return 1
+  fi
+  pkg "$@"
 }
 
 termux_pkg_update() {
-  termux_pkg update -y
-  termux_pkg upgrade -y
+  if ! termux_pkg update -y 2>/tmp/cicada_pkg_err; then
+    warn "pkg update не удался: $(tail -3 /tmp/cicada_pkg_err 2>/dev/null)"
+    return 1
+  fi
+  if ! termux_pkg upgrade -y 2>/tmp/cicada_pkg_err; then
+    warn "pkg upgrade не удался: $(tail -3 /tmp/cicada_pkg_err 2>/dev/null)"
+    return 1
+  fi
 }
 
 pkg_install() {
   if [ "$PLATFORM" = "termux" ]; then
-    termux_pkg install -y "$@"
+    termux_pkg install -y "$@" || return 1
   else
     $SUDO apt-get install -y -qq "$@"
   fi
 }
 
+# Termux: весь bootstrap только от пользователя приложения (не root)
+termux_reexec_as_app_user
+
 # ═══════════════════════════════════════════════════════════════
 # 0b. ROOT CHECK (только для VPS)
 # ═══════════════════════════════════════════════════════════════
-if [ "$PLATFORM" = "vps" ] && [ "$EUID" -ne 0 ]; then
+if [ "$PLATFORM" = "vps" ] && [ "${EUID:-$(id -u)}" -ne 0 ]; then
   err "Запусти скрипт от root: sudo bash bootstrap.sh"
 fi
 
@@ -396,11 +475,20 @@ if [ "$MODE" = "prod" ]; then
   prompt_def OLLAMA_URL "http://127.0.0.1:11434" "OLLAMA_URL"
   prompt_def OLLAMA_MODEL "qwen2.5:3b" "OLLAMA_MODEL"
 else
-  hint "LOCAL: Resend, CryptoBot, OAuth и Groq пропущены — при необходимости добавь в .env"
+  if [ "$PLATFORM" = "termux" ]; then
+    hint "Termux (LOCAL): Resend, CryptoBot, OAuth, Groq и Ollama — пропущены, допиши в .env при необходимости"
+  else
+    hint "LOCAL: Resend, CryptoBot, OAuth и Groq пропущены — при необходимости добавь в .env"
+  fi
 fi
 
-section "Доп. защита админки (TOTP)"
-prompt_secret ADMIN_TOTP_SECRET "ADMIN_TOTP_SECRET (Enter — пропустить)"
+if [ "$MODE" = "prod" ] || [ "$PLATFORM" != "termux" ]; then
+  section "Доп. защита админки (TOTP)"
+  prompt_secret ADMIN_TOTP_SECRET "ADMIN_TOTP_SECRET (Enter — пропустить)"
+else
+  ADMIN_TOTP_SECRET=""
+  hint "Termux: TOTP для админки пропущен"
+fi
 
 section "ESPHome (/esphome, сборка прошивок)"
 INSTALL_ESPHOME=0
@@ -456,16 +544,27 @@ section "Установка компонентов"
 install_phase "Системные пакеты"
 info "Обновляем пакеты..."
 if [ "$PLATFORM" = "termux" ]; then
-  termux_pkg_update && ok "Пакеты Termux обновлены" \
-    || err "Не удалось обновить пакеты Termux. Запусти bootstrap не от root или: pkg update && pkg upgrade"
+  if ! termux_pkg_update; then
+    err "Не удалось обновить пакеты Termux.
+    Попробуй: pkg install su && pkg update -y
+    Или запусти не от root: exit && bash bootstrap.sh"
+  fi
+  ok "Пакеты Termux обновлены"
 else
-  $SUDO apt-get update -qq && $SUDO apt-get upgrade -y -qq
+  if ! $SUDO apt-get update -qq 2>/tmp/cicada_apt_err; then
+    err "apt-get update не удался:
+    $(tail -5 /tmp/cicada_apt_err 2>/dev/null)
+  Проверь подключение к интернету и /etc/apt/sources.list"
+  fi
+  $SUDO apt-get upgrade -y -qq 2>/dev/null || warn "apt-get upgrade завершился с предупреждениями (некритично)"
   ok "Пакеты обновлены"
 fi
 
 # ─── Базовые утилиты ───────────────────────────────────────────
 if [ "$PLATFORM" = "termux" ]; then
-  pkg_install curl git openssl-tool
+  if ! pkg_install curl git openssl-tool; then
+    err "Не удалось установить curl, git, openssl-tool (pkg install)"
+  fi
 else
   $SUDO apt-get install -y -qq curl git openssl ca-certificates
   [ "$PLATFORM" = "vps" ] && $SUDO apt-get install -y -qq ufw
@@ -480,7 +579,7 @@ install_phase "Python и cicada-studio"
 if ! command -v python3 &>/dev/null; then
   info "Устанавливаем Python 3..."
   if [ "$PLATFORM" = "termux" ]; then
-    pkg_install python
+    pkg_install python || err "Не удалось установить python (pkg install python)"
   else
     $SUDO apt-get install -y -qq python3 python3-pip
   fi
@@ -511,7 +610,7 @@ install_phase "Node.js, PM2, PostgreSQL, Nginx"
 if ! command -v node &>/dev/null; then
   info "Устанавливаем Node.js 20..."
   if [ "$PLATFORM" = "termux" ]; then
-    pkg_install nodejs
+    pkg_install nodejs || err "Не удалось установить nodejs (pkg install nodejs)"
   else
     curl -fsSL https://deb.nodesource.com/setup_20.x | $SUDO bash - &>/dev/null
     $SUDO apt-get install -y -qq nodejs
@@ -534,7 +633,7 @@ fi
 if ! command -v psql &>/dev/null; then
   info "Устанавливаем PostgreSQL..."
   if [ "$PLATFORM" = "termux" ]; then
-    pkg_install postgresql
+    pkg_install postgresql || err "Не удалось установить postgresql (pkg install postgresql)"
     mkdir -p "$PREFIX/var/lib/postgresql"
     initdb "$PREFIX/var/lib/postgresql" &>/dev/null || true
   else
@@ -585,19 +684,32 @@ if [ "$INSTALL_ESPHOME" = "1" ]; then
   python3 -m venv "${APP_DIR}/.venv-esphome"
   # shellcheck source=/dev/null
   "${APP_DIR}/.venv-esphome/bin/pip" install --upgrade pip wheel setuptools -q
-  if [ -n "$ESPHOME_PIN" ]; then
+  if [ -n "${ESPHOME_PIN:-}" ]; then
   "${APP_DIR}/.venv-esphome/bin/pip" install -q "esphome==${ESPHOME_PIN}"
   else
     "${APP_DIR}/.venv-esphome/bin/pip" install -q esphome
   fi
+  chmod +x "${APP_DIR}/.venv-esphome/bin/"* 2>/dev/null || true
   ESPHOME_BIN_PATH="${APP_DIR}/.venv-esphome/bin/esphome"
+  if [ ! -f "$ESPHOME_BIN_PATH" ]; then
+    warn "ESPHome CLI не найден в venv — ESPHOME_BIN не будет записан в .env"
+    ESPHOME_BIN_PATH=""
+  fi
   if [ -x "${APP_DIR}/.venv-esphome/bin/pio" ]; then
     PIO_BIN_PATH="${APP_DIR}/.venv-esphome/bin/pio"
   elif [ -x "${APP_DIR}/.venv-esphome/bin/platformio" ]; then
     PIO_BIN_PATH="${APP_DIR}/.venv-esphome/bin/platformio"
+  elif [ -f "${APP_DIR}/.venv-esphome/bin/pio" ]; then
+    PIO_BIN_PATH="${APP_DIR}/.venv-esphome/bin/pio"
+    chmod +x "$PIO_BIN_PATH" 2>/dev/null || true
   fi
-  _esphome_ver=$("$ESPHOME_BIN_PATH" version 2>/dev/null | head -1 || echo 'установлен')
-  ok "ESPHome: ${_esphome_ver}"
+  _esphome_ver=""
+  if [ -n "$ESPHOME_BIN_PATH" ] && [ -x "$ESPHOME_BIN_PATH" ]; then
+    _esphome_ver=$("$ESPHOME_BIN_PATH" version 2>/dev/null | head -1)
+  elif [ -x "${APP_DIR}/.venv-esphome/bin/python" ]; then
+    _esphome_ver=$("${APP_DIR}/.venv-esphome/bin/python" -m esphome version 2>/dev/null | head -1)
+  fi
+  ok "ESPHome: ${_esphome_ver:-установлен}"
   if [ -n "$PIO_BIN_PATH" ]; then
     _pio_ver=$("$PIO_BIN_PATH" --version 2>/dev/null | head -1 || echo "$PIO_BIN_PATH")
     ok "PlatformIO: ${_pio_ver}"
@@ -626,7 +738,7 @@ pgsql_super() {
   fi
 }
 
-if ! pgsql_super &>/dev/null << SQL
+if ! pgsql_super << SQL 2>/tmp/cicada_pg_err
 DO \$\$
 BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${DB_USER}') THEN
@@ -643,10 +755,14 @@ SELECT 'CREATE DATABASE ${DB_NAME} OWNER ${DB_USER}'
 GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};
 SQL
 then
-  err "Ошибка настройки PostgreSQL"
+  _pg_err=$(cat /tmp/cicada_pg_err 2>/dev/null || echo "нет деталей")
+  err "Ошибка настройки PostgreSQL:
+    ${_pg_err}
+  Убедись что PostgreSQL запущен и пользователь postgres существует."
 fi
 
-pgsql_super -d "$DB_NAME" -c "GRANT ALL ON SCHEMA public TO ${DB_USER};" &>/dev/null
+pgsql_super -d "$DB_NAME" -c "GRANT ALL ON SCHEMA public TO ${DB_USER};" 2>/tmp/cicada_pg_err \
+  || warn "GRANT на schema public не удался: $(cat /tmp/cicada_pg_err 2>/dev/null)"
 ok "БД '${DB_NAME}' и пользователь '${DB_USER}' готовы"
 
 # ═══════════════════════════════════════════════════════════════
@@ -664,9 +780,16 @@ if [ -f "package.json" ]; then
   rm -rf node_modules package-lock.json dist
   ok "node_modules/, package-lock.json, dist/ удалены"
   info "Устанавливаем npm зависимости..."
-  npm install --legacy-peer-deps
+  if ! npm install --legacy-peer-deps 2>/tmp/cicada_npm_err; then
+    err "npm install завершился с ошибкой:
+    $(tail -5 /tmp/cicada_npm_err 2>/dev/null)
+  Проверь package.json и доступность npm registry."
+  fi
   info "Добавляем OAuth/session зависимости..."
-  npm install passport passport-google-oauth20 express-session
+  if ! npm install passport passport-google-oauth20 express-session 2>/tmp/cicada_npm_err; then
+    err "npm install (passport) завершился с ошибкой:
+    $(tail -5 /tmp/cicada_npm_err 2>/dev/null)"
+  fi
   ok "npm install выполнен"
   chmod -R 755 "$APP_DIR"
 else
@@ -739,11 +862,29 @@ if [ "$MODE" = "prod" ]; then
   VITE_API_TARGET="https://${DOMAIN}"
   APP_URL_VAL="https://${DOMAIN}"
   APP_ENV_VAL="production"
+elif [ "$PLATFORM" = "termux" ]; then
+  VITE_API_URL="http://127.0.0.1:${API_PORT}/api"
+  VITE_API_TARGET="http://127.0.0.1:${API_PORT}"
+  APP_URL_VAL="http://127.0.0.1:${API_PORT}"
+  APP_ENV_VAL="development"
 else
   VITE_API_URL="https://localhost/api"
   VITE_API_TARGET="https://localhost"
   APP_URL_VAL="https://localhost"
   APP_ENV_VAL="development"
+fi
+
+DSL_SANDBOX_MODE_VAL="auto"
+DSL_SANDBOX_NETWORK_VAL="host"
+[ "$APP_ENV_VAL" = "production" ] && DSL_SANDBOX_MODE_VAL="enforced"
+
+ESPHOME_BIN_LINE="# ESPHOME_BIN=${APP_DIR}/.venv-esphome/bin/esphome"
+PIO_BIN_LINE="# PIO_BIN=${APP_DIR}/.venv-esphome/bin/pio"
+if [ -n "$ESPHOME_BIN_PATH" ] && [ -f "$ESPHOME_BIN_PATH" ]; then
+  ESPHOME_BIN_LINE="ESPHOME_BIN=${ESPHOME_BIN_PATH}"
+fi
+if [ -n "$PIO_BIN_PATH" ] && [ -f "$PIO_BIN_PATH" ]; then
+  PIO_BIN_LINE="PIO_BIN=${PIO_BIN_PATH}"
 fi
 
 cat > "$APP_DIR/.env" << ENV
@@ -796,8 +937,8 @@ TG_BOT_TOKEN=${TG_BOT_TOKEN}
 CRYPTOBOT_TOKEN=${CRYPTOBOT_TOKEN}
 
 # ─── DSL Sandbox ─────────────────────────────────────────────
-DSL_SANDBOX_MODE=$([ "$APP_ENV_VAL" = "production" ] && echo "enforced" || echo "auto")
-DSL_SANDBOX_NETWORK=$([ "$APP_ENV_VAL" = "production" ] && echo "host" || echo "host")
+DSL_SANDBOX_MODE=${DSL_SANDBOX_MODE_VAL}
+DSL_SANDBOX_NETWORK=${DSL_SANDBOX_NETWORK_VAL}
 DSL_MAX_RUNTIME_MS=300000
 DSL_MAX_CODE_BYTES=100000
 DSL_MAX_LOG_CHARS=80000
@@ -810,8 +951,8 @@ ESPHOME_CLEANUP_INTERVAL_MS=300000
 FIRMWARE_BUILD_TIMEOUT_MS=1800000
 ESPHOME_PLATFORMIO_HOME=${APP_DIR}/.cache/platformio
 ESPHOME_PUBLIC_BUILD=0
-$(if [ -n "$ESPHOME_BIN_PATH" ]; then echo "ESPHOME_BIN=${ESPHOME_BIN_PATH}"; else echo "# ESPHOME_BIN=${APP_DIR}/.venv-esphome/bin/esphome"; fi)
-$(if [ -n "$PIO_BIN_PATH" ]; then echo "PIO_BIN=${PIO_BIN_PATH}"; else echo "# PIO_BIN=${APP_DIR}/.venv-esphome/bin/pio"; fi)
+${ESPHOME_BIN_LINE}
+${PIO_BIN_LINE}
 # ESP8266 глушилка (/flash/jammer/): исходный .bin (не в git)
 JAMMER_FIRMWARE_BIN=${JAMMER_FIRMWARE_BIN}
 ENV
@@ -826,9 +967,13 @@ if [ -f "$APP_DIR/package.json" ]; then
   install_phase "Сборка фронтенда (Vite)"
   info "npm run build..."
   cd "$APP_DIR"
-  npm run build &>/dev/null \
-    && ok "Фронтенд собран (dist/)" \
-    || warn "Сборка фронтенда не удалась — проверь вручную: npm run build"
+  if ! npm run build 2>/tmp/cicada_build_err; then
+    warn "Сборка фронтенда не удалась. Причина:"
+    tail -20 /tmp/cicada_build_err >&2 || true
+    warn "Для ручного запуска: cd ${APP_DIR} && npm run build"
+  else
+    ok "Фронтенд собран (dist/)"
+  fi
   chmod -R 755 "$APP_DIR/dist" 2>/dev/null || true
 fi
 
@@ -933,8 +1078,14 @@ NGINX
 
   $SUDO ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/cicada
   $SUDO rm -f /etc/nginx/sites-enabled/default
-  $SUDO nginx -t && svc_reload nginx
-  ok "Nginx настроен"
+  if ! $SUDO nginx -t 2>/tmp/cicada_nginx_err; then
+    warn "Nginx: ошибка в конфигурации:"
+    cat /tmp/cicada_nginx_err >&2 || true
+    warn "Исправь конфиг вручную: ${NGINX_CONF}"
+  else
+    svc_reload nginx
+    ok "Nginx настроен"
+  fi
 fi
 
 # ═══════════════════════════════════════════════════════════════
@@ -1133,10 +1284,13 @@ fi
 # ═══════════════════════════════════════════════════════════════
 echo ""
 echo -e "${GREEN}  ╔══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}  ║${NC}${BOLD}${WHITE}              ✔  УСТАНОВКА ЗАВЕРШЕНА                      ${NC}${GREEN}║${NC}"
+echo -e "${GREEN}  ║                                                          ║${NC}"
+echo -e "${GREEN}  ║${NC}  ${BOLD}${WHITE}  ✔  УСТАНОВКА ЗАВЕРШЕНА${NC}                              ${GREEN}  ║${NC}"
+echo -e "${GREEN}  ║${NC}  ${GRAY}  Cicada Studio готова к работе${NC}                       ${GREEN}  ║${NC}"
+echo -e "${GREEN}  ║                                                          ║${NC}"
 echo -e "${GREEN}  ╚══════════════════════════════════════════════════════════╝${NC}"
 echo ""
-echo -e "${BOLD}${CYAN}  ╭─ Доступ ─────────────────────────────────────────────────╮${NC}"
+echo -e "${BOLD}${CYAN}  ╭── Доступ ───────────────────────────────────────────────────╮${NC}"
 
 if [ "$MODE" = "prod" ]; then
   summary_row "Сайт" "https://${DOMAIN}" "$GREEN"
@@ -1170,9 +1324,9 @@ else
   dim "$JAMMER_FIRMWARE_BIN"
 fi
 
-echo -e "${BOLD}${CYAN}  ╰──────────────────────────────────────────────────────────╯${NC}"
+echo -e "${BOLD}${CYAN}  ╰────────────────────────────────────────────────────────────╯${NC}"
 echo ""
-echo -e "${BOLD}${MAGENTA}  ╭─ Система ────────────────────────────────────────────────╮${NC}"
+echo -e "${BOLD}${MAGENTA}  ╭── Система ──────────────────────────────────────────────────╮${NC}"
 summary_row "Платформа" "$PLATFORM" "$TEAL"
 summary_row "БД" "${DB_NAME} / ${DB_USER}" "$WHITE"
 summary_row "ADMIN_KEY" "$ADMIN_KEY" "$DIM"
@@ -1180,19 +1334,21 @@ if [ "$MODE" = "local" ] && [ -n "$ADMIN_EMAIL" ] && [ -n "$ADMIN_PASSWORD" ]; t
   summary_row "Логин Studio" "$ADMIN_EMAIL" "$ORANGE"
 fi
 summary_row "Папка" "$APP_DIR" "$CYAN"
-echo -e "${BOLD}${MAGENTA}  ╰──────────────────────────────────────────────────────────╯${NC}"
+echo -e "${BOLD}${MAGENTA}  ╰────────────────────────────────────────────────────────────╯${NC}"
 echo ""
-echo -e "${BOLD}${WHITE}  Команды:${NC}"
-echo -e "    ${TEAL}pm2 logs server${NC}      ${DIM}— логи${NC}"
-echo -e "    ${TEAL}pm2 restart server${NC}   ${DIM}— перезапуск${NC}"
+echo -e "  ${BOLD}${WHITE}Полезные команды:${NC}"
+echo -e "  ${GRAY}┌──────────────────────────────────────────────────────────${NC}"
+echo -e "  ${GRAY}│${NC}  ${TEAL}pm2 logs server${NC}        ${GRAY}— просмотр логов${NC}"
+echo -e "  ${GRAY}│${NC}  ${TEAL}pm2 restart server${NC}     ${GRAY}— перезапуск сервера${NC}"
 if [ "$PLATFORM" != "termux" ]; then
-  echo -e "    ${TEAL}nginx -t && sudo systemctl reload nginx${NC}  ${DIM}— nginx${NC}"
+  echo -e "  ${GRAY}│${NC}  ${TEAL}nginx -t && sudo systemctl reload nginx${NC}  ${GRAY}— перезагрузка nginx${NC}"
 fi
 if [ "$PLATFORM" = "termux" ]; then
-  echo -e "    ${TEAL}psql -U $(whoami) -d ${DB_NAME}${NC}  ${DIM}— консоль БД${NC}"
+  echo -e "  ${GRAY}│${NC}  ${TEAL}psql -U $(whoami) -d ${DB_NAME}${NC}  ${GRAY}— консоль БД${NC}"
 else
-  echo -e "    ${TEAL}sudo -u postgres psql -d ${DB_NAME}${NC}  ${DIM}— консоль БД${NC}"
+  echo -e "  ${GRAY}│${NC}  ${TEAL}sudo -u postgres psql -d ${DB_NAME}${NC}  ${GRAY}— консоль БД${NC}"
 fi
+echo -e "  ${GRAY}└──────────────────────────────────────────────────────────${NC}"
 echo ""
 hint ".env → ${CYAN}${APP_DIR}/.env${NC}"
 echo ""
